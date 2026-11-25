@@ -1,0 +1,2420 @@
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import {
+  createCloudTexture,
+  createCoruscantFacadeTextures,
+  createFieldGroundTexture,
+  createNeonSignTextures,
+  createRoadTextures,
+} from './textures';
+import type { BuildingFootprint } from './physics';
+import type { PlanetConfig } from './planets';
+import type { WorldLandmark } from './events';
+import type { BiomeId, PlanetId, SeasonId, WeatherMode } from '../types/simulation';
+
+export const CHUNK_SIZE = 320;
+const GRID_RADIUS = 3; // 7x7 chunks = 2240x2240m continuous network
+
+const MAX_TOWER_INSTANCES = 480;
+const MAX_ACCENT_INSTANCES = 340;
+const MAX_DOME_INSTANCES = 80;
+const MAX_LAMP_INSTANCES = 260;
+const MAX_SIGN_PER_STYLE = 48;
+const MAX_ROAD_INSTANCES = 360;
+const MAX_BRIDGE_INSTANCES = 96;
+const MAX_BEACON_INSTANCES = 180;
+const MAX_FIELD_INSTANCES = 64;
+const MAX_PLAZA_INSTANCES = 64;
+const MAX_HILL_INSTANCES = 80;
+const MAX_TREE_INSTANCES = 960;
+const MAX_POND_INSTANCES = 36;
+const MAX_CAFE_INSTANCES = 24;
+const MAX_HOTEL_INSTANCES = 18;
+const MAX_OBS_INSTANCES = 14;
+const MAX_HANGAR_INSTANCES = 12;
+const MAX_SKYGATE_INSTANCES = 14;
+
+const FLYING_CAR_COUNT = 220;
+const PEDESTRIAN_COUNT = 140;
+const CLOUD_COUNT = 240;
+const RAIN_COUNT = 750;
+
+const _dummy = new THREE.Object3D();
+const _glowDummy = new THREE.Object3D();
+const _color = new THREE.Color();
+const _quat = new THREE.Quaternion();
+
+export type ChunkZoneType = 'city' | 'park' | 'fields' | 'viaduct';
+
+interface BiomePreset {
+  label: string;
+  parkLabel: string;
+  fieldsLabel: string;
+  openLabel: string;
+  facadeTints: [string, string, string];
+  facadeEmissiveTint: string;
+  trimColor: string;
+  plazaColor: string;
+  fieldColor: string;
+  hillColor: string;
+  pondColor: string;
+  trunkColor: string;
+  foliagePalette: [string, string, string, string];
+  roadColor: string;
+  roadEmissiveTint: string;
+  lampColor: string;
+  beaconColors: [string, string];
+  openThreshold: number;
+  heightScale: number;
+  domeChance: number;
+  showSigns: boolean;
+  carCount: number;
+  pedCount: number;
+  precipColor: string;
+  precipLength: number;
+  precipSpeedScale: number;
+  precipDrift: number;
+  cloudTint: string;
+  cloudDensity: number;
+}
+
+const BIOMES: Record<BiomeId, BiomePreset> = {
+  coruscant: {
+    label: 'Корускант · Центральные шпили',
+    parkLabel: 'Корускант · Парковый проспект',
+    fieldsLabel: 'Корускант · Зелёные поля и рощи',
+    openLabel: 'Открытый горизонт · Небесный виадук',
+    facadeTints: ['#ffffff', '#e2e8f0', '#cbd5e1'],
+    facadeEmissiveTint: '#ffffff',
+    trimColor: '#242c3a',
+    plazaColor: '#10151f',
+    fieldColor: '#6f9646',
+    hillColor: '#4c6d33',
+    pondColor: '#1d4d6b',
+    trunkColor: '#5c4632',
+    foliagePalette: ['#3f7a2a', '#5ea136', '#c98a2c', '#d4a638'],
+    roadColor: '#ffffff',
+    roadEmissiveTint: '#ffffff',
+    lampColor: '#ffe4b5',
+    beaconColors: ['#38bdf8', '#f59e0b'],
+    openThreshold: 0.42,
+    heightScale: 1.0,
+    domeChance: 0.35,
+    showSigns: true,
+    carCount: 220,
+    pedCount: 140,
+    precipColor: '#bfe3ff',
+    precipLength: 1.45,
+    precipSpeedScale: 1.0,
+    precipDrift: 0,
+    cloudTint: '#ffffff',
+    cloudDensity: 1.0,
+  },
+  kryos: {
+    label: 'Неон-Криос · Ледяные шпили',
+    parkLabel: 'Неон-Криос · Хвойная аллея',
+    fieldsLabel: 'Неон-Криос · Заснеженные равнины',
+    openLabel: 'Ледяной простор · Аврора-виадук',
+    facadeTints: ['#bae6fd', '#e0f2fe', '#7dd3fc'],
+    facadeEmissiveTint: '#7dd3fc',
+    trimColor: '#64748b',
+    plazaColor: '#1e3a5f',
+    fieldColor: '#cfe8ff',
+    hillColor: '#9bc4e8',
+    pondColor: '#387ca8',
+    trunkColor: '#475569',
+    foliagePalette: ['#94d2f2', '#cfefff', '#5aa4cf', '#7dd3fc'],
+    roadColor: '#cfe8ff',
+    roadEmissiveTint: '#38bdf8',
+    lampColor: '#bae6fd',
+    beaconColors: ['#38bdf8', '#c084fc'],
+    openThreshold: 0.15,
+    heightScale: 1.15,
+    domeChance: 0.65,
+    showSigns: true,
+    carCount: 110,
+    pedCount: 70,
+    precipColor: '#f0f9ff',
+    precipLength: 0.28,
+    precipSpeedScale: 0.24,
+    precipDrift: 3.5,
+    cloudTint: '#e0f2fe',
+    cloudDensity: 1.0,
+  },
+  solaris: {
+    label: 'Соларис-Дюн · Солнечные монолиты',
+    parkLabel: 'Соларис-Дюн · Оазис-бульвар',
+    fieldsLabel: 'Соларис-Дюн · Золотые дюны и саванна',
+    openLabel: 'Песчаная долина · Солнечный мост',
+    facadeTints: ['#d97706', '#b45309', '#9a3412'],
+    facadeEmissiveTint: '#fde047',
+    trimColor: '#78350f',
+    plazaColor: '#451a03',
+    fieldColor: '#d4944a',
+    hillColor: '#b36b2c',
+    pondColor: '#226f73',
+    trunkColor: '#6b4226',
+    foliagePalette: ['#859e33', '#b88c28', '#5f8a3e', '#d67e22'],
+    roadColor: '#f6d5a8',
+    roadEmissiveTint: '#fb923c',
+    lampColor: '#fef08a',
+    beaconColors: ['#fde047', '#fb923c'],
+    openThreshold: -0.25,
+    heightScale: 0.85,
+    domeChance: 0.45,
+    showSigns: false,
+    carCount: 55,
+    pedCount: 30,
+    precipColor: '#fed7aa',
+    precipLength: 0.22,
+    precipSpeedScale: 0.16,
+    precipDrift: 7.5,
+    cloudTint: '#ffedd5',
+    cloudDensity: 0.62,
+  },
+  verdant: {
+    label: 'Вердана-IX · Изумрудные террасы',
+    parkLabel: 'Вердана-IX · Био-бульвар',
+    fieldsLabel: 'Вердана-IX · Цветущие луга и леса',
+    openLabel: 'Био-долина · Парящие сады',
+    facadeTints: ['#10b981', '#059669', '#047857'],
+    facadeEmissiveTint: '#6ee7b7',
+    trimColor: '#115e59',
+    plazaColor: '#064e3b',
+    fieldColor: '#4da866',
+    hillColor: '#2d7a49',
+    pondColor: '#1b8a78',
+    trunkColor: '#42362a',
+    foliagePalette: ['#10b981', '#34d399', '#6ee7b7', '#84cc16'],
+    roadColor: '#bbf7d0',
+    roadEmissiveTint: '#34d399',
+    lampColor: '#a7f3d0',
+    beaconColors: ['#34d399', '#fef08a'],
+    openThreshold: -0.05,
+    heightScale: 0.78,
+    domeChance: 0.75,
+    showSigns: false,
+    carCount: 75,
+    pedCount: 50,
+    precipColor: '#a7f3d0',
+    precipLength: 0.18,
+    precipSpeedScale: 0.11,
+    precipDrift: 4.5,
+    cloudTint: '#d1fae5',
+    cloudDensity: 0.85,
+  },
+  amethyst: {
+    label: 'Аметист · Кварцевые кварталы',
+    parkLabel: 'Аметист · Сиреневый сквер',
+    fieldsLabel: 'Аметист · Лиловые долины',
+    openLabel: 'Кристальный мост · Звёздный простор',
+    facadeTints: ['#e9d5ff', '#d8b4fe', '#c084fc'],
+    facadeEmissiveTint: '#f0abfc',
+    trimColor: '#4c1d95',
+    plazaColor: '#2e1065',
+    fieldColor: '#7e5ba6',
+    hillColor: '#5b3c88',
+    pondColor: '#4338ca',
+    trunkColor: '#3f2e4d',
+    foliagePalette: ['#e879f9', '#c084fc', '#f472b6', '#a78bfa'],
+    roadColor: '#f3e8ff',
+    roadEmissiveTint: '#e879f9',
+    lampColor: '#f5d0fe',
+    beaconColors: ['#e879f9', '#38bdf8'],
+    openThreshold: 0.08,
+    heightScale: 0.95,
+    domeChance: 0.6,
+    showSigns: true,
+    carCount: 95,
+    pedCount: 65,
+    precipColor: '#f5d0fe',
+    precipLength: 0.22,
+    precipSpeedScale: 0.14,
+    precipDrift: 4.0,
+    cloudTint: '#fae8ff',
+    cloudDensity: 0.9,
+  },
+  crimson: {
+    label: 'Кримсон · Закатные террасы',
+    parkLabel: 'Кримсон · Янтарная набережная',
+    fieldsLabel: 'Кримсон · Багровые луга и скалы',
+    openLabel: 'Красная долина · Небесный тракт',
+    facadeTints: ['#fecdd3', '#fda4af', '#fb7185'],
+    facadeEmissiveTint: '#fdba74',
+    trimColor: '#4c0519',
+    plazaColor: '#2a0812',
+    fieldColor: '#9c4c47',
+    hillColor: '#75302d',
+    pondColor: '#7c2d12',
+    trunkColor: '#4a251d',
+    foliagePalette: ['#fb7185', '#f97316', '#f59e0b', '#e11d48'],
+    roadColor: '#ffe4e6',
+    roadEmissiveTint: '#fb7185',
+    lampColor: '#fed7aa',
+    beaconColors: ['#fb7185', '#fbbf24'],
+    openThreshold: -0.1,
+    heightScale: 0.9,
+    domeChance: 0.5,
+    showSigns: false,
+    carCount: 80,
+    pedCount: 45,
+    precipColor: '#fecdd3',
+    precipLength: 0.2,
+    precipSpeedScale: 0.16,
+    precipDrift: 6.0,
+    cloudTint: '#ffe4e6',
+    cloudDensity: 0.78,
+  },
+};
+
+function hash2(ix: number, iz: number, salt = 0): number {
+  let n = ix * 374761393 + iz * 668265263 + salt * 1442695041;
+  n = (n ^ (n >> 13)) * 1274126177;
+  return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+}
+
+function getChunkRoadArms(
+  cx: number,
+  cz: number,
+  worldSeed: number,
+): { n: boolean; s: boolean; e: boolean; w: boolean } {
+  // Trans-planetary continuous arterial highways along every even coordinate line
+  const isHighwayX = (x: number) => Math.abs(x) % 2 === 0;
+  const isHighwayZ = (z: number) => Math.abs(z) % 2 === 0;
+
+  const hasEast = (x: number, z: number) => {
+    // East-West trans-planetary highway along all even Z rows
+    if (isHighwayZ(z)) return true;
+    // Radial feeder connectors to nearby landmarks & hubs
+    return (x === 0 && z === 0) || (x === -1 && z === 0) || hash2(x, z, worldSeed + 701) > 0.18;
+  };
+
+  const hasSouth = (x: number, z: number) => {
+    // North-South trans-planetary highway along all even X columns
+    if (isHighwayX(x)) return true;
+    // Radial feeder connectors
+    return (x === 0 && z === 0) || (x === 0 && z === -1) || hash2(x, z, worldSeed + 702) > 0.18;
+  };
+
+  let e = hasEast(cx, cz);
+  let w = hasEast(cx - 1, cz);
+  let s = hasSouth(cx, cz);
+  let n = hasSouth(cx, cz - 1);
+
+  // Guarantee that every road segment leads somewhere without dead-ends:
+  // if a road enters a chunk, it continues through or connects to an artery
+  const count = (n ? 1 : 0) + (s ? 1 : 0) + (e ? 1 : 0) + (w ? 1 : 0);
+  if (count < 2) {
+    if (isHighwayX(cx)) {
+      n = true;
+      s = true;
+    } else if (isHighwayZ(cz)) {
+      e = true;
+      w = true;
+    } else {
+      if (cx > 0) w = true; else e = true;
+      if (cz > 0) n = true; else s = true;
+    }
+  }
+
+  return { n, s, e, w };
+}
+
+export function getChunkZone(
+  cx: number,
+  cz: number,
+  openThreshold = 0.42,
+  worldSeed = 101,
+): ChunkZoneType {
+  // Starting hub guarantees quick sightseeing across downtown, parkway, and countryside fields
+  if (cx === 0 && cz === 0) return 'city';
+  if (Math.abs(cx) <= 1 && Math.abs(cz) <= 1 && worldSeed === 101) {
+    if (cx === 0 && cz === -1) return 'park';
+    if ((cx === 1 && cz === -1) || (cx === -1 && cz === -1)) return 'fields';
+    if (cx === 1 && cz === 0) return 'park';
+    if (cx === 1 && cz === 1) return 'viaduct';
+    return 'city';
+  }
+
+  const pOff = (worldSeed % 97) * 0.17;
+  const wave =
+    Math.sin(cx * 0.34 + 0.4 + pOff) +
+    Math.cos(cz * 0.32 - 0.25 - pOff * 0.7) +
+    0.35 * Math.sin((cx + cz) * 0.22 + pOff * 0.5);
+
+  if (wave > openThreshold + 0.55) {
+    return hash2(cx, cz, worldSeed + 19) > 0.42 ? 'fields' : 'viaduct';
+  }
+  if (wave > openThreshold) {
+    return 'fields';
+  }
+  if (wave > openThreshold - 0.48) {
+    return 'park';
+  }
+  return 'city';
+}
+
+export function isOpenSpaceChunk(cx: number, cz: number, openThreshold = 0.42, worldSeed = 101): boolean {
+  const z = getChunkZone(cx, cz, openThreshold, worldSeed);
+  return z === 'fields' || z === 'viaduct';
+}
+
+export function chunkHasFullPlaza(_cx: number, _cz: number, _openThreshold = 0.42, _worldSeed = 101): boolean {
+  return true;
+}
+
+interface FlyingCar {
+  x: number;
+  y: number;
+  z: number;
+  dirX: number;
+  dirZ: number;
+  speed: number;
+  bobPhase: number;
+}
+
+interface Pedestrian {
+  x: number;
+  z: number;
+  dirX: number;
+  dirZ: number;
+  speed: number;
+  phase: number;
+  scale: number;
+}
+
+interface CloudPuff {
+  ox: number;
+  oy: number;
+  oz: number;
+  scaleX: number;
+  scaleY: number;
+  rot: number;
+  layer: number;
+}
+
+function buildFlyingCarGeometry(): THREE.BufferGeometry {
+  const hull = new THREE.BoxGeometry(2.1, 0.72, 5.2);
+  hull.translate(0, 0, 0);
+
+  const canopy = new THREE.BoxGeometry(1.45, 0.48, 2.3);
+  canopy.translate(0, 0.52, 0.15);
+
+  const leftWing = new THREE.BoxGeometry(0.85, 0.24, 3.1);
+  leftWing.translate(-1.32, -0.05, 0.35);
+
+  const rightWing = new THREE.BoxGeometry(0.85, 0.24, 3.1);
+  rightWing.translate(1.32, -0.05, 0.35);
+
+  const merged = mergeGeometries([hull, canopy, leftWing, rightWing]);
+  hull.dispose();
+  canopy.dispose();
+  leftWing.dispose();
+  rightWing.dispose();
+  return merged;
+}
+
+function buildPedestrianGeometry(): THREE.BufferGeometry {
+  const body = new THREE.CylinderGeometry(0.24, 0.32, 1.28, 6);
+  body.translate(0, 0.64, 0);
+
+  const head = new THREE.SphereGeometry(0.2, 6, 6);
+  head.translate(0, 1.46, 0);
+
+  const merged = mergeGeometries([body, head]);
+  body.dispose();
+  head.dispose();
+  return merged;
+}
+
+function buildTreeCanopyGeometry(): THREE.BufferGeometry {
+  const lower = new THREE.ConeGeometry(2.8, 4.4, 7);
+  lower.translate(0, 5.2, 0);
+  const mid = new THREE.ConeGeometry(2.2, 3.8, 7);
+  mid.translate(0, 7.6, 0);
+  const top = new THREE.ConeGeometry(1.45, 3.3, 7);
+  top.translate(0, 9.8, 0);
+  const merged = mergeGeometries([lower, mid, top]);
+  lower.dispose();
+  mid.dispose();
+  top.dispose();
+  return merged ?? new THREE.ConeGeometry(2.6, 6.5, 7);
+}
+
+interface HangarZone {
+  id: string;
+  name: string;
+  x: number;
+  z: number;
+  halfW: number;
+  halfD: number;
+  roofY: number;
+}
+
+interface SkyGateAnchor {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+}
+
+export class CoruscantWorld {
+  public readonly group = new THREE.Group();
+
+  private planetId: PlanetId = 'coruscant';
+  private biomeId: BiomeId = 'coruscant';
+  private season: SeasonId = 'summer';
+  private planetName = 'Корускант';
+  private worldSeed = 101;
+  private facadeMaterials: THREE.MeshStandardMaterial[] = [];
+  private trimMaterial: THREE.MeshStandardMaterial;
+  private plazaMaterial: THREE.MeshStandardMaterial;
+  private fieldMaterial: THREE.MeshStandardMaterial;
+  private hillMaterial: THREE.MeshStandardMaterial;
+  private pondMaterial: THREE.MeshStandardMaterial;
+  private trunkMaterial: THREE.MeshStandardMaterial;
+  private canopyMaterial: THREE.MeshStandardMaterial;
+  private roadMaterial: THREE.MeshStandardMaterial;
+  private beaconMaterial: THREE.MeshBasicMaterial;
+  private lampGlowMaterial: THREE.MeshBasicMaterial;
+  private signMaterials: THREE.MeshBasicMaterial[] = [];
+  private abyssFloor: THREE.Mesh;
+
+  private towerMeshes: THREE.InstancedMesh[] = [];
+  private trimMesh: THREE.InstancedMesh;
+  private domeMesh: THREE.InstancedMesh;
+  private plazaMesh: THREE.InstancedMesh;
+  private fieldMesh: THREE.InstancedMesh;
+  private hillMesh: THREE.InstancedMesh;
+  private pondMesh: THREE.InstancedMesh;
+  private treeTrunkMesh: THREE.InstancedMesh;
+  private treeCanopyMesh: THREE.InstancedMesh;
+  private roadMesh: THREE.InstancedMesh;
+  private bridgeMesh: THREE.InstancedMesh;
+  private beaconMesh: THREE.InstancedMesh;
+  private lampPoleMesh: THREE.InstancedMesh;
+  private lampGlowMesh: THREE.InstancedMesh;
+  private cafeBodyMesh: THREE.InstancedMesh;
+  private cafeAwningMesh: THREE.InstancedMesh;
+  private cafeGlowMesh: THREE.InstancedMesh;
+  private hotelBodyMesh: THREE.InstancedMesh;
+  private hotelCanopyMesh: THREE.InstancedMesh;
+  private hotelGlowMesh: THREE.InstancedMesh;
+  private obsBaseMesh: THREE.InstancedMesh;
+  private obsDomeMesh: THREE.InstancedMesh;
+  private obsRingMesh: THREE.InstancedMesh;
+  private hangarWallMesh: THREE.InstancedMesh;
+  private hangarRoofMesh: THREE.InstancedMesh;
+  private hangarGlowMesh: THREE.InstancedMesh;
+  private skyGateMesh: THREE.InstancedMesh;
+  private signMeshes: THREE.InstancedMesh[] = [];
+
+  private fromCageGroup: THREE.Group;
+  private fromRunnerGroup: THREE.Group;
+  private fromLeftLeg!: THREE.Mesh;
+  private fromRightLeg!: THREE.Mesh;
+  private fromLeftArm!: THREE.Mesh;
+  private fromRightArm!: THREE.Mesh;
+  private readonly fromCagePos = new THREE.Vector3(-27.5, 0, -34);
+
+  private serbosExteriorGroup: THREE.Group;
+  private serbosOutNpc: THREE.Group;
+  private serbosOutArm!: THREE.Mesh;
+  private readonly serbosHousePos = new THREE.Vector3(38, 0, 252);
+
+  private flyingCarMesh: THREE.InstancedMesh;
+  private flyingCarGlowMesh: THREE.InstancedMesh;
+  private flyingCars: FlyingCar[] = [];
+
+  private pedestrianMesh: THREE.InstancedMesh;
+  private pedestrians: Pedestrian[] = [];
+
+  private cloudMesh: THREE.InstancedMesh;
+  private cloudMaterial: THREE.MeshBasicMaterial;
+  private cloudPuffs: CloudPuff[] = [];
+
+  private rainLines: THREE.LineSegments;
+  private rainMaterial: THREE.LineBasicMaterial;
+  private rainPositions: Float32Array;
+  private rainOffsets: Float32Array;
+
+  private activeBuildings: BuildingFootprint[] = [];
+  private landmarks: WorldLandmark[] = [];
+  private hangars: HangarZone[] = [];
+  private skyGates: SkyGateAnchor[] = [];
+  private lastChunkX = Number.NaN;
+  private lastChunkZ = Number.NaN;
+  private disposables: { dispose: () => void }[] = [];
+
+  constructor(scene: THREE.Scene, maxAnisotropy: number) {
+    scene.add(this.group);
+
+    // 1. Tower Facades (3 styles)
+    const facadeSets = createCoruscantFacadeTextures(maxAnisotropy);
+    const towerBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+    this.disposables.push(towerBoxGeo);
+
+    for (let i = 0; i < facadeSets.length; i++) {
+      const set = facadeSets[i];
+      set.map.repeat.set(2, 5);
+      set.emissiveMap.repeat.set(2, 5);
+      const mat = new THREE.MeshStandardMaterial({
+        map: set.map,
+        emissiveMap: set.emissiveMap,
+        emissive: new THREE.Color(0xffffff),
+        emissiveIntensity: 0.9,
+        roughness: 0.4 + i * 0.1,
+        metalness: 0.56 - i * 0.08,
+      });
+      this.facadeMaterials.push(mat);
+
+      const imesh = new THREE.InstancedMesh(towerBoxGeo, mat, MAX_TOWER_INSTANCES);
+      imesh.castShadow = false;
+      imesh.receiveShadow = true;
+      imesh.frustumCulled = false;
+      this.group.add(imesh);
+      this.towerMeshes.push(imesh);
+
+      this.disposables.push(set.map, set.emissiveMap, mat);
+    }
+
+    // 2. Architectural Metallic Trims, Spires, Domes & Skybridges
+    this.trimMaterial = new THREE.MeshStandardMaterial({
+      color: 0x242c3a,
+      roughness: 0.3,
+      metalness: 0.84,
+    });
+    this.trimMesh = new THREE.InstancedMesh(towerBoxGeo, this.trimMaterial, MAX_ACCENT_INSTANCES);
+    this.trimMesh.receiveShadow = true;
+    this.trimMesh.frustumCulled = false;
+    this.group.add(this.trimMesh);
+
+    const domeGeo = new THREE.SphereGeometry(1, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    this.domeMesh = new THREE.InstancedMesh(domeGeo, this.trimMaterial, MAX_DOME_INSTANCES);
+    this.domeMesh.frustumCulled = false;
+    this.group.add(this.domeMesh);
+
+    this.bridgeMesh = new THREE.InstancedMesh(towerBoxGeo, this.trimMaterial, MAX_BRIDGE_INSTANCES);
+    this.bridgeMesh.frustumCulled = false;
+    this.group.add(this.bridgeMesh);
+
+    this.plazaMaterial = new THREE.MeshStandardMaterial({
+      color: 0x10151f,
+      roughness: 0.65,
+      metalness: 0.45,
+    });
+    this.plazaMesh = new THREE.InstancedMesh(towerBoxGeo, this.plazaMaterial, MAX_PLAZA_INSTANCES);
+    this.plazaMesh.receiveShadow = true;
+    this.plazaMesh.frustumCulled = false;
+    this.group.add(this.plazaMesh);
+    this.disposables.push(this.trimMaterial, domeGeo, this.plazaMaterial);
+
+    // 2b. Countryside Fields, Rolling Hills, Ponds & Trees
+    const fieldTex = createFieldGroundTexture(maxAnisotropy);
+    this.fieldMaterial = new THREE.MeshStandardMaterial({
+      map: fieldTex,
+      color: 0x6f9646,
+      roughness: 0.92,
+      metalness: 0.04,
+    });
+    this.fieldMesh = new THREE.InstancedMesh(towerBoxGeo, this.fieldMaterial, MAX_FIELD_INSTANCES);
+    this.fieldMesh.receiveShadow = true;
+    this.fieldMesh.frustumCulled = false;
+    this.group.add(this.fieldMesh);
+
+    const hillGeo = new THREE.DodecahedronGeometry(1, 1);
+    this.hillMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4c6d33,
+      roughness: 0.88,
+      metalness: 0.05,
+    });
+    this.hillMesh = new THREE.InstancedMesh(hillGeo, this.hillMaterial, MAX_HILL_INSTANCES);
+    this.hillMesh.receiveShadow = true;
+    this.hillMesh.frustumCulled = false;
+    this.group.add(this.hillMesh);
+
+    const pondGeo = new THREE.CircleGeometry(1, 20);
+    pondGeo.rotateX(-Math.PI / 2);
+    this.pondMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1d4d6b,
+      roughness: 0.09,
+      metalness: 0.78,
+      envMapIntensity: 1.5,
+    });
+    this.pondMesh = new THREE.InstancedMesh(pondGeo, this.pondMaterial, MAX_POND_INSTANCES);
+    this.pondMesh.frustumCulled = false;
+    this.group.add(this.pondMesh);
+
+    const trunkGeo = new THREE.CylinderGeometry(0.24, 0.44, 3.8, 6);
+    trunkGeo.translate(0, 1.9, 0);
+    this.trunkMaterial = new THREE.MeshStandardMaterial({
+      color: 0x5c4632,
+      roughness: 0.92,
+      metalness: 0.04,
+    });
+    this.treeTrunkMesh = new THREE.InstancedMesh(trunkGeo, this.trunkMaterial, MAX_TREE_INSTANCES);
+    this.treeTrunkMesh.frustumCulled = false;
+    this.group.add(this.treeTrunkMesh);
+
+    const canopyGeo = buildTreeCanopyGeometry();
+    this.canopyMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.84,
+      metalness: 0.04,
+    });
+    this.treeCanopyMesh = new THREE.InstancedMesh(canopyGeo, this.canopyMaterial, MAX_TREE_INSTANCES);
+    this.treeCanopyMesh.frustumCulled = false;
+    this.group.add(this.treeCanopyMesh);
+
+    this.disposables.push(
+      fieldTex,
+      this.fieldMaterial,
+      hillGeo,
+      this.hillMaterial,
+      pondGeo,
+      this.pondMaterial,
+      trunkGeo,
+      this.trunkMaterial,
+      canopyGeo,
+      this.canopyMaterial,
+    );
+
+    // 3. Futuristic Skyway Boulevards
+    const roadTex = createRoadTextures(maxAnisotropy);
+    roadTex.map.repeat.set(1, 8);
+    roadTex.emissiveMap.repeat.set(1, 8);
+    roadTex.roughnessMap.repeat.set(1, 8);
+
+    this.roadMaterial = new THREE.MeshStandardMaterial({
+      map: roadTex.map,
+      emissiveMap: roadTex.emissiveMap,
+      emissive: new THREE.Color(0xffffff),
+      emissiveIntensity: 0.9,
+      roughnessMap: roadTex.roughnessMap,
+      roughness: 0.65,
+      metalness: 0.28,
+      envMapIntensity: 1.35,
+    });
+    const roadGeo = new THREE.BoxGeometry(1, 1, 1);
+    this.roadMesh = new THREE.InstancedMesh(roadGeo, this.roadMaterial, MAX_ROAD_INSTANCES);
+    this.roadMesh.receiveShadow = true;
+    this.roadMesh.frustumCulled = false;
+    this.group.add(this.roadMesh);
+    this.disposables.push(roadTex.map, roadTex.emissiveMap, roadTex.roughnessMap, this.roadMaterial, roadGeo);
+
+    // 4. Boulevard Streetlight Pylons & Lamps
+    const poleGeo = new THREE.BoxGeometry(0.35, 6.2, 0.35);
+    this.lampPoleMesh = new THREE.InstancedMesh(poleGeo, this.trimMaterial, MAX_LAMP_INSTANCES);
+    this.lampPoleMesh.frustumCulled = false;
+    this.group.add(this.lampPoleMesh);
+
+    const lampGeo = new THREE.BoxGeometry(1.1, 0.24, 0.45);
+    this.lampGlowMaterial = new THREE.MeshBasicMaterial({ color: 0xffe4b5, toneMapped: false });
+    this.lampGlowMesh = new THREE.InstancedMesh(lampGeo, this.lampGlowMaterial, MAX_LAMP_INSTANCES);
+    this.lampGlowMesh.frustumCulled = false;
+    this.group.add(this.lampGlowMesh);
+    this.disposables.push(poleGeo, lampGeo, this.lampGlowMaterial);
+
+    // 5. Holographic Neon Signs (4 styles, 1 draw call each)
+    const signTextures = createNeonSignTextures(maxAnisotropy);
+    const signGeo = new THREE.PlaneGeometry(16, 8);
+    this.disposables.push(signGeo);
+
+    for (let i = 0; i < signTextures.length; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: signTextures[i],
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      this.signMaterials.push(mat);
+      const imesh = new THREE.InstancedMesh(signGeo, mat, MAX_SIGN_PER_STYLE);
+      imesh.frustumCulled = false;
+      this.group.add(imesh);
+      this.signMeshes.push(imesh);
+      this.disposables.push(signTextures[i], mat);
+    }
+
+    // 6. Rooftop Aviation Beacons
+    const beaconGeo = new THREE.SphereGeometry(1, 8, 8);
+    this.beaconMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.beaconMesh = new THREE.InstancedMesh(beaconGeo, this.beaconMaterial, MAX_BEACON_INSTANCES);
+    this.beaconMesh.frustumCulled = false;
+    this.group.add(this.beaconMesh);
+    this.disposables.push(beaconGeo, this.beaconMaterial);
+
+    // 6b. Cozy Roadside Aero-Café Pavilions (3 instanced draw calls)
+    const cafeBodyGeo = new THREE.BoxGeometry(8.5, 4.2, 12.5);
+    const cafeBodyMat = new THREE.MeshStandardMaterial({
+      color: 0x182232,
+      roughness: 0.48,
+      metalness: 0.35,
+    });
+    this.cafeBodyMesh = new THREE.InstancedMesh(cafeBodyGeo, cafeBodyMat, MAX_CAFE_INSTANCES);
+    this.cafeBodyMesh.frustumCulled = false;
+    this.group.add(this.cafeBodyMesh);
+
+    const cafeAwningGeo = new THREE.BoxGeometry(10.8, 0.35, 13.8);
+    const cafeAwningMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.45,
+      roughness: 0.35,
+      metalness: 0.2,
+    });
+    this.cafeAwningMesh = new THREE.InstancedMesh(cafeAwningGeo, cafeAwningMat, MAX_CAFE_INSTANCES);
+    this.cafeAwningMesh.frustumCulled = false;
+    this.group.add(this.cafeAwningMesh);
+
+    const cafeGlowGeo = new THREE.BoxGeometry(0.4, 2.8, 10.6);
+    const cafeGlowMat = new THREE.MeshBasicMaterial({
+      color: 0xfde68a,
+      toneMapped: false,
+    });
+    this.cafeGlowMesh = new THREE.InstancedMesh(cafeGlowGeo, cafeGlowMat, MAX_CAFE_INSTANCES);
+    this.cafeGlowMesh.frustumCulled = false;
+    this.group.add(this.cafeGlowMesh);
+
+    this.disposables.push(
+      cafeBodyGeo,
+      cafeBodyMat,
+      cafeAwningGeo,
+      cafeAwningMat,
+      cafeGlowGeo,
+      cafeGlowMat,
+    );
+
+    // 6c. Boutique Sky-Hotel Buildings with Glowing Canopy Entrance (3 instanced draw calls)
+    const hotelBodyGeo = new THREE.BoxGeometry(14.5, 22.0, 16.0);
+    const hotelBodyMat = new THREE.MeshStandardMaterial({
+      color: 0x1a2030,
+      roughness: 0.4,
+      metalness: 0.45,
+    });
+    this.hotelBodyMesh = new THREE.InstancedMesh(hotelBodyGeo, hotelBodyMat, MAX_HOTEL_INSTANCES);
+    this.hotelBodyMesh.frustumCulled = false;
+    this.group.add(this.hotelBodyMesh);
+
+    const hotelCanopyGeo = new THREE.BoxGeometry(4.6, 0.4, 9.2);
+    const hotelCanopyMat = new THREE.MeshStandardMaterial({
+      color: 0xc084fc,
+      emissive: 0xa855f7,
+      emissiveIntensity: 0.5,
+      roughness: 0.3,
+      metalness: 0.3,
+    });
+    this.hotelCanopyMesh = new THREE.InstancedMesh(hotelCanopyGeo, hotelCanopyMat, MAX_HOTEL_INSTANCES);
+    this.hotelCanopyMesh.frustumCulled = false;
+    this.group.add(this.hotelCanopyMesh);
+
+    const hotelGlowGeo = new THREE.BoxGeometry(0.5, 16.5, 12.2);
+    const hotelGlowMat = new THREE.MeshBasicMaterial({
+      color: 0xe9d5ff,
+      toneMapped: false,
+    });
+    this.hotelGlowMesh = new THREE.InstancedMesh(hotelGlowGeo, hotelGlowMat, MAX_HOTEL_INSTANCES);
+    this.hotelGlowMesh.frustumCulled = false;
+    this.group.add(this.hotelGlowMesh);
+
+    this.disposables.push(
+      hotelBodyGeo,
+      hotelBodyMat,
+      hotelCanopyGeo,
+      hotelCanopyMat,
+      hotelGlowGeo,
+      hotelGlowMat,
+    );
+
+    // 6d. Walk-In Observatory Planetarium Domes (3 instanced draw calls)
+    const obsBaseGeo = new THREE.CylinderGeometry(7.2, 7.6, 3.2, 16);
+    const obsBaseMat = new THREE.MeshStandardMaterial({
+      color: 0x162033,
+      roughness: 0.42,
+      metalness: 0.48,
+    });
+    this.obsBaseMesh = new THREE.InstancedMesh(obsBaseGeo, obsBaseMat, MAX_OBS_INSTANCES);
+    this.obsBaseMesh.frustumCulled = false;
+    this.group.add(this.obsBaseMesh);
+
+    const obsDomeGeo = new THREE.SphereGeometry(6.8, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.52);
+    const obsDomeMat = new THREE.MeshStandardMaterial({
+      color: 0x7dd3fc,
+      emissive: 0x0ea5e9,
+      emissiveIntensity: 0.35,
+      roughness: 0.14,
+      metalness: 0.65,
+    });
+    this.obsDomeMesh = new THREE.InstancedMesh(obsDomeGeo, obsDomeMat, MAX_OBS_INSTANCES);
+    this.obsDomeMesh.frustumCulled = false;
+    this.group.add(this.obsDomeMesh);
+
+    const obsRingGeo = new THREE.TorusGeometry(7.5, 0.28, 6, 24);
+    obsRingGeo.rotateX(Math.PI / 2);
+    const obsRingMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    this.obsRingMesh = new THREE.InstancedMesh(obsRingGeo, obsRingMat, MAX_OBS_INSTANCES);
+    this.obsRingMesh.frustumCulled = false;
+    this.group.add(this.obsRingMesh);
+
+    this.disposables.push(obsBaseGeo, obsBaseMat, obsDomeGeo, obsDomeMat, obsRingGeo, obsRingMat);
+
+    // 6e. Open Hollow Drive-In & Fly-In Aero-Hangars (3 instanced draw calls)
+    const hangarWallGeo = new THREE.BoxGeometry(2.8, 16.5, 48);
+    const hangarMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.38,
+      metalness: 0.65,
+    });
+    this.hangarWallMesh = new THREE.InstancedMesh(hangarWallGeo, hangarMat, MAX_HANGAR_INSTANCES * 2);
+    this.hangarWallMesh.frustumCulled = false;
+    this.group.add(this.hangarWallMesh);
+
+    const hangarRoofGeo = new THREE.BoxGeometry(31.8, 1.8, 48);
+    this.hangarRoofMesh = new THREE.InstancedMesh(hangarRoofGeo, hangarMat, MAX_HANGAR_INSTANCES);
+    this.hangarRoofMesh.frustumCulled = false;
+    this.group.add(this.hangarRoofMesh);
+
+    const hangarGlowGeo = new THREE.BoxGeometry(0.45, 0.35, 46.0);
+    const hangarGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    this.hangarGlowMesh = new THREE.InstancedMesh(hangarGlowGeo, hangarGlowMat, MAX_HANGAR_INSTANCES * 4);
+    this.hangarGlowMesh.frustumCulled = false;
+    this.group.add(this.hangarGlowMesh);
+
+    // 6f. Cloud-Layer Fly-Through Sky-Gates (1 draw call)
+    const skyGateGeo = new THREE.TorusGeometry(18, 1.15, 8, 28);
+    const skyGateMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    this.skyGateMesh = new THREE.InstancedMesh(skyGateGeo, skyGateMat, MAX_SKYGATE_INSTANCES);
+    this.skyGateMesh.frustumCulled = false;
+    this.group.add(this.skyGateMesh);
+
+    this.disposables.push(
+      hangarWallGeo,
+      hangarMat,
+      hangarRoofGeo,
+      hangarGlowGeo,
+      hangarGlowMat,
+      skyGateGeo,
+      skyGateMat,
+    );
+
+    // 7. Planetary Horizon Surface (16km seamless planetary disc extending to the horizon)
+    const abyssGeo = new THREE.CircleGeometry(16000, 64);
+    abyssGeo.rotateX(-Math.PI / 2);
+    const abyssMat = new THREE.MeshStandardMaterial({
+      color: 0x10151f,
+      roughness: 0.85,
+      metalness: 0.15,
+    });
+    this.abyssFloor = new THREE.Mesh(abyssGeo, abyssMat);
+    this.abyssFloor.position.y = -2.25;
+    this.abyssFloor.receiveShadow = true;
+    this.group.add(this.abyssFloor);
+    this.disposables.push(abyssGeo, abyssMat);
+
+    // 7b. Special Quest Landmark: Angry Earthling «Фром» inside 3D Cage
+    this.fromCageGroup = new THREE.Group();
+    this.fromCageGroup.position.copy(this.fromCagePos);
+    const cageBaseMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.45, metalness: 0.65 });
+    const cageBarMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.85 });
+    const cageWarnMat = new THREE.MeshBasicMaterial({ color: 0xf97316, toneMapped: false });
+    const cageFloorGeo = new THREE.BoxGeometry(7.2, 0.3, 7.2);
+    const cageRoofGeo = new THREE.BoxGeometry(7.4, 0.25, 7.4);
+    const cageCornerGeo = new THREE.BoxGeometry(0.28, 3.6, 0.28);
+    const cageBarGeo = new THREE.CylinderGeometry(0.055, 0.055, 3.4, 8);
+    const cageStripGeo = new THREE.BoxGeometry(7.46, 0.14, 0.14);
+
+    const cageFloor = new THREE.Mesh(cageFloorGeo, cageBaseMat);
+    cageFloor.position.y = 0.15;
+    const cageRoof = new THREE.Mesh(cageRoofGeo, cageBaseMat);
+    cageRoof.position.y = 3.7;
+    this.fromCageGroup.add(cageFloor, cageRoof);
+
+    for (const cx of [-3.4, 3.4]) {
+      for (const cz of [-3.4, 3.4]) {
+        const post = new THREE.Mesh(cageCornerGeo, cageBaseMat);
+        post.position.set(cx, 1.9, cz);
+        this.fromCageGroup.add(post);
+      }
+    }
+    for (let i = -2; i <= 2; i++) {
+      const off = i * 1.15;
+      for (const side of [-3.4, 3.4]) {
+        const barZ = new THREE.Mesh(cageBarGeo, cageBarMat);
+        barZ.position.set(off, 1.9, side);
+        const barX = new THREE.Mesh(cageBarGeo, cageBarMat);
+        barX.position.set(side, 1.9, off);
+        this.fromCageGroup.add(barZ, barX);
+      }
+    }
+    for (const sz of [-3.45, 3.45]) {
+      const strip = new THREE.Mesh(cageStripGeo, cageWarnMat);
+      strip.position.set(0, 3.7, sz);
+      this.fromCageGroup.add(strip);
+    }
+
+    // Angry «Фром» character inside the cage
+    this.fromRunnerGroup = new THREE.Group();
+    const fPantsMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.78 });
+    const fShirtMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.65 });
+    const fSkinMat = new THREE.MeshStandardMaterial({ color: 0xf0c29e, roughness: 0.65 });
+    const fHairMat = new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.7 });
+    const fLegGeo = new THREE.CylinderGeometry(0.085, 0.075, 0.82, 8);
+    const fArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.68, 8);
+    const fTorsoGeo = new THREE.BoxGeometry(0.46, 0.58, 0.26);
+    const fHeadGeo = new THREE.SphereGeometry(0.17, 12, 10);
+    const fBrowGeo = new THREE.BoxGeometry(0.22, 0.045, 0.08);
+
+    this.fromLeftLeg = new THREE.Mesh(fLegGeo, fPantsMat);
+    this.fromLeftLeg.position.set(-0.12, 0.42, 0);
+    this.fromRightLeg = new THREE.Mesh(fLegGeo, fPantsMat);
+    this.fromRightLeg.position.set(0.12, 0.42, 0);
+    const fTorso = new THREE.Mesh(fTorsoGeo, fShirtMat);
+    fTorso.position.set(0, 1.12, 0);
+    this.fromLeftArm = new THREE.Mesh(fArmGeo, fShirtMat);
+    this.fromLeftArm.position.set(-0.3, 1.24, 0.08);
+    this.fromRightArm = new THREE.Mesh(fArmGeo, fShirtMat);
+    this.fromRightArm.position.set(0.3, 1.24, 0.08);
+    const fHead = new THREE.Mesh(fHeadGeo, fSkinMat);
+    fHead.position.set(0, 1.58, 0);
+    const fBrow = new THREE.Mesh(fBrowGeo, fHairMat);
+    fBrow.position.set(0, 1.63, 0.14);
+    this.fromRunnerGroup.add(
+      this.fromLeftLeg,
+      this.fromRightLeg,
+      fTorso,
+      this.fromLeftArm,
+      this.fromRightArm,
+      fHead,
+      fBrow,
+    );
+    this.fromRunnerGroup.position.set(0, 0.3, 0);
+    this.fromCageGroup.add(this.fromRunnerGroup);
+    this.group.add(this.fromCageGroup);
+
+    this.disposables.push(
+      cageBaseMat,
+      cageBarMat,
+      cageWarnMat,
+      cageFloorGeo,
+      cageRoofGeo,
+      cageCornerGeo,
+      cageBarGeo,
+      cageStripGeo,
+      fPantsMat,
+      fShirtMat,
+      fSkinMat,
+      fHairMat,
+      fLegGeo,
+      fArmGeo,
+      fTorsoGeo,
+      fHeadGeo,
+      fBrowGeo,
+    );
+
+    // 7c. Special Quest Landmark (Verdant-IX): Serbos's Riverside House + Flowing Blue River
+    this.serbosExteriorGroup = new THREE.Group();
+    const riverGeo = new THREE.PlaneGeometry(680, 28);
+    riverGeo.rotateX(-Math.PI / 2);
+    const riverMat = new THREE.MeshStandardMaterial({
+      color: 0x1e88c7,
+      roughness: 0.1,
+      metalness: 0.72,
+      envMapIntensity: 1.5,
+    });
+    const riverMesh = new THREE.Mesh(riverGeo, riverMat);
+    riverMesh.position.set(20, 0.08, 224);
+    this.serbosExteriorGroup.add(riverMesh);
+
+    const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.55, metalness: 0.35 });
+    const bridgeDeckGeo = new THREE.BoxGeometry(36, 0.65, 32);
+    const bridgeDeck = new THREE.Mesh(bridgeDeckGeo, bridgeMat);
+    bridgeDeck.position.set(0, 0.45, 224);
+    this.serbosExteriorGroup.add(bridgeDeck);
+
+    // Cozy timber house beside the river
+    const cabinWoodMat = new THREE.MeshStandardMaterial({ color: 0x6e472b, roughness: 0.72 });
+    const cabinRoofMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.3 });
+    const cabinGlowMat = new THREE.MeshBasicMaterial({ color: 0xfde68a, toneMapped: false });
+    const cabinAiGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    const houseBodyGeo = new THREE.BoxGeometry(11.5, 4.4, 9.5);
+    const houseRoofGeo = new THREE.ConeGeometry(8.6, 3.2, 4);
+    houseRoofGeo.rotateY(Math.PI / 4);
+    const housePorchGeo = new THREE.BoxGeometry(3.4, 0.35, 7.6);
+    const houseWinGeo = new THREE.BoxGeometry(0.35, 1.7, 5.4);
+    const houseDoorGeo = new THREE.BoxGeometry(0.4, 2.5, 1.7);
+
+    const hPos = this.serbosHousePos;
+    const hBody = new THREE.Mesh(houseBodyGeo, cabinWoodMat);
+    hBody.position.set(hPos.x, 2.2, hPos.z);
+    const hRoof = new THREE.Mesh(houseRoofGeo, cabinRoofMat);
+    hRoof.position.set(hPos.x, 5.9, hPos.z);
+    const hPorch = new THREE.Mesh(housePorchGeo, cabinWoodMat);
+    hPorch.position.set(hPos.x - 6.8, 0.18, hPos.z);
+    const hWin = new THREE.Mesh(houseWinGeo, cabinGlowMat);
+    hWin.position.set(hPos.x - 5.7, 2.4, hPos.z - 2.2);
+    const hDoor = new THREE.Mesh(houseDoorGeo, cabinAiGlowMat);
+    hDoor.position.set(hPos.x - 5.7, 1.45, hPos.z + 2.2);
+    this.serbosExteriorGroup.add(hBody, hRoof, hPorch, hWin, hDoor);
+
+    // Friendly Serbos NPC standing on porch facing road
+    this.serbosOutNpc = new THREE.Group();
+    this.serbosOutNpc.position.set(hPos.x - 7.8, 0.35, hPos.z + 1.5);
+    this.serbosOutNpc.rotation.y = -Math.PI / 2;
+    const sShirtMat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.72 });
+    const sLegsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+    const sLeg1 = new THREE.Mesh(fLegGeo, sLegsMat);
+    sLeg1.position.set(-0.11, 0.41, 0);
+    const sLeg2 = new THREE.Mesh(fLegGeo, sLegsMat);
+    sLeg2.position.set(0.11, 0.41, 0);
+    const sTorso = new THREE.Mesh(fTorsoGeo, sShirtMat);
+    sTorso.position.set(0, 1.1, 0);
+    const sHead = new THREE.Mesh(fHeadGeo, fSkinMat);
+    sHead.position.set(0, 1.54, 0);
+    this.serbosOutArm = new THREE.Mesh(fArmGeo, sShirtMat);
+    this.serbosOutArm.position.set(0.32, 1.38, 0.08);
+    this.serbosOutNpc.add(sLeg1, sLeg2, sTorso, sHead, this.serbosOutArm);
+    this.serbosExteriorGroup.add(this.serbosOutNpc);
+
+    this.serbosExteriorGroup.visible = false;
+    this.group.add(this.serbosExteriorGroup);
+
+    this.disposables.push(
+      riverGeo,
+      riverMat,
+      bridgeMat,
+      bridgeDeckGeo,
+      cabinWoodMat,
+      cabinRoofMat,
+      cabinGlowMat,
+      cabinAiGlowMat,
+      houseBodyGeo,
+      houseRoofGeo,
+      housePorchGeo,
+      houseWinGeo,
+      houseDoorGeo,
+      sShirtMat,
+      sLegsMat,
+    );
+
+    // 8. Detailed 3D Flying Cars (Airspeeders + Glowing Engine Thrusters)
+    const speederGeo = buildFlyingCarGeometry();
+    const speederHullMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.28,
+      metalness: 0.78,
+    });
+    this.flyingCarMesh = new THREE.InstancedMesh(speederGeo, speederHullMat, FLYING_CAR_COUNT);
+    this.flyingCarMesh.frustumCulled = false;
+    this.group.add(this.flyingCarMesh);
+
+    const thrusterGeo = new THREE.BoxGeometry(1.5, 0.22, 0.35);
+    const thrusterMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+    this.flyingCarGlowMesh = new THREE.InstancedMesh(thrusterGeo, thrusterMat, FLYING_CAR_COUNT);
+    this.flyingCarGlowMesh.frustumCulled = false;
+    this.group.add(this.flyingCarGlowMesh);
+    this.disposables.push(speederGeo, speederHullMat, thrusterGeo, thrusterMat);
+
+    const hullColors = ['#334155', '#475569', '#1e293b', '#7c2d12', '#1e3a5f', '#4c1d95'];
+    const laneAltitudes = [12, 19, 28, 42, 62, 88, 108, 124];
+    for (let i = 0; i < FLYING_CAR_COUNT; i++) {
+      const axisZ = i % 2 === 0;
+      const sign = i % 4 < 2 ? 1 : -1;
+      const corridorBase = ((Math.floor(i / 4) % 5) - 2) * 320;
+      const laneSide = (sign > 0 ? 1 : -1) * (8 + (i % 3) * 6);
+      const altitude = laneAltitudes[i % laneAltitudes.length] + (Math.random() - 0.5) * 4;
+
+      this.flyingCars.push({
+        x: axisZ ? corridorBase + laneSide : (Math.random() - 0.5) * 1300,
+        y: altitude,
+        z: axisZ ? (Math.random() - 0.5) * 1300 : corridorBase + laneSide,
+        dirX: axisZ ? 0 : sign,
+        dirZ: axisZ ? sign : 0,
+        speed: 32 + Math.random() * 44,
+        bobPhase: Math.random() * Math.PI * 2,
+      });
+
+      _color.set(hullColors[i % hullColors.length]);
+      this.flyingCarMesh.setColorAt(i, _color);
+
+      _color.set(i % 3 === 0 ? '#38bdf8' : i % 2 === 0 ? '#ff6b35' : '#fbbf24');
+      this.flyingCarGlowMesh.setColorAt(i, _color);
+    }
+    if (this.flyingCarMesh.instanceColor) this.flyingCarMesh.instanceColor.needsUpdate = true;
+    if (this.flyingCarGlowMesh.instanceColor) this.flyingCarGlowMesh.instanceColor.needsUpdate = true;
+
+    // 9. Walking Pedestrians on Boulevard Sidewalks (1 draw call)
+    const pedGeo = buildPedestrianGeometry();
+    const pedMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.75,
+      metalness: 0.1,
+    });
+    this.pedestrianMesh = new THREE.InstancedMesh(pedGeo, pedMat, PEDESTRIAN_COUNT);
+    this.pedestrianMesh.frustumCulled = false;
+    this.group.add(this.pedestrianMesh);
+    this.disposables.push(pedGeo, pedMat);
+
+    const outfitColors = ['#94a3b8', '#e2e8f0', '#38bdf8', '#f59e0b', '#fb7185', '#cbd5e1'];
+    for (let i = 0; i < PEDESTRIAN_COUNT; i++) {
+      const alongZ = i % 2 === 0;
+      const side = i % 4 < 2 ? 1 : -1;
+      const sidewalkOffset = side * (20.5 + (i % 3) * 1.4);
+      const roadLine = ((Math.floor(i / 20) % 3) - 1) * CHUNK_SIZE;
+      const dir = Math.random() > 0.5 ? 1 : -1;
+
+      this.pedestrians.push({
+        x: alongZ ? roadLine + sidewalkOffset : (Math.random() - 0.5) * 640,
+        z: alongZ ? (Math.random() - 0.5) * 640 : roadLine + sidewalkOffset,
+        dirX: alongZ ? 0 : dir,
+        dirZ: alongZ ? dir : 0,
+        speed: 1.5 + Math.random() * 1.4,
+        phase: Math.random() * Math.PI * 2,
+        scale: 0.88 + Math.random() * 0.24,
+      });
+
+      _color.set(outfitColors[i % outfitColors.length]);
+      this.pedestrianMesh.setColorAt(i, _color);
+    }
+    if (this.pedestrianMesh.instanceColor) this.pedestrianMesh.instanceColor.needsUpdate = true;
+
+    // 10. Layered 3D Cloud Sea (Y = 74..132m)
+    const cloudTex = createCloudTexture();
+    const cloudGeo = new THREE.PlaneGeometry(1, 1);
+    this.cloudMaterial = new THREE.MeshBasicMaterial({
+      map: cloudTex,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.cloudMesh = new THREE.InstancedMesh(cloudGeo, this.cloudMaterial, CLOUD_COUNT);
+    this.cloudMesh.frustumCulled = false;
+    this.cloudMesh.renderOrder = 2;
+    this.group.add(this.cloudMesh);
+    this.disposables.push(cloudTex, cloudGeo, this.cloudMaterial);
+
+    const cloudLayers = [76, 96, 118];
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+      const layer = i % 3;
+      this.cloudPuffs.push({
+        ox: (Math.random() - 0.5) * 1350,
+        oy: cloudLayers[layer] + (Math.random() - 0.5) * 14,
+        oz: (Math.random() - 0.5) * 1350,
+        scaleX: 110 + Math.random() * 140,
+        scaleY: 44 + Math.random() * 52,
+        rot: Math.random() * Math.PI * 2,
+        layer,
+      });
+    }
+
+    // 11. Velocity-Reactive 3D Precipitation (strictly outside vehicle cabin!)
+    this.rainPositions = new Float32Array(RAIN_COUNT * 6);
+    this.rainOffsets = new Float32Array(RAIN_COUNT * 3);
+    for (let i = 0; i < RAIN_COUNT; i++) {
+      this.rainOffsets[i * 3] = (Math.random() - 0.5) * 58;
+      this.rainOffsets[i * 3 + 1] = Math.random() * 38 - 10;
+      this.rainOffsets[i * 3 + 2] = (Math.random() - 0.5) * 58;
+    }
+    const rainGeo = new THREE.BufferGeometry();
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(this.rainPositions, 3));
+    this.rainMaterial = new THREE.LineBasicMaterial({
+      color: 0xbfe3ff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    this.rainLines = new THREE.LineSegments(rainGeo, this.rainMaterial);
+    this.rainLines.frustumCulled = false;
+    this.group.add(this.rainLines);
+    this.disposables.push(rainGeo, this.rainMaterial);
+
+    this.setPlanetBiome({
+      id: 'coruscant',
+      biome: 'coruscant',
+      seed: 101,
+      name: 'Корускант',
+    });
+  }
+
+  public setPlanetBiome(
+    planet: Pick<PlanetConfig, 'id' | 'biome' | 'seed' | 'name'>,
+    centerX = 0,
+    centerZ = 0,
+  ): void {
+    this.planetId = planet.id;
+    this.biomeId = planet.biome;
+    this.worldSeed = planet.seed;
+    this.planetName = planet.name;
+    this.applyBiomeAndSeasonPalette();
+
+    const cx = Math.round(centerX / CHUNK_SIZE);
+    const cz = Math.round(centerZ / CHUNK_SIZE);
+    this.rebuildChunks(cx, cz);
+  }
+
+  public setSeason(season: SeasonId): void {
+    if (this.season === season) return;
+    this.season = season;
+    this.applyBiomeAndSeasonPalette();
+    if (!Number.isNaN(this.lastChunkX) && !Number.isNaN(this.lastChunkZ)) {
+      this.rebuildChunks(this.lastChunkX, this.lastChunkZ);
+    }
+  }
+
+  private getSeasonalFoliagePalette(biome: BiomePreset): [string, string, string, string] {
+    if (this.season === 'winter') {
+      return ['#e2e8f0', '#bae6fd', '#cbd5e1', '#94a3b8'];
+    }
+    if (this.season === 'autumn') {
+      if (this.biomeId === 'amethyst') {
+        return ['#e879f9', '#f59e0b', '#fb7185', '#c084fc'];
+      }
+      return ['#d97706', '#ea580c', '#eab308', '#b45309'];
+    }
+    if (this.season === 'spring') {
+      if (this.biomeId === 'coruscant' || this.biomeId === 'verdant') {
+        return ['#4ade80', '#86efac', '#f9a8d4', '#fbcfe8'];
+      }
+    }
+    return biome.foliagePalette;
+  }
+
+  private applyBiomeAndSeasonPalette(): void {
+    const biome = BIOMES[this.biomeId];
+
+    for (let i = 0; i < this.facadeMaterials.length; i++) {
+      this.facadeMaterials[i].color.set(biome.facadeTints[i]);
+      this.facadeMaterials[i].emissive.set(biome.facadeEmissiveTint);
+    }
+    this.trimMaterial.color.set(biome.trimColor);
+    this.plazaMaterial.color.set(biome.plazaColor);
+    this.fieldMaterial.color.set(biome.fieldColor);
+    this.hillMaterial.color.set(biome.hillColor);
+    this.pondMaterial.color.set(biome.pondColor);
+    this.trunkMaterial.color.set(biome.trunkColor);
+    this.roadMaterial.color.set(biome.roadColor);
+    this.roadMaterial.emissive.set(biome.roadEmissiveTint);
+    this.lampGlowMaterial.color.set(biome.lampColor);
+    this.rainMaterial.color.set(biome.precipColor);
+
+    if (this.season === 'winter') {
+      this.fieldMaterial.color.lerp(_color.set('#e2effa'), 0.72);
+      this.hillMaterial.color.lerp(_color.set('#cbdcf0'), 0.68);
+      this.plazaMaterial.color.lerp(_color.set('#334155'), 0.35);
+      this.roadMaterial.color.lerp(_color.set('#e0f2fe'), 0.32);
+    } else if (this.season === 'autumn') {
+      this.fieldMaterial.color.lerp(_color.set('#b8833e'), 0.5);
+      this.hillMaterial.color.lerp(_color.set('#965e28'), 0.45);
+    } else if (this.season === 'spring') {
+      this.fieldMaterial.color.lerp(_color.set('#7ec868'), 0.25);
+    }
+  }
+
+  public getNearbyBuildings(): BuildingFootprint[] {
+    return this.activeBuildings;
+  }
+
+  public getLandmarks(): WorldLandmark[] {
+    return this.landmarks;
+  }
+
+  public getNearestCafe(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
+    return this.getNearestLandmarkOfType(x, z, 'cafe');
+  }
+
+  public getNearestHotel(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
+    return this.getNearestLandmarkOfType(x, z, 'hotel');
+  }
+
+  public getNearestObservatory(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
+    return this.getNearestLandmarkOfType(x, z, 'observatory');
+  }
+
+  public getNearestSerbos(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
+    return this.getNearestLandmarkOfType(x, z, 'serbos');
+  }
+
+  public getNearestFromCage(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
+    return this.getNearestLandmarkOfType(x, z, 'from_cage');
+  }
+
+  public getHangarAt(x: number, y: number, z: number): { id: string; name: string } | null {
+    for (let i = 0; i < this.hangars.length; i++) {
+      const h = this.hangars[i];
+      if (
+        Math.abs(x - h.x) <= h.halfW &&
+        Math.abs(z - h.z) <= h.halfD &&
+        y >= -1 &&
+        y <= h.roofY
+      ) {
+        return { id: h.id, name: h.name };
+      }
+    }
+    return null;
+  }
+
+  public getSkyGateAt(x: number, y: number, z: number): { id: string; name: string } | null {
+    for (let i = 0; i < this.skyGates.length; i++) {
+      const g = this.skyGates[i];
+      if (Math.hypot(x - g.x, y - g.y) <= g.radius && Math.abs(z - g.z) <= 5.5) {
+        return { id: g.id, name: g.name };
+      }
+    }
+    return null;
+  }
+
+  private getNearestLandmarkOfType(
+    x: number,
+    z: number,
+    type: WorldLandmark['type'],
+  ): { landmark: WorldLandmark; distance: number } | null {
+    let best: WorldLandmark | null = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.landmarks.length; i++) {
+      const lm = this.landmarks[i];
+      if (lm.type !== type) continue;
+      const d = Math.hypot(lm.x - x, lm.z - z);
+      if (d < bestDist) {
+        bestDist = d;
+        best = lm;
+      }
+    }
+    return best ? { landmark: best, distance: bestDist } : null;
+  }
+
+  public getZoneTypeAt(x: number, z: number): ChunkZoneType {
+    const biome = BIOMES[this.biomeId];
+    const cx = Math.round(x / CHUNK_SIZE);
+    const cz = Math.round(z / CHUNK_SIZE);
+    return getChunkZone(cx, cz, biome.openThreshold, this.worldSeed);
+  }
+
+  public isViaductOnlyAt(_x: number, _z: number): boolean {
+    return false;
+  }
+
+  public isInCityAt(x: number, z: number): boolean {
+    const zone = this.getZoneTypeAt(x, z);
+    return zone === 'city' || zone === 'park';
+  }
+
+  public canWalkAt(_x: number, _z: number): boolean {
+    return true;
+  }
+
+  public getZoneLabel(pos: THREE.Vector3): string {
+    const biome = BIOMES[this.biomeId];
+    const cx = Math.round(pos.x / CHUNK_SIZE);
+    const cz = Math.round(pos.z / CHUNK_SIZE);
+    if (pos.y > 55) return `${this.planetName} · Облачный слой`;
+    const zone = getChunkZone(cx, cz, biome.openThreshold, this.worldSeed);
+    const suffix =
+      zone === 'viaduct'
+        ? biome.openLabel.split(' · ')[1] ?? 'Небесный виадук'
+        : zone === 'fields'
+          ? biome.fieldsLabel.split(' · ')[1] ?? 'Поля и рощи'
+          : zone === 'park'
+            ? biome.parkLabel.split(' · ')[1] ?? 'Парковый проспект'
+            : biome.label.split(' · ')[1] ?? 'Центральный сектор';
+    return `${this.planetName} · ${suffix}`;
+  }
+
+  private rebuildChunks(centerCx: number, centerCz: number): void {
+    this.lastChunkX = centerCx;
+    this.lastChunkZ = centerCz;
+    this.activeBuildings.length = 0;
+    this.landmarks.length = 0;
+    this.hangars.length = 0;
+    this.skyGates.length = 0;
+
+    const biome = BIOMES[this.biomeId];
+    const foliagePalette = this.getSeasonalFoliagePalette(biome);
+    const sOff = this.worldSeed;
+    const towerCounts = [0, 0, 0];
+    const signCounts = [0, 0, 0, 0];
+    let trimCount = 0;
+    let domeCount = 0;
+    let plazaCount = 0;
+    let fieldCount = 0;
+    let hillCount = 0;
+    let pondCount = 0;
+    let treeCount = 0;
+    let roadCount = 0;
+    let bridgeCount = 0;
+    let beaconCount = 0;
+    let lampCount = 0;
+    let cafeCount = 0;
+    let hotelCount = 0;
+    let obsCount = 0;
+    let hangarCount = 0;
+    let skyGateCount = 0;
+
+    for (let gx = -GRID_RADIUS; gx <= GRID_RADIUS; gx++) {
+      for (let gz = -GRID_RADIUS; gz <= GRID_RADIUS; gz++) {
+        const cx = centerCx + gx;
+        const cz = centerCz + gz;
+        const originX = cx * CHUNK_SIZE;
+        const originZ = cz * CHUNK_SIZE;
+        const zone = getChunkZone(cx, cz, biome.openThreshold, sOff);
+        const isNature = zone === 'fields' || zone === 'park';
+        const arms = getChunkRoadArms(cx, cz, sOff);
+
+        if ((zone === 'city' || zone === 'viaduct') && plazaCount < MAX_PLAZA_INSTANCES) {
+          _dummy.position.set(originX, -2.15, originZ);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(CHUNK_SIZE, 4, CHUNK_SIZE);
+          _dummy.updateMatrix();
+          this.plazaMesh.setMatrixAt(plazaCount++, _dummy.matrix);
+        } else if (isNature && fieldCount < MAX_FIELD_INSTANCES) {
+          _dummy.position.set(originX, -2.12, originZ);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(CHUNK_SIZE, 4, CHUNK_SIZE);
+          _dummy.updateMatrix();
+          this.fieldMesh.setMatrixAt(fieldCount++, _dummy.matrix);
+        } else if (plazaCount < MAX_PLAZA_INSTANCES) {
+          _dummy.position.set(originX, -2.15, originZ);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(CHUNK_SIZE, 4, CHUNK_SIZE);
+          _dummy.updateMatrix();
+          this.plazaMesh.setMatrixAt(plazaCount++, _dummy.matrix);
+        }
+
+        // Seed-driven connected half-road arms + central intersection plaza
+        if (roadCount < MAX_ROAD_INSTANCES) {
+          _dummy.position.set(originX, -1.49, originZ);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(36, 3, 36);
+          _dummy.updateMatrix();
+          this.roadMesh.setMatrixAt(roadCount++, _dummy.matrix);
+        }
+        const halfArmLen = CHUNK_SIZE * 0.5;
+        if (arms.n && roadCount < MAX_ROAD_INSTANCES) {
+          _dummy.position.set(originX, -1.5, originZ - halfArmLen * 0.5);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(36, 3, halfArmLen);
+          _dummy.updateMatrix();
+          this.roadMesh.setMatrixAt(roadCount++, _dummy.matrix);
+        }
+        if (arms.s && roadCount < MAX_ROAD_INSTANCES) {
+          _dummy.position.set(originX, -1.5, originZ + halfArmLen * 0.5);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(36, 3, halfArmLen);
+          _dummy.updateMatrix();
+          this.roadMesh.setMatrixAt(roadCount++, _dummy.matrix);
+        }
+        if (arms.e && roadCount < MAX_ROAD_INSTANCES) {
+          _dummy.position.set(originX + halfArmLen * 0.5, -1.48, originZ);
+          _dummy.rotation.set(0, Math.PI / 2, 0);
+          _dummy.scale.set(36, 3, halfArmLen);
+          _dummy.updateMatrix();
+          this.roadMesh.setMatrixAt(roadCount++, _dummy.matrix);
+        }
+        if (arms.w && roadCount < MAX_ROAD_INSTANCES) {
+          _dummy.position.set(originX - halfArmLen * 0.5, -1.48, originZ);
+          _dummy.rotation.set(0, Math.PI / 2, 0);
+          _dummy.scale.set(36, 3, halfArmLen);
+          _dummy.updateMatrix();
+          this.roadMesh.setMatrixAt(roadCount++, _dummy.matrix);
+        }
+
+        if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1 && zone !== 'fields') {
+          for (let lz = -110; lz <= 110; lz += 55) {
+            if (Math.abs(lz) < 24) continue;
+            for (const side of [-19.2, 19.2]) {
+              if (lampCount < MAX_LAMP_INSTANCES) {
+                _dummy.position.set(originX + side, 3.1, originZ + lz);
+                _dummy.rotation.set(0, 0, 0);
+                _dummy.scale.set(1, 1, 1);
+                _dummy.updateMatrix();
+                this.lampPoleMesh.setMatrixAt(lampCount, _dummy.matrix);
+
+                _dummy.position.set(originX + side * 0.96, 6.2, originZ + lz);
+                _dummy.updateMatrix();
+                this.lampGlowMesh.setMatrixAt(lampCount, _dummy.matrix);
+                lampCount++;
+              }
+            }
+          }
+        }
+
+        if (trimCount + 2 <= MAX_ACCENT_INSTANCES && (zone === 'city' || zone === 'viaduct')) {
+          _dummy.position.set(originX - 18, -48, originZ - 18);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(5, 92, 5);
+          _dummy.updateMatrix();
+          this.trimMesh.setMatrixAt(trimCount++, _dummy.matrix);
+
+          _dummy.position.set(originX + 18, -48, originZ + 18);
+          _dummy.scale.set(5, 92, 5);
+          _dummy.updateMatrix();
+          this.trimMesh.setMatrixAt(trimCount++, _dummy.matrix);
+        }
+
+        if (zone === 'viaduct') {
+          if (hash2(cx, cz, 19) > 0.25 && bridgeCount < MAX_BRIDGE_INSTANCES) {
+            _dummy.position.set(originX, 26, originZ);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(54, 3.2, 6);
+            _dummy.updateMatrix();
+            this.bridgeMesh.setMatrixAt(bridgeCount++, _dummy.matrix);
+          }
+          continue;
+        }
+
+        if (zone === 'fields') {
+          // Open countryside: rolling hills, reflective ponds, and forest groves
+          const quadOffsets = [
+            [-92, -92],
+            [92, -92],
+            [-92, 92],
+            [92, 92],
+          ];
+          for (let q = 0; q < quadOffsets.length; q++) {
+            const [qx, qz] = quadOffsets[q];
+            const bx = originX + qx;
+            const bz = originZ + qz;
+            const seedBase = q * 37;
+            const rType = hash2(cx, cz, seedBase + 1);
+
+            let hillW = 0;
+            let hillH = 0;
+            let hasHill = false;
+            if (rType > 0.62 && hillCount < MAX_HILL_INSTANCES) {
+              hillW = 26 + hash2(cx, cz, seedBase + 2) * 28;
+              hillH = 12 + hash2(cx, cz, seedBase + 3) * 22;
+              hasHill = true;
+              _dummy.position.set(bx, -2, bz);
+              _dummy.rotation.set(0, hash2(cx, cz, seedBase + 4) * Math.PI, 0);
+              _dummy.scale.set(hillW, hillH, hillW * 0.85);
+              _dummy.updateMatrix();
+              this.hillMesh.setMatrixAt(hillCount++, _dummy.matrix);
+
+              if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+                this.activeBuildings.push({
+                  x: bx,
+                  z: bz,
+                  halfW: hillW * 0.65,
+                  halfD: hillW * 0.55,
+                  height: hillH,
+                });
+              }
+            } else if (rType < 0.2 && pondCount < MAX_POND_INSTANCES) {
+              const pr = 24 + hash2(cx, cz, seedBase + 5) * 18;
+              _dummy.position.set(bx, 0.04, bz);
+              _dummy.rotation.set(0, 0, 0);
+              _dummy.scale.set(pr, 1, pr * 0.82);
+              _dummy.updateMatrix();
+              this.pondMesh.setMatrixAt(pondCount++, _dummy.matrix);
+            }
+
+            // Dense groves in near 3x3 chunks, sparser landmark trees on outer horizon chunks
+            const isNearChunk = Math.abs(gx) <= 1 && Math.abs(gz) <= 1;
+            const treesInQuad = !isNearChunk ? 3 : rType < 0.2 ? 5 : 9;
+            for (let t = 0; t < treesInQuad; t++) {
+              if (treeCount >= MAX_TREE_INSTANCES) break;
+              const ox = (hash2(cx, cz, seedBase + 20 + t * 2) - 0.5) * 104;
+              const oz = (hash2(cx, cz, seedBase + 21 + t * 2) - 0.5) * 104;
+              const tx = bx + ox;
+              const tz = bz + oz;
+              if (Math.abs(tx - originX) < 24 || Math.abs(tz - originZ) < 24) continue;
+              // Don't plant inside a pond
+              if (rType < 0.2 && Math.hypot(ox, oz) < 30) continue;
+
+              // Elevate tree onto hill slope if inside a hill footprint so trunks are never buried
+              let treeY = -0.2;
+              if (hasHill) {
+                const rNormSq = (ox / hillW) * (ox / hillW) + (oz / (hillW * 0.85)) * (oz / (hillW * 0.85));
+                if (rNormSq < 0.85) {
+                  treeY = Math.sqrt(Math.max(0, 1 - rNormSq)) * hillH - 2.4;
+                }
+              }
+
+              const ts = 0.72 + hash2(cx, cz, seedBase + 60 + t) * 0.85;
+              const tyaw = hash2(cx, cz, seedBase + 80 + t) * Math.PI * 2;
+              _dummy.position.set(tx, treeY, tz);
+              _dummy.rotation.set(0, tyaw, 0);
+              _dummy.scale.set(ts, ts * (0.9 + hash2(cx, cz, seedBase + 95 + t) * 0.35), ts);
+              _dummy.updateMatrix();
+              this.treeTrunkMesh.setMatrixAt(treeCount, _dummy.matrix);
+              this.treeCanopyMesh.setMatrixAt(treeCount, _dummy.matrix);
+              const fCol = foliagePalette[Math.floor(hash2(cx, cz, seedBase + 110 + t) * 4) % 4];
+              this.treeCanopyMesh.setColorAt(treeCount, _color.set(fCol));
+              treeCount++;
+            }
+          }
+          continue;
+        }
+
+        // 'city' or 'park'
+        const isPark = zone === 'park';
+        if (isPark) {
+          // Roadside park trees along the avenues
+          for (let rz = -125; rz <= 125; rz += 32) {
+            if (Math.abs(rz) < 26) continue;
+            for (const side of [-23.5, 23.5]) {
+              if (treeCount < MAX_TREE_INSTANCES) {
+                const ts = 0.85 + hash2(cx, cz, rz + side) * 0.45;
+                _dummy.position.set(originX + side, -0.1, originZ + rz);
+                _dummy.rotation.set(0, hash2(cx, cz, rz * 3 + side) * Math.PI, 0);
+                _dummy.scale.setScalar(ts);
+                _dummy.updateMatrix();
+                this.treeTrunkMesh.setMatrixAt(treeCount, _dummy.matrix);
+                this.treeCanopyMesh.setMatrixAt(treeCount, _dummy.matrix);
+                const fCol = foliagePalette[Math.floor(hash2(cx, cz, rz + 71) * 4) % 4];
+                this.treeCanopyMesh.setColorAt(treeCount, _color.set(fCol));
+                treeCount++;
+              }
+            }
+          }
+        }
+
+        const quadOffsets = [
+          [-92, -92],
+          [92, -92],
+          [-92, 92],
+          [92, 92],
+        ];
+
+        for (let q = 0; q < quadOffsets.length; q++) {
+          const [qx, qz] = quadOffsets[q];
+          const bx = originX + qx;
+          const bz = originZ + qz;
+          const seedBase = q * 31;
+
+          // In park districts, alternate low sleek villas with small park groves
+          if (isPark && q % 2 === 1) {
+            for (let t = 0; t < 6; t++) {
+              if (treeCount >= MAX_TREE_INSTANCES) break;
+              const tx = bx + (hash2(cx, cz, seedBase + 40 + t) - 0.5) * 84;
+              const tz = bz + (hash2(cx, cz, seedBase + 50 + t) - 0.5) * 84;
+              const ts = 0.85 + hash2(cx, cz, seedBase + 70 + t) * 0.7;
+              _dummy.position.set(tx, -0.1, tz);
+              _dummy.rotation.set(0, t * 1.1, 0);
+              _dummy.scale.setScalar(ts);
+              _dummy.updateMatrix();
+              this.treeTrunkMesh.setMatrixAt(treeCount, _dummy.matrix);
+              this.treeCanopyMesh.setMatrixAt(treeCount, _dummy.matrix);
+              const fCol = foliagePalette[(t + q) % 4];
+              this.treeCanopyMesh.setColorAt(treeCount, _color.set(fCol));
+              treeCount++;
+            }
+            continue;
+          }
+
+          const rStyle = Math.floor(hash2(cx, cz, seedBase + 1) * 3) % 3;
+          const rHeight = hash2(cx, cz, seedBase + 2);
+          const rWidth = hash2(cx, cz, seedBase + 3);
+          const rSpire = hash2(cx, cz, seedBase + 4);
+
+          const heightMult = isPark ? 0.36 : 1.0;
+          const baseW = (isPark ? 48 : 74) + rWidth * (isPark ? 22 : 36);
+          const baseD = (isPark ? 48 : 74) + hash2(cx, cz, seedBase + 5) * (isPark ? 22 : 36);
+          const tier1H = (55 + rHeight * 90) * biome.heightScale * heightMult;
+          const tier2H = (35 + rSpire * 75) * biome.heightScale * heightMult;
+
+          if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+            this.activeBuildings.push({
+              x: bx,
+              z: bz,
+              halfW: baseW * 0.5,
+              halfD: baseD * 0.5,
+              height: tier1H + tier2H,
+            });
+          }
+
+          const podiumFullH = tier1H + 95;
+          if (towerCounts[rStyle] < MAX_TOWER_INSTANCES) {
+            _dummy.position.set(bx, -95 + podiumFullH * 0.5, bz);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(baseW, podiumFullH, baseD);
+            _dummy.updateMatrix();
+            this.towerMeshes[rStyle].setMatrixAt(towerCounts[rStyle]++, _dummy.matrix);
+          }
+
+          const upperStyle = (rStyle + 1) % 3;
+          if (towerCounts[upperStyle] < MAX_TOWER_INSTANCES) {
+            const w2 = baseW * 0.64;
+            const d2 = baseD * 0.64;
+            _dummy.position.set(bx, tier1H + tier2H * 0.5, bz);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(w2, tier2H, d2);
+            _dummy.updateMatrix();
+            this.towerMeshes[upperStyle].setMatrixAt(towerCounts[upperStyle]++, _dummy.matrix);
+          }
+
+          const totalH = tier1H + tier2H;
+
+          if (rSpire <= biome.domeChance && domeCount < MAX_DOME_INSTANCES) {
+            const domeR = baseW * 0.27;
+            _dummy.position.set(bx, totalH - 1, bz);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(domeR, domeR * 0.72, domeR);
+            _dummy.updateMatrix();
+            this.domeMesh.setMatrixAt(domeCount++, _dummy.matrix);
+          }
+
+          if (!isPark && rSpire > biome.domeChance && trimCount < MAX_ACCENT_INSTANCES) {
+            const needleH = 18 + rSpire * 34;
+            _dummy.position.set(bx, totalH + needleH * 0.5, bz);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(4.5, needleH, 4.5);
+            _dummy.updateMatrix();
+            this.trimMesh.setMatrixAt(trimCount++, _dummy.matrix);
+
+            if (beaconCount < MAX_BEACON_INSTANCES) {
+              _dummy.position.set(bx, totalH + needleH + 1.2, bz);
+              _dummy.scale.setScalar(1.3);
+              _dummy.updateMatrix();
+              _color.set(rSpire > 0.7 ? biome.beaconColors[0] : biome.beaconColors[1]);
+              this.beaconMesh.setMatrixAt(beaconCount, _dummy.matrix);
+              this.beaconMesh.setColorAt(beaconCount, _color);
+              beaconCount++;
+            }
+          }
+
+          if (biome.showSigns && !isPark && Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+            const sIdx = Math.floor(hash2(cx, cz, seedBase + 11) * 4) % 4;
+            if (signCounts[sIdx] < MAX_SIGN_PER_STYLE) {
+              const faceTowardX = q % 2 === 0 ? 1 : -1;
+              const signX = bx + faceTowardX * (baseW * 0.5 + 0.6);
+              const signY = 12 + hash2(cx, cz, seedBase + 12) * 18;
+              _dummy.position.set(signX, signY, bz);
+              _dummy.rotation.set(0, faceTowardX > 0 ? Math.PI / 2 : -Math.PI / 2, 0);
+              _dummy.scale.set(1.1, 1.1, 1);
+              _dummy.updateMatrix();
+              this.signMeshes[sIdx].setMatrixAt(signCounts[sIdx]++, _dummy.matrix);
+            }
+          }
+        }
+
+        if (!isPark && hash2(cx, cz, 99) > 0.35 && bridgeCount < MAX_BRIDGE_INSTANCES) {
+          const bh = 38 + hash2(cx, cz, 100) * 52;
+          _dummy.position.set(originX, bh, originZ + 72);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(165, 6.5, 11);
+          _dummy.updateMatrix();
+          this.bridgeMesh.setMatrixAt(bridgeCount++, _dummy.matrix);
+        }
+
+        // Cozy roadside Aero-Café pavilion in city & park blocks
+        if ((zone === 'city' || isPark) && cafeCount < MAX_CAFE_INSTANCES) {
+          const spawnCafe = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 513) > 0.36;
+          if (spawnCafe) {
+            const side = cx === 0 && cz === 0 ? 1 : hash2(cx, cz, sOff + 514) > 0.5 ? 1 : -1;
+            const cafeX = originX + side * 27.5;
+            const cafeZ = originZ - 48;
+            _dummy.position.set(cafeX, 2.1, cafeZ);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            this.cafeBodyMesh.setMatrixAt(cafeCount, _dummy.matrix);
+
+            _dummy.position.set(cafeX - side * 1.1, 4.3, cafeZ);
+            _dummy.updateMatrix();
+            this.cafeAwningMesh.setMatrixAt(cafeCount, _dummy.matrix);
+
+            _dummy.position.set(cafeX - side * 4.35, 2.0, cafeZ);
+            _dummy.updateMatrix();
+            this.cafeGlowMesh.setMatrixAt(cafeCount, _dummy.matrix);
+
+            if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+              this.activeBuildings.push({
+                x: cafeX,
+                z: cafeZ,
+                halfW: 4.3,
+                halfD: 6.3,
+                height: 4.5,
+              });
+            }
+
+            const cafeNames = ['Аэро-кафе «Горизонт»', 'Кафе «Неон 1313»', 'Терраса «Туманность»', 'Кофейня «Звёздный путь»'];
+            const cName = cafeNames[Math.abs(cx * 3 + cz * 7 + sOff) % cafeNames.length];
+            this.landmarks.push({
+              id: `cafe_${cx}_${cz}`,
+              type: 'cafe',
+              name: cName,
+              x: cafeX - side * 7.5,
+              z: cafeZ,
+            });
+            cafeCount++;
+          }
+        }
+
+        // Boutique Sky-Hotel along city & park avenues (enterable suite!)
+        if ((zone === 'city' || isPark) && hotelCount < MAX_HOTEL_INSTANCES) {
+          const spawnHotel = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 613) > 0.45;
+          if (spawnHotel) {
+            const side = cx === 0 && cz === 0 ? -1 : hash2(cx, cz, sOff + 614) > 0.5 ? 1 : -1;
+            const hotelX = originX + side * 30.5;
+            const hotelZ = originZ - 82;
+            _dummy.position.set(hotelX, 11.0, hotelZ);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            this.hotelBodyMesh.setMatrixAt(hotelCount, _dummy.matrix);
+
+            _dummy.position.set(hotelX - side * 7.8, 3.6, hotelZ);
+            _dummy.updateMatrix();
+            this.hotelCanopyMesh.setMatrixAt(hotelCount, _dummy.matrix);
+
+            _dummy.position.set(hotelX - side * 7.35, 11.2, hotelZ);
+            _dummy.updateMatrix();
+            this.hotelGlowMesh.setMatrixAt(hotelCount, _dummy.matrix);
+
+            if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+              this.activeBuildings.push({
+                x: hotelX,
+                z: hotelZ,
+                halfW: 7.3,
+                halfD: 8.1,
+                height: 22.0,
+              });
+            }
+
+            const hotelNames = ['Отель «Звёздное небо»', 'Гранд-Отель «Люмен»', 'Апарт-отель «Аврора»', 'Бутик-отель «Селена»'];
+            const hName = hotelNames[Math.abs(cx * 5 + cz * 11 + sOff) % hotelNames.length];
+            this.landmarks.push({
+              id: `hotel_${cx}_${cz}`,
+              type: 'hotel',
+              name: hName,
+              x: hotelX - side * 10.5,
+              z: hotelZ,
+            });
+            hotelCount++;
+          }
+        }
+
+        // Walk-in Star Observatory Dome in park & city districts
+        if ((isPark || zone === 'city') && obsCount < MAX_OBS_INSTANCES) {
+          const spawnObs = (cx === 0 && cz === -1) || hash2(cx, cz, sOff + 733) > 0.62;
+          if (spawnObs) {
+            const side = cx === 0 && cz === -1 ? 1 : hash2(cx, cz, sOff + 734) > 0.5 ? 1 : -1;
+            const obsX = originX + side * 29.5;
+            const obsZ = originZ + 54;
+            _dummy.position.set(obsX, 1.6, obsZ);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            this.obsBaseMesh.setMatrixAt(obsCount, _dummy.matrix);
+
+            _dummy.position.set(obsX, 3.0, obsZ);
+            _dummy.updateMatrix();
+            this.obsDomeMesh.setMatrixAt(obsCount, _dummy.matrix);
+
+            _dummy.position.set(obsX, 3.25, obsZ);
+            _dummy.updateMatrix();
+            this.obsRingMesh.setMatrixAt(obsCount, _dummy.matrix);
+
+            if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+              this.activeBuildings.push({
+                x: obsX,
+                z: obsZ,
+                halfW: 7.4,
+                halfD: 7.4,
+                height: 9.8,
+              });
+            }
+
+            const obsNames = ['Обсерватория «Зеркало неба»', 'Планетарий «Космос»', 'Звёздный купол «Вега»'];
+            const oName = obsNames[Math.abs(cx * 7 + cz * 3 + sOff) % obsNames.length];
+            this.landmarks.push({
+              id: `obs_${cx}_${cz}`,
+              type: 'observatory',
+              name: oName,
+              x: obsX - side * 10.0,
+              z: obsZ,
+            });
+            obsCount++;
+          }
+        }
+
+        // Hollow Drive-In & Fly-In Aero-Hangar straddling the avenue (open 26m x 15m interior!)
+        if (hangarCount < MAX_HANGAR_INSTANCES && (zone === 'city' || isPark)) {
+          const spawnHangar = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 811) > 0.68;
+          if (spawnHangar && arms.s) {
+            const hx = originX;
+            const hz = originZ + 96;
+            const wallXOffset = 14.5;
+
+            for (const side of [-1, 1]) {
+              _dummy.position.set(hx + side * wallXOffset, 8.25, hz);
+              _dummy.rotation.set(0, 0, 0);
+              _dummy.scale.set(1, 1, 1);
+              _dummy.updateMatrix();
+              this.hangarWallMesh.setMatrixAt(hangarCount * 2 + (side === -1 ? 0 : 1), _dummy.matrix);
+
+              if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+                this.activeBuildings.push({
+                  x: hx + side * wallXOffset,
+                  z: hz,
+                  halfW: 1.5,
+                  halfD: 24.0,
+                  height: 17.0,
+                });
+              }
+            }
+
+            _dummy.position.set(hx, 16.5, hz);
+            _dummy.rotation.set(0, 0, 0);
+            _dummy.scale.set(1, 1, 1);
+            _dummy.updateMatrix();
+            this.hangarRoofMesh.setMatrixAt(hangarCount, _dummy.matrix);
+
+            // 4 glowing interior guide strips along deck & upper corners
+            const stripOffsets: [number, number][] = [
+              [-11.8, 0.2],
+              [11.8, 0.2],
+              [-12.2, 14.8],
+              [12.2, 14.8],
+            ];
+            for (let si = 0; si < stripOffsets.length; si++) {
+              _dummy.position.set(hx + stripOffsets[si][0], stripOffsets[si][1], hz);
+              _dummy.rotation.set(0, 0, 0);
+              _dummy.scale.set(1, 1, 1);
+              _dummy.updateMatrix();
+              this.hangarGlowMesh.setMatrixAt(hangarCount * 4 + si, _dummy.matrix);
+            }
+
+            const hNames = ['Аэро-Ангар №1', 'Небесный Док «Северный»', 'Терминал-Укрытие'];
+            this.hangars.push({
+              id: `hangar_${cx}_${cz}`,
+              name: hNames[Math.abs(cx * 3 + cz * 5 + sOff) % hNames.length],
+              x: hx,
+              z: hz,
+              halfW: 12.6,
+              halfD: 23.5,
+              roofY: 16.0,
+            });
+            hangarCount++;
+          }
+        }
+
+        // Cloud-layer fly-through Sky-Gate rings
+        if (skyGateCount < MAX_SKYGATE_INSTANCES && (hash2(cx, cz, sOff + 911) > 0.6 || (cx === 0 && cz === -1))) {
+          const gy = 96 + (hash2(cx, cz, sOff + 912) - 0.5) * 18;
+          const gz = originZ - 40;
+          _dummy.position.set(originX, gy, gz);
+          _dummy.rotation.set(0, 0, 0);
+          _dummy.scale.set(1, 1, 1);
+          _dummy.updateMatrix();
+          this.skyGateMesh.setMatrixAt(skyGateCount, _dummy.matrix);
+          this.skyGates.push({
+            id: `gate_${cx}_${cz}`,
+            name: 'Небесные Врата',
+            x: originX,
+            y: gy,
+            z: gz,
+            radius: 16.0,
+          });
+          skyGateCount++;
+        }
+      }
+    }
+
+    for (let i = 0; i < this.towerMeshes.length; i++) {
+      this.towerMeshes[i].count = towerCounts[i];
+      this.towerMeshes[i].instanceMatrix.needsUpdate = true;
+    }
+    for (let i = 0; i < this.signMeshes.length; i++) {
+      this.signMeshes[i].count = signCounts[i];
+      this.signMeshes[i].instanceMatrix.needsUpdate = true;
+    }
+    this.trimMesh.count = trimCount;
+    this.trimMesh.instanceMatrix.needsUpdate = true;
+    this.domeMesh.count = domeCount;
+    this.domeMesh.instanceMatrix.needsUpdate = true;
+    this.plazaMesh.count = plazaCount;
+    this.plazaMesh.instanceMatrix.needsUpdate = true;
+    this.fieldMesh.count = fieldCount;
+    this.fieldMesh.instanceMatrix.needsUpdate = true;
+    this.hillMesh.count = hillCount;
+    this.hillMesh.instanceMatrix.needsUpdate = true;
+    this.pondMesh.count = pondCount;
+    this.pondMesh.instanceMatrix.needsUpdate = true;
+    this.treeTrunkMesh.count = treeCount;
+    this.treeTrunkMesh.instanceMatrix.needsUpdate = true;
+    this.treeCanopyMesh.count = treeCount;
+    this.treeCanopyMesh.instanceMatrix.needsUpdate = true;
+    if (this.treeCanopyMesh.instanceColor) this.treeCanopyMesh.instanceColor.needsUpdate = true;
+    this.roadMesh.count = roadCount;
+    this.roadMesh.instanceMatrix.needsUpdate = true;
+    this.bridgeMesh.count = bridgeCount;
+    this.bridgeMesh.instanceMatrix.needsUpdate = true;
+    this.lampPoleMesh.count = lampCount;
+    this.lampPoleMesh.instanceMatrix.needsUpdate = true;
+    this.lampGlowMesh.count = lampCount;
+    this.lampGlowMesh.instanceMatrix.needsUpdate = true;
+    this.cafeBodyMesh.count = cafeCount;
+    this.cafeBodyMesh.instanceMatrix.needsUpdate = true;
+    this.cafeAwningMesh.count = cafeCount;
+    this.cafeAwningMesh.instanceMatrix.needsUpdate = true;
+    this.cafeGlowMesh.count = cafeCount;
+    this.cafeGlowMesh.instanceMatrix.needsUpdate = true;
+    this.hotelBodyMesh.count = hotelCount;
+    this.hotelBodyMesh.instanceMatrix.needsUpdate = true;
+    this.hotelCanopyMesh.count = hotelCount;
+    this.hotelCanopyMesh.instanceMatrix.needsUpdate = true;
+    this.hotelGlowMesh.count = hotelCount;
+    this.hotelGlowMesh.instanceMatrix.needsUpdate = true;
+    this.obsBaseMesh.count = obsCount;
+    this.obsBaseMesh.instanceMatrix.needsUpdate = true;
+    this.obsDomeMesh.count = obsCount;
+    this.obsDomeMesh.instanceMatrix.needsUpdate = true;
+    this.obsRingMesh.count = obsCount;
+    this.obsRingMesh.instanceMatrix.needsUpdate = true;
+    this.hangarWallMesh.count = hangarCount * 2;
+    this.hangarWallMesh.instanceMatrix.needsUpdate = true;
+    this.hangarRoofMesh.count = hangarCount;
+    this.hangarRoofMesh.instanceMatrix.needsUpdate = true;
+    this.hangarGlowMesh.count = hangarCount * 4;
+    this.hangarGlowMesh.instanceMatrix.needsUpdate = true;
+    this.skyGateMesh.count = skyGateCount;
+    this.skyGateMesh.instanceMatrix.needsUpdate = true;
+    this.beaconMesh.count = beaconCount;
+    this.beaconMesh.instanceMatrix.needsUpdate = true;
+    if (this.beaconMesh.instanceColor) this.beaconMesh.instanceColor.needsUpdate = true;
+
+    // Register «Фром в клетке» on EVERY planet
+    this.landmarks.push({
+      id: 'from_cage',
+      type: 'from_cage',
+      name: 'Клетка · Землянин Фром',
+      x: this.fromCagePos.x + 6.2,
+      z: this.fromCagePos.z,
+    });
+    this.activeBuildings.push({
+      x: this.fromCagePos.x,
+      z: this.fromCagePos.z,
+      halfW: 3.7,
+      halfD: 3.7,
+      height: 4.0,
+    });
+
+    // Register Serbos's Riverside House on Verdant-IX
+    const isVerdant = this.planetId === 'verdant';
+    this.serbosExteriorGroup.visible = isVerdant;
+    if (isVerdant) {
+      this.landmarks.push({
+        id: 'serbos_house',
+        type: 'serbos',
+        name: 'Домик Сербоса у реки',
+        x: this.serbosHousePos.x - 13.5,
+        z: this.serbosHousePos.z,
+      });
+      this.activeBuildings.push({
+        x: this.serbosHousePos.x,
+        z: this.serbosHousePos.z,
+        halfW: 6.2,
+        halfD: 5.0,
+        height: 6.5,
+      });
+    }
+  }
+
+  public update(
+    vehiclePos: THREE.Vector3,
+    vehicleHeading: number,
+    vehicleVel: THREE.Vector3,
+    cameraQuat: THREE.Quaternion,
+    nightFactor: number,
+    cloudTint: THREE.Color,
+    horizonColor: THREE.Color,
+    weather: WeatherMode,
+    spaceFactor: number,
+    delta: number,
+    elapsed: number,
+    insideInterior = false,
+    isWalking = false,
+    shelteredInHangar = false,
+  ): void {
+    this.group.visible = !insideInterior && spaceFactor < 0.99;
+    if (!this.group.visible) return;
+
+    // Animate angry Earthling «Фром» running furiously inside his cage
+    const runT = elapsed * 2.9;
+    const rx = Math.sin(runT) * 2.15;
+    const rz = Math.cos(runT * 1.35) * 2.15;
+    const vx = Math.cos(runT) * 2.15 * 2.9;
+    const vz = -Math.sin(runT * 1.35) * 2.15 * 1.35 * 2.9;
+    this.fromRunnerGroup.position.set(rx, 0.3 + Math.abs(Math.sin(elapsed * 14)) * 0.08, rz);
+    this.fromRunnerGroup.rotation.y = Math.atan2(vx, vz);
+    const swing = Math.sin(elapsed * 16) * 0.72;
+    this.fromLeftLeg.rotation.x = swing;
+    this.fromRightLeg.rotation.x = -swing;
+    this.fromLeftArm.rotation.x = -Math.PI * 0.65 + swing * 0.5;
+    this.fromRightArm.rotation.x = -Math.PI * 0.65 - swing * 0.5;
+
+    // Animate Serbos waving gently outside his riverside home
+    if (this.serbosExteriorGroup.visible) {
+      this.serbosOutArm.rotation.z = -0.35 - Math.abs(Math.sin(elapsed * 3.1)) * 0.65;
+    }
+
+    const biome = BIOMES[this.biomeId];
+    const cx = Math.round(vehiclePos.x / CHUNK_SIZE);
+    const cz = Math.round(vehiclePos.z / CHUNK_SIZE);
+    if (cx !== this.lastChunkX || cz !== this.lastChunkZ) {
+      this.rebuildChunks(cx, cz);
+    }
+
+    this.abyssFloor.position.x = vehiclePos.x;
+    this.abyssFloor.position.z = vehiclePos.z;
+    const groundMat = this.abyssFloor.material as THREE.MeshStandardMaterial;
+    const currentZone = this.getZoneTypeAt(vehiclePos.x, vehiclePos.z);
+    const baseFloorColor = currentZone === 'fields' || currentZone === 'park' ? biome.fieldColor : biome.plazaColor;
+    groundMat.color.set(baseFloorColor);
+    if (weather === 'snow' || this.season === 'winter') {
+      groundMat.color.lerp(_color.set('#e2effa'), 0.72);
+    } else if (this.season === 'autumn') {
+      groundMat.color.lerp(_color.set('#965e28'), 0.35);
+    }
+
+    const cityGlow = 0.25 + nightFactor * 1.15;
+    for (const mat of this.facadeMaterials) {
+      mat.emissiveIntensity = cityGlow;
+    }
+
+    const isWet = weather === 'rain' || weather === 'storm';
+    const isSnow = weather === 'snow' || this.season === 'winter';
+    const targetRoughness = isWet ? 0.08 : isSnow ? 0.52 : 0.35;
+    const targetMetalness = isWet ? 0.85 : isSnow ? 0.12 : 0.32;
+    this.roadMaterial.roughness = THREE.MathUtils.damp(
+      this.roadMaterial.roughness,
+      targetRoughness,
+      2.5,
+      delta,
+    );
+    this.roadMaterial.metalness = THREE.MathUtils.damp(
+      this.roadMaterial.metalness,
+      targetMetalness,
+      2.5,
+      delta,
+    );
+    if (isWet) {
+      this.roadMaterial.color.set('#1e293b');
+    } else if (isSnow) {
+      this.roadMaterial.color.set('#e2e8f0');
+    } else {
+      this.roadMaterial.color.set(biome.roadColor);
+    }
+    this.roadMaterial.emissiveIntensity = 0.35 + nightFactor * 0.85;
+    this.roadMaterial.envMapIntensity = 1.4 - nightFactor * 0.65;
+    this.pondMaterial.envMapIntensity = 1.5 - nightFactor * 0.75;
+
+    // 1. Animate 3D Flying Cars + Thrusters
+    const activeCars = biome.carCount;
+    this.flyingCarMesh.count = activeCars;
+    this.flyingCarGlowMesh.count = activeCars;
+    const carWrap = 650;
+    for (let i = 0; i < activeCars; i++) {
+      const c = this.flyingCars[i];
+      c.x += c.dirX * c.speed * delta;
+      c.z += c.dirZ * c.speed * delta;
+
+      if (c.x - vehiclePos.x > carWrap) c.x -= carWrap * 2;
+      else if (c.x - vehiclePos.x < -carWrap) c.x += carWrap * 2;
+
+      if (c.z - vehiclePos.z > carWrap) c.z -= carWrap * 2;
+      else if (c.z - vehiclePos.z < -carWrap) c.z += carWrap * 2;
+
+      const hoverY = c.y + Math.sin(elapsed * 1.8 + c.bobPhase) * 0.35;
+      const yaw = c.dirX !== 0 ? (c.dirX > 0 ? Math.PI / 2 : -Math.PI / 2) : c.dirZ > 0 ? 0 : Math.PI;
+
+      _dummy.position.set(c.x, hoverY, c.z);
+      _dummy.rotation.set(0, yaw, 0);
+      _dummy.scale.setScalar(1);
+      _dummy.updateMatrix();
+      this.flyingCarMesh.setMatrixAt(i, _dummy.matrix);
+
+      _glowDummy.position.set(
+        c.x - c.dirX * 2.65,
+        hoverY - 0.05,
+        c.z - c.dirZ * 2.65,
+      );
+      _glowDummy.rotation.set(0, yaw, 0);
+      _glowDummy.scale.setScalar(1);
+      _glowDummy.updateMatrix();
+      this.flyingCarGlowMesh.setMatrixAt(i, _glowDummy.matrix);
+    }
+    this.flyingCarMesh.instanceMatrix.needsUpdate = true;
+    this.flyingCarGlowMesh.instanceMatrix.needsUpdate = true;
+
+    // 2. Animate Street Pedestrians
+    const activePeds = biome.pedCount;
+    if (vehiclePos.y < 65 && activePeds > 0) {
+      this.pedestrianMesh.visible = true;
+      this.pedestrianMesh.count = activePeds;
+      const pedWrap = 320;
+      for (let i = 0; i < activePeds; i++) {
+        const p = this.pedestrians[i];
+        p.x += p.dirX * p.speed * delta;
+        p.z += p.dirZ * p.speed * delta;
+
+        if (p.x - vehiclePos.x > pedWrap) p.x -= pedWrap * 2;
+        else if (p.x - vehiclePos.x < -pedWrap) p.x += pedWrap * 2;
+
+        if (p.z - vehiclePos.z > pedWrap) p.z -= pedWrap * 2;
+        else if (p.z - vehiclePos.z < -pedWrap) p.z += pedWrap * 2;
+
+        const strideBob = Math.abs(Math.sin(elapsed * 6.2 + p.phase)) * 0.09;
+        _dummy.position.set(p.x, strideBob, p.z);
+        _dummy.rotation.set(0, p.dirX !== 0 ? Math.PI / 2 : 0, 0);
+        _dummy.scale.setScalar(p.scale);
+        _dummy.updateMatrix();
+        this.pedestrianMesh.setMatrixAt(i, _dummy.matrix);
+      }
+      this.pedestrianMesh.instanceMatrix.needsUpdate = true;
+    } else {
+      this.pedestrianMesh.visible = false;
+    }
+
+    // 3. Animate 3D Cloud Sea (fades out cleanly above 200m as you enter orbit)
+    const cloudWrap = 680;
+    const atmoMask = THREE.MathUtils.clamp(1 - spaceFactor * 1.35, 0, 1);
+    const targetCloudOpacity =
+      (weather === 'clear' ? 0.24 : weather === 'cloudy' ? 0.56 : weather === 'rain' ? 0.62 : 0.72) *
+      atmoMask;
+    this.cloudMaterial.opacity = THREE.MathUtils.damp(
+      this.cloudMaterial.opacity,
+      targetCloudOpacity,
+      1.5,
+      delta,
+    );
+    this.cloudMaterial.color.copy(cloudTint).lerp(_color.set(biome.cloudTint), 0.35);
+
+    const visibleCloudRatio =
+      (weather === 'clear' ? 0.42 : weather === 'cloudy' ? 0.9 : 1.0) * biome.cloudDensity;
+    const activeClouds = Math.min(CLOUD_COUNT, Math.floor(CLOUD_COUNT * visibleCloudRatio));
+    this.cloudMesh.count = activeClouds;
+    this.cloudMesh.visible = this.cloudMaterial.opacity > 0.01;
+
+    if (this.cloudMesh.visible) {
+      _quat.copy(cameraQuat);
+      for (let i = 0; i < activeClouds; i++) {
+        const p = this.cloudPuffs[i];
+        p.ox += delta * (1.8 + p.layer * 0.9);
+        const wx =
+          vehiclePos.x +
+          ((((p.ox - vehiclePos.x + cloudWrap) % (cloudWrap * 2)) + cloudWrap * 2) % (cloudWrap * 2) -
+            cloudWrap);
+        const wz =
+          vehiclePos.z +
+          ((((p.oz - vehiclePos.z + cloudWrap) % (cloudWrap * 2)) + cloudWrap * 2) % (cloudWrap * 2) -
+            cloudWrap);
+
+        _dummy.position.set(wx, p.oy + Math.sin(elapsed * 0.25 + i) * 1.2, wz);
+        _dummy.quaternion.copy(_quat);
+        _dummy.rotateZ(p.rot);
+        _dummy.scale.set(p.scaleX, p.scaleY, 1);
+        _dummy.updateMatrix();
+        this.cloudMesh.setMatrixAt(i, _dummy.matrix);
+      }
+      this.cloudMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // 4. Velocity-Reactive 3D Precipitation (Rain & Snow — NEVER inside cockpit or hangar!)
+    const isSnowWeather = weather === 'snow';
+    const precipBase = isSnowWeather
+      ? 0.72
+      : this.biomeId === 'coruscant'
+        ? weather === 'rain'
+          ? 0.38
+          : weather === 'storm'
+            ? 0.58
+            : 0
+        : weather === 'rain' || weather === 'storm'
+          ? 0.48
+          : 0.26;
+    const targetRainOpacity =
+      (shelteredInHangar ? 0 : precipBase) * THREE.MathUtils.clamp(1 - spaceFactor * 1.5, 0, 1);
+    this.rainMaterial.opacity = THREE.MathUtils.damp(
+      this.rainMaterial.opacity,
+      targetRainOpacity,
+      2.2,
+      delta,
+    );
+    this.rainMaterial.color.set(isSnowWeather ? '#f8fafc' : biome.precipColor);
+
+    if (this.rainMaterial.opacity > 0.01) {
+      this.rainLines.visible = true;
+      const fallSpeed = isSnowWeather
+        ? 4.8
+        : (weather === 'storm' ? 42 : 30) * biome.precipSpeedScale;
+      const precipLen = isSnowWeather ? 0.24 : biome.precipLength;
+      const precipDrift = isSnowWeather ? 4.4 : biome.precipDrift;
+      const halfBox = 29;
+      const boxSpan = halfBox * 2;
+      const boxH = 38;
+      const cosH = Math.cos(vehicleHeading);
+      const sinH = Math.sin(vehicleHeading);
+
+      const hasDrift = precipDrift > 0.001;
+      for (let i = 0; i < RAIN_COUNT; i++) {
+        const idx = i * 3;
+        const driftX = hasDrift ? Math.sin(elapsed * 0.6 + i) * precipDrift : 0;
+        const driftZ = hasDrift ? Math.cos(elapsed * 0.5 + i) * precipDrift : 0;
+        this.rainOffsets[idx] -= (vehicleVel.x - driftX) * delta * 0.85;
+        this.rainOffsets[idx + 1] -= fallSpeed * delta;
+        this.rainOffsets[idx + 2] -= (vehicleVel.z - driftZ) * delta * 0.85;
+
+        if (this.rainOffsets[idx] > halfBox) this.rainOffsets[idx] -= boxSpan;
+        else if (this.rainOffsets[idx] < -halfBox) this.rainOffsets[idx] += boxSpan;
+
+        if (this.rainOffsets[idx + 1] < -12) this.rainOffsets[idx + 1] += boxH;
+
+        if (this.rainOffsets[idx + 2] > halfBox) this.rainOffsets[idx + 2] -= boxSpan;
+        else if (this.rainOffsets[idx + 2] < -halfBox) this.rainOffsets[idx + 2] += boxSpan;
+
+        let ox = this.rainOffsets[idx];
+        const oy = this.rainOffsets[idx + 1] + 4;
+        let oz = this.rainOffsets[idx + 2];
+
+        let streakDx = isSnowWeather ? driftX * 0.04 : vehicleVel.x * 0.04;
+        let streakDz = isSnowWeather ? driftZ * 0.04 : vehicleVel.z * 0.04;
+
+        // Strictly exclude the entire vehicle cabin + hull envelope so NO water or snow ever enters inside!
+        if (!isWalking) {
+          let lx = ox * cosH - oz * sinH;
+          const lz = ox * sinH + oz * cosH;
+          const endOx = ox + streakDx;
+          const endOz = oz + streakDz;
+          const endLx = endOx * cosH - endOz * sinH;
+          const endLz = endOx * sinH + endOz * cosH;
+
+          const startInside = Math.abs(lx) < 2.8 && lz > -3.8 && lz < 2.9 && oy > -1.4 && oy < 3.4;
+          const endInside = Math.abs(endLx) < 2.8 && endLz > -3.8 && endLz < 2.9 && oy + precipLen > -1.4 && oy < 3.4;
+
+          if (startInside || endInside) {
+            lx = lx >= 0 ? 3.6 : -3.6;
+            ox = lx * cosH + lz * sinH;
+            oz = -lx * sinH + lz * cosH;
+            streakDx = 0;
+            streakDz = 0;
+          }
+        }
+
+        const rx = vehiclePos.x + ox;
+        const ry = vehiclePos.y + oy;
+        const rz = vehiclePos.z + oz;
+
+        const pIdx = i * 6;
+        this.rainPositions[pIdx] = rx;
+        this.rainPositions[pIdx + 1] = ry;
+        this.rainPositions[pIdx + 2] = rz;
+
+        this.rainPositions[pIdx + 3] = rx + streakDx;
+        this.rainPositions[pIdx + 4] = ry + precipLen;
+        this.rainPositions[pIdx + 5] = rz + streakDz;
+      }
+      this.rainLines.geometry.attributes.position.needsUpdate = true;
+    } else {
+      this.rainLines.visible = false;
+    }
+  }
+
+  public dispose(): void {
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+  }
+}
