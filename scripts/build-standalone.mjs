@@ -77,10 +77,17 @@ async function main() {
 
   fs.mkdirSync(targetDir, { recursive: true });
   fs.writeFileSync(targetFile, html, 'utf8');
+
+  const androidAssetsDir = path.join(rootDir, 'android-apk', 'app', 'src', 'main', 'assets');
+  if (fs.existsSync(path.join(rootDir, 'android-apk', 'app', 'src', 'main'))) {
+    fs.mkdirSync(androidAssetsDir, { recursive: true });
+    fs.writeFileSync(path.join(androidAssetsDir, 'index.html'), html, 'utf8');
+  }
+
   fs.rmSync(tmpOutDir, { recursive: true, force: true });
 
   const sizeKb = Math.round(fs.statSync(targetFile).size / 1024);
-  console.log(`Built full standalone HTML (${sizeKb} KB) -> public/downloads/cyber_horizon.html`);
+  console.log(`Built full standalone HTML (${sizeKb} KB) -> public/downloads/cyber_horizon.html & android-apk/app/src/main/assets/index.html`);
 }
 
 main().catch((err) => {
