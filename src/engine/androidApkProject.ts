@@ -121,10 +121,16 @@ jobs:
           java-version: '17'
 
       - name: Accept Android SDK Licenses & Install SDK
+        shell: bash
         run: |
-          SDK_MANAGER="\${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDK_MANAGER" --licenses || true
-          "$SDK_MANAGER" "platforms;android-35" "build-tools;35.0.0"
+          SDK_ROOT="\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDK_MANAGER=$(find "$SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1)
+          if [ -n "$SDK_MANAGER" ]; then
+            set +o pipefail
+            yes | "$SDK_MANAGER" --licenses >/dev/null || true
+            "$SDK_MANAGER" "platforms;android-35" "build-tools;35.0.0"
+          fi
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
