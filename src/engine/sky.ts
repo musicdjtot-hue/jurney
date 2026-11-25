@@ -32,6 +32,12 @@ const PLANET_SKY_TINTS: Record<
     sunTint: '#fff5e0',
     tintStrength: 0.0,
   },
+  earth: {
+    zenithTint: '#1d4ed8',
+    horizonTint: '#bae6fd',
+    sunTint: '#fffbeb',
+    tintStrength: 0.42,
+  },
   kryos: {
     zenithTint: '#0c2d48',
     horizonTint: '#7dd3fc',
@@ -176,6 +182,8 @@ export class SkyAtmosphere {
         uOvercast: { value: 0.0 },
         uLightning: { value: 0.0 },
         uSpaceFactor: { value: 0.0 },
+        uFlatDome: { value: 0.0 },
+        uEarthMoonDir: { value: new THREE.Vector3(-0.4, 0.55, 0.65) },
       },
       vertexShader: `
         varying vec3 vWorldDir;
@@ -194,6 +202,8 @@ export class SkyAtmosphere {
         uniform float uOvercast;
         uniform float uLightning;
         uniform float uSpaceFactor;
+        uniform float uFlatDome;
+        uniform vec3 uEarthMoonDir;
         varying vec3 vWorldDir;
 
         void main() {
@@ -209,16 +219,30 @@ export class SkyAtmosphere {
           float atmoVis = 1.0 - uSpaceFactor;
           float sunDot = max(dot(dir, normalize(uSunDir)), 0.0);
           float sunHalo = pow(sunDot, 10.0) * 0.42 * (1.0 - uOvercast * 0.75) * atmoVis;
-          float sunCore = smoothstep(0.9982, 0.9994, sunDot) * (1.0 - uOvercast * 0.85) * (1.0 - uNightFactor * 0.7) * atmoVis;
+          float sunCore = smoothstep(0.9978, 0.9993, sunDot) * (1.0 - uOvercast * 0.85) * (1.0 - uNightFactor * (1.0 - uFlatDome * 0.45) * 0.7) * atmoVis;
           sky += uSunColor * (sunHalo + sunCore * 2.2);
 
-          vec3 moon1Dir = normalize(vec3(-0.55, 0.42, -0.72));
-          vec3 moon2Dir = normalize(vec3(-0.44, 0.28, -0.85));
-          float m1 = smoothstep(0.9991, 0.9995, max(dot(dir, moon1Dir), 0.0));
-          float m2 = smoothstep(0.99955, 0.99975, max(dot(dir, moon2Dir), 0.0));
-          float moonVis = clamp(uNightFactor * 1.1, 0.0, 1.0) * (1.0 - uOvercast * 0.85) * atmoVis;
-          sky += vec3(0.82, 0.90, 1.0) * m1 * 0.95 * moonVis;
-          sky += vec3(0.98, 0.84, 0.68) * m2 * 0.75 * moonVis;
+          if (uFlatDome > 0.5) {
+            // Flat Earth visible Moon & subtle firmament dome lattice overhead
+            float emDot = max(dot(dir, normalize(uEarthMoonDir)), 0.0);
+            float emHalo = pow(emDot, 24.0) * 0.25 * (1.0 - uOvercast * 0.7) * atmoVis;
+            float emCore = smoothstep(0.9984, 0.9993, emDot) * (1.0 - uOvercast * 0.85) * atmoVis;
+            sky += vec3(0.86, 0.93, 1.0) * (emHalo + emCore * 1.35);
+
+            float az = atan(dir.z, dir.x);
+            float meridians = smoothstep(0.985, 0.998, abs(cos(az * 6.0))) * smoothstep(0.05, 0.45, h);
+            float rings = smoothstep(0.988, 0.999, abs(cos(h * 18.0))) * smoothstep(0.06, 0.5, h);
+            float domeGrid = clamp(meridians + rings, 0.0, 1.0) * 0.11 * atmoVis;
+            sky += vec3(0.45, 0.78, 1.0) * domeGrid;
+          } else {
+            vec3 moon1Dir = normalize(vec3(-0.55, 0.42, -0.72));
+            vec3 moon2Dir = normalize(vec3(-0.44, 0.28, -0.85));
+            float m1 = smoothstep(0.9991, 0.9995, max(dot(dir, moon1Dir), 0.0));
+            float m2 = smoothstep(0.99955, 0.99975, max(dot(dir, moon2Dir), 0.0));
+            float moonVis = clamp(uNightFactor * 1.1, 0.0, 1.0) * (1.0 - uOvercast * 0.85) * atmoVis;
+            sky += vec3(0.82, 0.90, 1.0) * m1 * 0.95 * moonVis;
+            sky += vec3(0.98, 0.84, 0.68) * m2 * 0.75 * moonVis;
+          }
 
           sky += vec3(0.65, 0.78, 1.0) * uLightning * (0.2 + 0.5 * (1.0 - abs(h))) * atmoVis;
           sky = mix(sky, vec3(0.008, 0.012, 0.032), clamp(uSpaceFactor, 0.0, 1.0));
@@ -372,9 +396,21 @@ export class SkyAtmosphere {
     this.sunColor.copy(_sunColor);
 
     const sunAngle = (t - 0.25) * Math.PI * 2;
-    this.sunDir
-      .set(Math.cos(sunAngle) * 0.75, Math.max(-0.25, Math.sin(sunAngle)), -0.65)
-      .normalize();
+    if (this.planetId === 'earth') {
+      // On Flat Earth, both Sun & Moon circle visibly overhead under the dome
+      this.sunDir
+        .set(Math.cos(sunAngle) * 0.72, 0.42 + Math.sin(sunAngle) * 0.26, Math.sin(sunAngle) * 0.72)
+        .normalize();
+      this.skyMaterial.uniforms.uEarthMoonDir.value
+        .set(Math.cos(sunAngle + Math.PI) * 0.74, 0.36 - Math.sin(sunAngle) * 0.22, Math.sin(sunAngle + Math.PI) * 0.74)
+        .normalize();
+      this.skyMaterial.uniforms.uFlatDome.value = 1.0;
+    } else {
+      this.sunDir
+        .set(Math.cos(sunAngle) * 0.75, Math.max(-0.25, Math.sin(sunAngle)), -0.65)
+        .normalize();
+      this.skyMaterial.uniforms.uFlatDome.value = 0.0;
+    }
 
     this.dome.position.copy(refPos);
     this.starPoints.position.copy(refPos);

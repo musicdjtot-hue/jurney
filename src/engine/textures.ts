@@ -379,9 +379,11 @@ export class DashboardDisplay {
     const { ctx, canvas } = this;
     const w = canvas.width;
     const h = canvas.height;
-    const isSpace = inSpace || flightState === 'launching' || flightState === 'entering';
+    const isOrbitPhase = flightState === 'orbit' || flightState === 'launching_orbit';
+    const isSpace =
+      inSpace || flightState === 'launching' || flightState === 'entering' || isOrbitPhase;
     const isAir = flightState !== 'road';
-    const accent = isSpace ? '#a78bfa' : isAir ? '#38bdf8' : '#f59e0b';
+    const accent = isOrbitPhase ? '#38bdf8' : isSpace ? '#a78bfa' : isAir ? '#38bdf8' : '#f59e0b';
 
     ctx.fillStyle = '#060a12';
     ctx.fillRect(0, 0, w, h);
@@ -391,11 +393,13 @@ export class DashboardDisplay {
       ctx.fillRect(0, y, w, 1);
     }
 
-    ctx.strokeStyle = isSpace
-      ? 'rgba(167,139,250,0.45)'
-      : isAir
-        ? 'rgba(56,189,248,0.45)'
-        : 'rgba(245,158,11,0.45)';
+    ctx.strokeStyle = isOrbitPhase
+      ? 'rgba(56,189,248,0.55)'
+      : isSpace
+        ? 'rgba(167,139,250,0.45)'
+        : isAir
+          ? 'rgba(56,189,248,0.45)'
+          : 'rgba(245,158,11,0.45)';
     ctx.lineWidth = 2;
     ctx.strokeRect(6, 6, w - 12, h - 12);
 
@@ -431,11 +435,13 @@ export class DashboardDisplay {
     ctx.translate(cx, cy);
     ctx.rotate(-rollRad * 1.4);
     const pitchOffset = THREE.MathUtils.clamp(pitchRad * 120, -35, 35);
-    ctx.fillStyle = isSpace
-      ? 'rgba(167,139,250,0.18)'
-      : isAir
-        ? 'rgba(56,189,248,0.18)'
-        : 'rgba(245,158,11,0.14)';
+    ctx.fillStyle = isOrbitPhase
+      ? 'rgba(56,189,248,0.2)'
+      : isSpace
+        ? 'rgba(167,139,250,0.18)'
+        : isAir
+          ? 'rgba(56,189,248,0.18)'
+          : 'rgba(245,158,11,0.14)';
     ctx.fillRect(-70, pitchOffset, 140, 70);
 
     ctx.strokeStyle = accent;
@@ -471,29 +477,37 @@ export class DashboardDisplay {
           ? 'РЕПУЛЬСОРЫ: ВЗЛЁТ'
           : flightState === 'descending'
             ? 'РЕПУЛЬСОРЫ: ПОСАДКА'
-            : flightState === 'launching'
+            : flightState === 'launching_orbit'
               ? 'ВЫХОД НА ОРБИТУ'
-              : flightState === 'entering'
-                ? 'ВХОД В АТМОСФЕРУ'
-                : flightState === 'space'
-                  ? inOrbit
-                    ? 'РЕЖИМ: ОРБИТА'
-                    : 'РЕЖИМ: КОСМОС'
-                  : 'РЕЖИМ: ПОЛЁТ В ОБЛАКАХ';
+              : flightState === 'orbit'
+                ? 'РЕЖИМ: ОРБИТА'
+                : flightState === 'launching'
+                  ? 'ПРЫЖОК В КОСМОС'
+                  : flightState === 'entering'
+                    ? 'ПОСАДКА В ГОРОД'
+                    : flightState === 'space'
+                      ? inOrbit
+                        ? 'ОРБИТА ПЛАНЕТЫ'
+                        : 'РЕЖИМ: КОСМОС'
+                      : 'РЕЖИМ: ПОЛЁТ В ОБЛАКАХ';
     ctx.fillText(modeLabel, cx, 26);
     ctx.textAlign = 'left';
 
     ctx.fillStyle = '#94a3b8';
     ctx.font = '600 16px "Manrope", sans-serif';
-    ctx.fillText(inSpace ? 'СЕКТОР' : 'ВЫСОТА', 435, 38);
+    ctx.fillText(inSpace || isOrbitPhase ? 'СЕКТОР' : 'ВЫСОТА', 435, 38);
 
-    if (inSpace) {
+    if (inSpace || isOrbitPhase) {
       ctx.fillStyle = '#f8fafc';
       ctx.font = '700 22px "Exo 2", sans-serif';
       ctx.fillText(planetName.toUpperCase(), 435, 84);
       ctx.fillStyle = accent;
       ctx.font = '500 14px "Manrope", sans-serif';
-      ctx.fillText(inOrbit ? 'ОРБИТАЛЬНАЯ ДУГА' : 'ГЛУБОКИЙ КОСМОС', 435, 134);
+      ctx.fillText(
+        isOrbitPhase ? 'ОРБИТА · ВЫБОР ГОРОДА' : inOrbit ? 'ОРБИТАЛЬНАЯ ДУГА' : 'ГЛУБОКИЙ КОСМОС',
+        435,
+        134,
+      );
     } else {
       ctx.fillStyle = '#f8fafc';
       ctx.font = '700 46px "JetBrains Mono", monospace';

@@ -23,46 +23,28 @@ export interface InteriorBedAnchor {
 const CAFE_BOUNDS = { minX: -5.8, maxX: 5.8, minZ: -4.8, maxZ: 4.9 };
 const HOTEL_BOUNDS = { minX: -5.4, maxX: 5.4, minZ: -4.7, maxZ: 4.4 };
 const OBS_BOUNDS = { minX: -6.0, maxX: 6.0, minZ: -5.2, maxZ: 5.1 };
-const SERBOS_BOUNDS = { minX: -5.7, maxX: 5.7, minZ: -4.7, maxZ: 4.5 };
-
-const HOTEL_TV_CHANNELS = [
-  { name: 'Галактика · Космос Live', color: '#38bdf8', accent: '#0ea5e9' },
-  { name: 'Уютный камин HD', color: '#fb923c', accent: '#f59e0b' },
-  { name: 'Неон-волна · Закаты', color: '#e879f9', accent: '#a855f7' },
-];
 
 export class InteriorScene {
   public readonly group = new THREE.Group();
   private cafeGroup = new THREE.Group();
   private hotelGroup = new THREE.Group();
   private observatoryGroup = new THREE.Group();
-  private serbosGroup = new THREE.Group();
   private orreryPlanets: { pivot: THREE.Group; speed: number }[] = [];
-  private adamchikCore: THREE.Group | null = null;
-  private serbosNpcGroup: THREE.Group | null = null;
-  private serbosTeaGroup: THREE.Group | null = null;
-  private serbosRiverMesh: THREE.Mesh | null = null;
 
   private cafeSeats: InteriorSeatAnchor[] = [];
   private hotelSeats: InteriorSeatAnchor[] = [];
   private obsSeats: InteriorSeatAnchor[] = [];
-  private serbosSeats: InteriorSeatAnchor[] = [];
   private hotelBed: InteriorBedAnchor;
 
   private cafeCoffeeGroups: THREE.Group[] = [];
   private cafeObstacles: BuildingFootprint[] = [];
   private hotelObstacles: BuildingFootprint[] = [];
   private obsObstacles: BuildingFootprint[] = [];
-  private serbosObstacles: BuildingFootprint[] = [];
 
   private interiorKeyLight: THREE.PointLight;
   private interiorFillLight: THREE.PointLight;
   private hotelLampLight: THREE.PointLight;
   private hotelCoveMat: THREE.MeshBasicMaterial;
-  private hotelTvScreenMat: THREE.MeshBasicMaterial;
-  private hotelTvLight: THREE.PointLight;
-  public hotelTvOn = false;
-  public hotelTvChannel = 0;
   private skyViewMat: THREE.MeshBasicMaterial;
 
   private disposables: { dispose: () => void }[] = [];
@@ -84,11 +66,6 @@ export class InteriorScene {
     this.hotelGroup.add(this.hotelLampLight);
 
     this.hotelCoveMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, toneMapped: false });
-    this.hotelTvScreenMat = new THREE.MeshBasicMaterial({ color: 0x0b101b, toneMapped: false });
-    this.hotelTvLight = new THREE.PointLight(0x38bdf8, 0, 10, 1.5);
-    this.hotelTvLight.position.set(-4.1, 1.5, -2.4);
-    this.hotelGroup.add(this.hotelTvLight);
-
     this.skyViewMat = new THREE.MeshBasicMaterial({
       color: 0xbae6fd,
       transparent: true,
@@ -96,17 +73,15 @@ export class InteriorScene {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this.disposables.push(this.hotelCoveMat, this.hotelTvScreenMat, this.skyViewMat);
+    this.disposables.push(this.hotelCoveMat, this.skyViewMat);
 
     this.group.add(this.cafeGroup);
     this.group.add(this.hotelGroup);
     this.group.add(this.observatoryGroup);
-    this.group.add(this.serbosGroup);
 
     this.buildCafeRoom();
     this.hotelBed = this.buildHotelRoom();
     this.buildObservatoryRoom();
-    this.buildSerbosRoom();
   }
 
   private addBox(
@@ -334,26 +309,11 @@ export class InteriorScene {
     this.addBox(this.hotelGroup, 0.25, 0.4, 0.25, sx, 0.2, sz - 1.35, bedFrameMat);
     this.hotelObstacles.push({ x: sx, z: sz - 0.5, halfW: 1.3, halfD: 1.25, height: 1.5 });
 
-    // Sleek Interactive Widescreen TV on corner console (visible from both sofa and bed!)
-    const tvGroup = new THREE.Group();
-    tvGroup.position.set(-4.85, 0, -2.85);
-    tvGroup.rotation.y = Math.PI * 0.28;
-    const tvStand = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.52, 0.56), woodMat);
-    tvStand.position.set(0, 0.26, 0);
-    const tvFrame = new THREE.Mesh(new THREE.BoxGeometry(2.36, 1.38, 0.09), bedFrameMat);
-    tvFrame.position.set(0, 1.38, 0);
-    const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(2.18, 1.2), this.hotelTvScreenMat);
-    tvScreen.position.set(0, 1.38, 0.052);
-    tvGroup.add(tvStand, tvFrame, tvScreen);
-    this.disposables.push(tvStand.geometry, tvFrame.geometry, tvScreen.geometry);
-    this.hotelGroup.add(tvGroup);
-    this.hotelObstacles.push({ x: -4.85, z: -2.85, halfW: 1.15, halfD: 0.9, height: 2.0 });
-
     this.hotelSeats.push({
       id: 'hotel_sofa',
       label: 'Присесть на диван',
       playerPos: new THREE.Vector3(sx + 0.45, 1.08, sz),
-      playerLookYaw: 0.22, // looks toward TV & panoramic window
+      playerLookYaw: 0, // looks out the panoramic window
       companionPos: new THREE.Vector3(sx - 0.55, 0, sz + 0.05),
       companionYaw: -0.25,
       tableIndex: -1,
@@ -540,283 +500,22 @@ export class InteriorScene {
     });
   }
 
-  private buildSerbosRoom(): void {
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1e, roughness: 0.55, metalness: 0.08 });
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1d2432, roughness: 0.72, metalness: 0.15 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5d402a, roughness: 0.48, metalness: 0.06 });
-    const pcCaseMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.35, metalness: 0.6 });
-    const screenCyan = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
-    const screenEmerald = new THREE.MeshBasicMaterial({ color: 0x34d399, toneMapped: false });
-    const screenAmber = new THREE.MeshBasicMaterial({ color: 0xfbbf24, toneMapped: false });
-    const screenViolet = new THREE.MeshBasicMaterial({ color: 0xc084fc, toneMapped: false });
-    const cupMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.22 });
-    const teaMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.12 });
-    const riverOutsideMat = new THREE.MeshBasicMaterial({ color: 0x1d70a2 });
-    const bankMat = new THREE.MeshStandardMaterial({ color: 0x3b7a48, roughness: 0.88 });
-    const cushionMat = new THREE.MeshStandardMaterial({ color: 0x355c7d, roughness: 0.78 });
-    this.disposables.push(
-      floorMat,
-      wallMat,
-      woodMat,
-      pcCaseMat,
-      screenCyan,
-      screenEmerald,
-      screenAmber,
-      screenViolet,
-      cupMat,
-      teaMat,
-      riverOutsideMat,
-      bankMat,
-      cushionMat,
-    );
-
-    // Cabin floor, rug & ceiling
-    this.addBox(this.serbosGroup, 13.6, 0.2, 11.6, 0, -0.1, 0, floorMat);
-    this.addBox(this.serbosGroup, 13.6, 0.2, 11.6, 0, 3.9, 0, wallMat);
-    this.addBox(this.serbosGroup, 4.4, 0.03, 3.8, 1.9, 0.015, -0.5, cushionMat);
-
-    // Walls & exit doorway (+Z)
-    this.addBox(this.serbosGroup, 0.3, 4.0, 11.6, -6.65, 1.9, 0, wallMat);
-    this.addBox(this.serbosGroup, 0.3, 4.0, 11.6, 6.65, 1.9, 0, wallMat);
-    this.addBox(this.serbosGroup, 5.4, 4.0, 0.3, -3.9, 1.9, 5.65, wallMat);
-    this.addBox(this.serbosGroup, 5.4, 4.0, 0.3, 3.9, 1.9, 5.65, wallMat);
-    this.addBox(this.serbosGroup, 2.4, 1.4, 0.3, 0, 3.3, 5.65, wallMat);
-    this.addBox(this.serbosGroup, 2.1, 0.12, 0.14, 0, 2.58, 5.48, screenCyan);
-
-    // Wide River Window (-Z) + visible animated river & green bank outside!
-    this.addBox(this.serbosGroup, 13.6, 0.7, 0.3, 0, 0.35, -5.65, wallMat);
-    this.addBox(this.serbosGroup, 13.6, 0.55, 0.3, 0, 3.65, -5.65, wallMat);
-    for (const px of [-3.3, 0, 3.3]) {
-      this.addBox(this.serbosGroup, 0.16, 2.9, 0.22, px, 2.1, -5.65, wallMat);
-    }
-    this.addBox(this.serbosGroup, 13.0, 2.75, 0.04, 0, 2.1, -5.62, this.skyViewMat);
-
-    const riverGeo = new THREE.PlaneGeometry(42, 12);
-    riverGeo.rotateX(-Math.PI / 2);
-    this.serbosRiverMesh = new THREE.Mesh(riverGeo, riverOutsideMat);
-    this.serbosRiverMesh.position.set(0, -0.35, -13.5);
-    this.serbosGroup.add(this.serbosRiverMesh);
-    this.addBox(this.serbosGroup, 42, 0.25, 4.2, 0, -0.3, -7.8, bankMat);
-    this.addBox(this.serbosGroup, 42, 0.35, 16, 0, -0.25, -27, bankMat);
-    this.disposables.push(riverGeo);
-
-    // MANY COMPUTERS: Left workstation bank (3 multi-monitor rigs + 2 server racks)
-    const screenMats = [screenCyan, screenEmerald, screenAmber, screenViolet];
-    for (let i = 0; i < 3; i++) {
-      const dz = -3.6 + i * 2.8;
-      // Desk
-      this.addBox(this.serbosGroup, 1.35, 0.08, 2.3, -5.3, 0.78, dz, woodMat);
-      this.addBox(this.serbosGroup, 1.2, 0.74, 0.12, -5.3, 0.37, dz - 1.0, pcCaseMat);
-      this.addBox(this.serbosGroup, 1.2, 0.74, 0.12, -5.3, 0.37, dz + 1.0, pcCaseMat);
-      // PC Tower with LED strip
-      this.addBox(this.serbosGroup, 0.45, 0.56, 0.24, -5.35, 1.1, dz + 0.85, pcCaseMat);
-      this.addBox(this.serbosGroup, 0.04, 0.44, 0.16, -5.11, 1.1, dz + 0.85, screenMats[i % 4]);
-      // Dual Monitors + Keyboard
-      for (const mOff of [-0.42, 0.22]) {
-        this.addBox(this.serbosGroup, 0.08, 0.54, 0.72, -5.65, 1.22, dz + mOff, pcCaseMat);
-        this.addBox(this.serbosGroup, 0.03, 0.46, 0.64, -5.6, 1.22, dz + mOff, screenMats[(i + (mOff > 0 ? 1 : 0)) % 4]);
-      }
-      this.addBox(this.serbosGroup, 0.22, 0.03, 0.52, -5.0, 0.84, dz - 0.1, pcCaseMat);
-      this.addBox(this.serbosGroup, 0.2, 0.015, 0.48, -5.0, 0.86, dz - 0.1, screenCyan);
-    }
-    this.serbosObstacles.push({ x: -5.3, z: -0.8, halfW: 0.9, halfD: 4.3, height: 2.0 });
-
-    // Glowing Server Racks in back-left & back-right corners
-    for (const rx of [-5.4, 5.4]) {
-      this.addBox(this.serbosGroup, 1.0, 2.4, 1.1, rx, 1.2, 3.8, pcCaseMat);
-      for (let b = 0; b < 5; b++) {
-        this.addBox(this.serbosGroup, 0.78, 0.06, 0.05, rx, 0.5 + b * 0.4, 3.24, screenMats[b % 4]);
-      }
-      this.serbosObstacles.push({ x: rx, z: 3.8, halfW: 0.7, halfD: 0.7, height: 2.5 });
-    }
-
-    // Right wall dual computer hub (2 more desks with 4 glowing monitors)
-    for (let i = 0; i < 2; i++) {
-      const dz = -2.8 + i * 2.9;
-      this.addBox(this.serbosGroup, 1.25, 0.08, 2.2, 5.35, 0.78, dz, woodMat);
-      this.addBox(this.serbosGroup, 0.08, 0.58, 0.9, 5.7, 1.25, dz - 0.4, pcCaseMat);
-      this.addBox(this.serbosGroup, 0.03, 0.5, 0.82, 5.65, 1.25, dz - 0.4, screenMats[(i + 2) % 4]);
-      this.addBox(this.serbosGroup, 0.08, 0.58, 0.9, 5.7, 1.25, dz + 0.5, pcCaseMat);
-      this.addBox(this.serbosGroup, 0.03, 0.5, 0.82, 5.65, 1.25, dz + 0.5, screenMats[i % 4]);
-      this.addBox(this.serbosGroup, 0.42, 0.52, 0.24, 5.35, 1.08, dz + 0.9, pcCaseMat);
-    }
-    this.serbosObstacles.push({ x: 5.35, z: -1.35, halfW: 0.85, halfD: 2.8, height: 2.0 });
-
-    // Central-left AI Hub Pedestal for «Адамчик» (holographic AI core!)
-    const pedGeo = new THREE.CylinderGeometry(0.68, 0.82, 0.95, 16);
-    const pedMesh = new THREE.Mesh(pedGeo, pcCaseMat);
-    pedMesh.position.set(-2.2, 0.475, -2.5);
-    this.serbosGroup.add(pedMesh);
-    this.disposables.push(pedGeo);
-
-    this.adamchikCore = new THREE.Group();
-    this.adamchikCore.position.set(-2.2, 1.55, -2.5);
-    const aiSphereGeo = new THREE.OctahedronGeometry(0.26, 1);
-    const aiRingGeo = new THREE.TorusGeometry(0.42, 0.025, 8, 28);
-    const aiSphere = new THREE.Mesh(aiSphereGeo, screenCyan);
-    const aiRing1 = new THREE.Mesh(aiRingGeo, screenEmerald);
-    const aiRing2 = new THREE.Mesh(aiRingGeo, screenAmber);
-    aiRing2.rotation.x = Math.PI / 2;
-    this.adamchikCore.add(aiSphere, aiRing1, aiRing2);
-    this.disposables.push(aiSphereGeo, aiRingGeo);
-    this.serbosGroup.add(this.adamchikCore);
-    this.serbosObstacles.push({ x: -2.2, z: -2.5, halfW: 0.95, halfD: 0.95, height: 2.0 });
-
-    // Serbos 3D NPC figure standing warmly near the AI hub & tea table
-    const serbosChar = new THREE.Group();
-    serbosChar.position.set(-0.7, 0, -2.2);
-    const sLegGeo = new THREE.CylinderGeometry(0.08, 0.07, 0.82, 8);
-    const sTorsoGeo = new THREE.BoxGeometry(0.42, 0.56, 0.24);
-    const sHeadGeo = new THREE.SphereGeometry(0.16, 12, 10);
-    const sPantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
-    const sShirtMat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.72 });
-    const sSkinMat = new THREE.MeshStandardMaterial({ color: 0xf0c4a0, roughness: 0.65 });
-    const sHairMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1e, roughness: 0.75 });
-    this.disposables.push(sLegGeo, sTorsoGeo, sHeadGeo, sPantsMat, sShirtMat, sSkinMat, sHairMat);
-
-    for (const lx of [-0.11, 0.11]) {
-      const leg = new THREE.Mesh(sLegGeo, sPantsMat);
-      leg.position.set(lx, 0.41, 0);
-      serbosChar.add(leg);
-    }
-    const torso = new THREE.Mesh(sTorsoGeo, sShirtMat);
-    torso.position.set(0, 1.1, 0);
-    const head = new THREE.Mesh(sHeadGeo, sSkinMat);
-    head.position.set(0, 1.54, 0);
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), sHairMat);
-    hair.position.set(0, 1.57, -0.02);
-    this.disposables.push(hair.geometry);
-    serbosChar.add(torso, head, hair);
-    this.serbosNpcGroup = serbosChar;
-    this.serbosGroup.add(serbosChar);
-    this.serbosObstacles.push({ x: -0.7, z: -2.2, halfW: 0.45, halfD: 0.45, height: 1.8 });
-
-    // Cozy Tea Table + Chairs + Teapot & Teacups
-    const tx = 1.9;
-    const tz = -0.8;
-    const tTopGeo = new THREE.CylinderGeometry(0.75, 0.75, 0.07, 20);
-    const tLegGeo = new THREE.CylinderGeometry(0.07, 0.16, 0.74, 10);
-    const chairSeatGeo = new THREE.BoxGeometry(0.48, 0.07, 0.48);
-    const chairBackGeo = new THREE.BoxGeometry(0.48, 0.48, 0.06);
-    const cupGeo = new THREE.CylinderGeometry(0.058, 0.042, 0.095, 12);
-    const teaTopGeo = new THREE.CircleGeometry(0.05, 10);
-    teaTopGeo.rotateX(-Math.PI / 2);
-    const potGeo = new THREE.SphereGeometry(0.13, 12, 10);
-    this.disposables.push(tTopGeo, tLegGeo, chairSeatGeo, chairBackGeo, cupGeo, teaTopGeo, potGeo);
-
-    const tTop = new THREE.Mesh(tTopGeo, woodMat);
-    tTop.position.set(tx, 0.75, tz);
-    const tLeg = new THREE.Mesh(tLegGeo, pcCaseMat);
-    tLeg.position.set(tx, 0.37, tz);
-    this.serbosGroup.add(tTop, tLeg);
-
-    for (const side of [-1, 1]) {
-      const cz = tz + side * 0.92;
-      const seat = new THREE.Mesh(chairSeatGeo, cushionMat);
-      seat.position.set(tx, 0.45, cz);
-      const back = new THREE.Mesh(chairBackGeo, woodMat);
-      back.position.set(tx, 0.68, cz + side * 0.22);
-      this.serbosGroup.add(seat, back);
-    }
-
-    const teaGroup = new THREE.Group();
-    teaGroup.visible = false;
-    const teapot = new THREE.Mesh(potGeo, cupMat);
-    teapot.position.set(tx, 0.88, tz);
-    teaGroup.add(teapot);
-    for (const side of [-1, 1]) {
-      const cup = new THREE.Mesh(cupGeo, cupMat);
-      cup.position.set(tx + side * 0.12, 0.84, tz + side * 0.34);
-      const tea = new THREE.Mesh(teaTopGeo, teaMat);
-      tea.position.set(tx + side * 0.12, 0.886, tz + side * 0.34);
-      teaGroup.add(cup, tea);
-    }
-    this.serbosTeaGroup = teaGroup;
-    this.serbosGroup.add(teaGroup);
-
-    this.serbosObstacles.push({ x: tx, z: tz, halfW: 0.85, halfD: 1.15, height: 1.5 });
-    this.serbosSeats.push({
-      id: 'serbos_tea_table',
-      label: 'Сесть за стол пить чай',
-      playerPos: new THREE.Vector3(tx, 1.15, tz + 0.92),
-      playerLookYaw: 0,
-      companionPos: new THREE.Vector3(tx, 0, tz - 0.92),
-      companionYaw: Math.PI,
-      tableIndex: 0,
-    });
-  }
-
   public setMode(mode: InteriorMode): void {
     this.group.visible = mode !== 'none';
     this.cafeGroup.visible = mode === 'cafe';
     this.hotelGroup.visible = mode === 'hotel';
     this.observatoryGroup.visible = mode === 'observatory';
-    this.serbosGroup.visible = mode === 'serbos';
     if (mode !== 'cafe') {
       for (const cg of this.cafeCoffeeGroups) {
         cg.visible = false;
       }
     }
-    if (mode !== 'serbos' && this.serbosTeaGroup) {
-      this.serbosTeaGroup.visible = false;
-    }
-  }
-
-  public cycleHotelTv(): { on: boolean; channelName: string } {
-    if (!this.hotelTvOn) {
-      this.hotelTvOn = true;
-      this.hotelTvChannel = 0;
-    } else if (this.hotelTvChannel < HOTEL_TV_CHANNELS.length - 1) {
-      this.hotelTvChannel += 1;
-    } else {
-      this.hotelTvOn = false;
-    }
-    if (this.hotelTvOn) {
-      const ch = HOTEL_TV_CHANNELS[this.hotelTvChannel];
-      this.hotelTvScreenMat.color.set(ch.color);
-      this.hotelTvLight.color.set(ch.accent);
-      this.hotelTvLight.intensity = 1.8;
-      return { on: true, channelName: ch.name };
-    }
-    this.hotelTvScreenMat.color.set('#0b101b');
-    this.hotelTvLight.intensity = 0;
-    return { on: false, channelName: 'Выключен' };
-  }
-
-  public getHotelTvStatus(): { on: boolean; channelName: string } {
-    if (!this.hotelTvOn) return { on: false, channelName: 'Выключен' };
-    return { on: true, channelName: HOTEL_TV_CHANNELS[this.hotelTvChannel]?.name ?? 'Эфир' };
-  }
-
-  public setSerbosTeaServed(served: boolean): void {
-    if (this.serbosTeaGroup) {
-      this.serbosTeaGroup.visible = served;
-    }
   }
 
   public animate(elapsed: number): void {
-    if (this.observatoryGroup.visible) {
-      for (const op of this.orreryPlanets) {
-        op.pivot.rotation.y = elapsed * op.speed;
-      }
-    }
-    if (this.hotelGroup.visible && this.hotelTvOn) {
-      const ch = HOTEL_TV_CHANNELS[this.hotelTvChannel] ?? HOTEL_TV_CHANNELS[0];
-      const pulse = 0.84 + Math.sin(elapsed * 4.2) * 0.16;
-      this.hotelTvScreenMat.color.set(ch.color).multiplyScalar(pulse);
-      this.hotelTvLight.intensity = 1.45 + Math.sin(elapsed * 4.2) * 0.35;
-    }
-    if (this.serbosGroup.visible) {
-      if (this.adamchikCore) {
-        this.adamchikCore.position.y = 1.55 + Math.sin(elapsed * 2.2) * 0.06;
-        this.adamchikCore.rotation.y = elapsed * 1.1;
-        this.adamchikCore.children.forEach((child, idx) => {
-          if (idx > 0) child.rotation.z = elapsed * (idx === 1 ? 1.4 : -1.1);
-        });
-      }
-      if (this.serbosNpcGroup) {
-        this.serbosNpcGroup.position.y = Math.abs(Math.sin(elapsed * 2.1)) * 0.025;
-      }
+    if (!this.observatoryGroup.visible) return;
+    for (const op of this.orreryPlanets) {
+      op.pivot.rotation.y = elapsed * op.speed;
     }
   }
 
@@ -846,15 +545,9 @@ export class InteriorScene {
       this.interiorKeyLight.color.set('#bae6fd');
       this.interiorKeyLight.intensity = 2.4;
       this.interiorFillLight.intensity = 1.3;
-    } else if (mode === 'serbos') {
-      this.interiorKeyLight.color.set('#fef0c7');
-      this.interiorKeyLight.intensity = 2.8;
-      this.interiorFillLight.color.set('#7dd3fc');
-      this.interiorFillLight.intensity = 1.7;
     } else {
       this.interiorKeyLight.color.set('#ffd9b3');
       this.interiorKeyLight.intensity = (2.1 - nightFactor * 0.5) * awakeMul;
-      this.interiorFillLight.color.set('#93c5fd');
       this.interiorFillLight.intensity = 1.1 * awakeMul;
       this.hotelLampLight.intensity = (1.6 + nightFactor * 1.1) * awakeMul;
       this.hotelCoveMat.color.set(themeHex).multiplyScalar(0.55 + 0.45 * awakeMul);
@@ -862,14 +555,7 @@ export class InteriorScene {
   }
 
   public clampPlayerPosition(mode: InteriorMode, pos: THREE.Vector3): void {
-    const b =
-      mode === 'cafe'
-        ? CAFE_BOUNDS
-        : mode === 'observatory'
-          ? OBS_BOUNDS
-          : mode === 'serbos'
-            ? SERBOS_BOUNDS
-            : HOTEL_BOUNDS;
+    const b = mode === 'cafe' ? CAFE_BOUNDS : mode === 'observatory' ? OBS_BOUNDS : HOTEL_BOUNDS;
     pos.x = THREE.MathUtils.clamp(pos.x, b.minX, b.maxX);
     pos.z = THREE.MathUtils.clamp(pos.z, b.minZ, b.maxZ);
   }
@@ -877,21 +563,14 @@ export class InteriorScene {
   public getObstacles(mode: InteriorMode): BuildingFootprint[] {
     if (mode === 'cafe') return this.cafeObstacles;
     if (mode === 'observatory') return this.obsObstacles;
-    if (mode === 'serbos') return this.serbosObstacles;
     return this.hotelObstacles;
   }
 
   public getNearestSeat(mode: InteriorMode, x: number, z: number): InteriorSeatAnchor | null {
     const list =
-      mode === 'cafe'
-        ? this.cafeSeats
-        : mode === 'observatory'
-          ? this.obsSeats
-          : mode === 'serbos'
-            ? this.serbosSeats
-            : this.hotelSeats;
+      mode === 'cafe' ? this.cafeSeats : mode === 'observatory' ? this.obsSeats : this.hotelSeats;
     let best: InteriorSeatAnchor | null = null;
-    let bestDist = 2.65;
+    let bestDist = 2.55;
     for (const s of list) {
       const d = Math.hypot(s.playerPos.x - x, s.playerPos.z - z);
       if (d < bestDist) {
@@ -926,13 +605,6 @@ export class InteriorScene {
         heading: 0,
       };
     }
-    if (mode === 'serbos') {
-      return {
-        playerPos: new THREE.Vector3(0, 0, 4.0),
-        companionPos: new THREE.Vector3(0.9, 0, 4.25),
-        heading: 0,
-      };
-    }
     return {
       playerPos: new THREE.Vector3(-0.3, 0, 3.8),
       companionPos: new THREE.Vector3(0.65, 0, 4.0),
@@ -941,7 +613,7 @@ export class InteriorScene {
   }
 
   public isNearExitDoor(mode: InteriorMode, x: number, z: number): boolean {
-    const exitZ = mode === 'cafe' ? 5.1 : mode === 'observatory' ? 5.2 : mode === 'serbos' ? 5.0 : 4.7;
+    const exitZ = mode === 'cafe' ? 5.1 : mode === 'observatory' ? 5.2 : 4.7;
     return Math.abs(x) < 1.5 && z > exitZ - 0.85;
   }
 

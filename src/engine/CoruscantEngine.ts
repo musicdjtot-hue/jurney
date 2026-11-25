@@ -9,9 +9,18 @@ import {
   STARTER_PLANETS,
   SpaceSystem,
   getActiveSpacePlanets,
+  getLandingSiteSpaceWorldPos,
   getPlanetConfig,
+  getPlanetLandingSites,
   type PlanetConfig,
 } from './planets';
+import {
+  clearGameSave,
+  formatSaveTimeLabel,
+  readGameSave,
+  writeGameSave,
+  type GameSaveData,
+} from './saveSystem';
 import { SkyAtmosphere } from './sky';
 import { CoruscantWorld } from './world';
 import type {
@@ -19,12 +28,16 @@ import type {
   ControlInputs,
   InteriorMode,
   InteriorPose,
+  LandingSite,
   PlanetId,
   PlanetMarker,
+  SaveMetaSnapshot,
   SeasonId,
   SeasonSetting,
   SimulationSnapshot,
+  SpecialSpotInfo,
   TimePreset,
+  VehicleFlightState,
   WeatherMode,
   WeatherSetting,
 } from '../types/simulation';
@@ -34,6 +47,7 @@ const _worldQuat = new THREE.Quaternion();
 const _projVec = new THREE.Vector3();
 const _camForward = new THREE.Vector3();
 const _toTarget = new THREE.Vector3();
+const _beaconWorldPos = new THREE.Vector3();
 
 const SEASON_CYCLE: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
 const SEASON_LABELS: Record<SeasonId, string> = {
@@ -105,8 +119,6 @@ export class CoruscantEngine {
   private seasonTimer = 0;
   private lastHangarId: string | null = null;
   private lastSkyGateId: string | null = null;
-  private lastFromGreeted = false;
-  private lastSerbosGreeted = false;
 
   private lookPointerId: number | null = null;
   private lookYaw = 0;
@@ -132,6 +144,10 @@ export class CoruscantEngine {
   private onSnapshot: (snap: SimulationSnapshot) => void;
   private onContextError: (lost: boolean) => void;
   private lastUiEmit = 0;
+  private autoSaveTimer = 0;
+  private lastSavedAt: number | null = null;
+  private lastSavedPlanetName: string | null = null;
+  private prevFlightState: VehicleFlightState = 'road';
   private activeSpacePlanets: PlanetConfig[] = STARTER_PLANETS;
   private nearestPlanet: PlanetConfig = STARTER_PLANETS[0];
   private nearestPlanetDist = 0;
@@ -205,10 +221,10 @@ export class CoruscantEngine {
     this.walkerCompanion = new BlondeWalkerRig(maxAnisotropy);
     this.walkerCompanion.group.visible = false;
 
-    this.physics.setOnPlanetSwitch((planetId: PlanetId) => {
+    this.physics.setOnPlanetSwitch((planetId: PlanetId, centerX = 0, centerZ = 0) => {
       const cfg = getPlanetConfig(planetId);
       this.sky.setPlanetId(cfg.biome);
-      this.world.setPlanetBiome(cfg, 0, 0);
+      this.world.setPlanetBiome(cfg, centerX, centerZ);
       if (this.seasonSetting === 'auto') {
         const nextSeason: SeasonId =
           cfg.biome === 'kryos'
@@ -230,8 +246,6 @@ export class CoruscantEngine {
         this.weatherBlend = 0.25;
       }
       this.quests.onPlanetEntered(planetId);
-      this.lastFromGreeted = false;
-      this.lastSerbosGreeted = false;
     });
 
     this.vehicleGroup.add(this.cockpit.group);
@@ -266,6 +280,11 @@ export class CoruscantEngine {
 
     this.physics.forwardSpeed = 14;
 
+    const existingSave = readGameSave();
+    if (existingSave) {
+      this.applySaveData(existingSave, false);
+    }
+
     if (!this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
     }
@@ -286,15 +305,246 @@ export class CoruscantEngine {
     this.physics.toggleFlight();
   }
 
+  public enterOrbitFromFlight(): void {
+    if (this.interiorMode !== 'none') return;
+    this.physics.launchToOrbit();
+  }
+
   public launchToSpace(): void {
     if (this.interiorMode !== 'none') return;
-    this.physics.launchToSpace();
+    if (this.physics.flightState === 'orbit') {
+      this.physics.launchFromOrbitToSpace();
+    } else {
+      this.physics.launchToSpace();
+    }
   }
 
   public enterNearestPlanet(): void {
     if (this.physics.flightState !== 'space') return;
     if (this.nearestPlanetDist <= this.nearestPlanet.orbitRange * 1.35) {
-      this.physics.enterPlanet(this.nearestPlanet);
+      const sites = getPlanetLandingSites(this.nearestPlanet.id);
+      this.physics.enterPlanetOrbit(this.nearestPlanet, sites[0]?.id ?? null);
+      this.quests.onOrbitEntered();
+      this.quests.showToast(`Орбита · ${this.nearestPlanet.name} — выберите точку посадки`, 3.6);
+      this.saveGame(false);
+    }
+  }
+
+  public selectLandingSite(siteId: string): void {
+    if (this.physics.flightState !== 'orbit') return;
+    this.physics.selectedLandingSiteId = siteId;
+    const planet = getPlanetConfig(this.physics.activePlanetId);
+    const site = getPlanetLandingSites(planet.id).find((s) => s.id === siteId);
+    if (site) {
+      getLandingSiteSpaceWorldPos(planet, site, _beaconWorldPos);
+      const dx = _beaconWorldPos.x - planet.spacePos.x;
+      const dz = _beaconWorldPos.z - planet.spacePos.z;
+      if (Math.hypot(dx, dz) > 8) {
+        this.physics.orbitTheta = Math.atan2(dx, dz);
+      }
+      this.quests.showToast(`Выбрана посадка: ${site.name}`, 2.4);
+    }
+  }
+
+  public descendToSelectedSite(siteId?: string): void {
+    if (this.physics.flightState !== 'orbit') return;
+    const sites = getPlanetLandingSites(this.physics.activePlanetId);
+    const targetId = siteId ?? this.physics.selectedLandingSiteId ?? sites[0]?.id;
+    const site = sites.find((s) => s.id === targetId) ?? sites[0];
+    if (!site) return;
+
+    this.physics.selectedLandingSiteId = site.id;
+    this.physics.descendToSite(site.x, site.z);
+    this.quests.onOrbitLandingCompleted(this.physics.activePlanetId, site.name);
+    this.quests.showToast(`Вход в атмосферу · ${site.name}`, 3.5);
+    this.saveGame(false);
+  }
+
+  public interactNearbySpecialSpot(): boolean {
+    if (
+      this.interiorMode !== 'none' ||
+      this.physics.flightState === 'space' ||
+      this.physics.flightState === 'orbit' ||
+      this.physics.position.y >= 8
+    ) {
+      return false;
+    }
+    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
+    const hit = this.world.getNearestSpecialSpot(refPos.x, refPos.z);
+    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+    if (!hit || hit.distance > 34 || (!this.physics.isWalking && speedKmh >= 34)) {
+      return false;
+    }
+    this.quests.onSpecialSpotInteracted(hit.spot);
+    this.saveGame(false);
+    return true;
+  }
+
+  public saveGame(manual = true): boolean {
+    const cfg = getPlanetConfig(this.physics.activePlanetId);
+    const pState = this.physics.exportSaveState();
+    const qState = this.quests.exportSaveState();
+    const now = Date.now();
+    const data: GameSaveData = {
+      version: 1,
+      savedAt: now,
+      planetId: pState.planetId,
+      planetName: cfg.name,
+      flightState: pState.flightState,
+      position: pState.position,
+      heading: pState.heading,
+      forwardSpeed: pState.forwardSpeed,
+      targetFlightAltitude: pState.targetFlightAltitude,
+      spacePos: pState.spacePos,
+      spacePitch: pState.spacePitch,
+      spaceSpeed: pState.spaceSpeed,
+      orbitTheta: pState.orbitTheta,
+      orbitElev: pState.orbitElev,
+      orbitDistFactor: pState.orbitDistFactor,
+      selectedLandingSiteId: pState.selectedLandingSiteId,
+      isWalking: pState.isWalking,
+      walkerPos: pState.walkerPos,
+      walkerHeading: pState.walkerHeading,
+      companionPos: pState.companionPos,
+      companionHeading: pState.companionHeading,
+      hasCompanion: this.hasCompanion,
+      holdHands: qState.holdHands,
+      timePreset: this.timePreset,
+      timeOfDay: this.timeOfDay,
+      weatherSetting: this.weatherSetting,
+      activeWeather: this.activeWeather,
+      seasonSetting: this.seasonSetting,
+      activeSeason: this.activeSeason,
+      credits: qState.credits,
+      cabinTheme: qState.cabinTheme,
+      unlockedThemes: qState.unlockedThemes,
+      visitedPlanets: qState.visitedPlanets,
+      visitedSpecialSpots: qState.visitedSpecialSpots,
+      discoveredCloudLayer: qState.discoveredCloudLayer,
+      discoveredCountryside: qState.discoveredCountryside,
+      questSeq: qState.questSeq,
+      activeQuest: qState.activeQuest,
+      questPool: qState.questPool,
+    };
+    const ok = writeGameSave(data);
+    if (ok) {
+      this.lastSavedAt = now;
+      this.lastSavedPlanetName = cfg.name;
+      if (manual) {
+        this.quests.showToast(`Игра сохранена · ${cfg.name}`, 3.0);
+      }
+    } else if (manual) {
+      this.quests.showToast('Не удалось сохранить в память браузера', 3.0);
+    }
+    return ok;
+  }
+
+  public loadLastSave(): boolean {
+    const save = readGameSave();
+    if (!save) {
+      this.quests.showToast('Сохранённая игра пока не найдена', 2.8);
+      return false;
+    }
+    this.applySaveData(save, true);
+    return true;
+  }
+
+  public resetProgress(): void {
+    clearGameSave();
+    this.lastSavedAt = null;
+    this.lastSavedPlanetName = null;
+    if (this.interiorMode !== 'none') {
+      this.interior.setMode('none');
+      this.interiorMode = 'none';
+      this.interiorPose = 'stand';
+      this.interiorLabel = null;
+    }
+    this.quests = new QuestManager();
+    this.hasCompanion = true;
+    this.timePreset = 'auto';
+    this.timeOfDay = 0.69;
+    this.weatherSetting = 'auto';
+    this.activeWeather = 'clear';
+    this.seasonSetting = 'auto';
+    this.activeSeason = 'summer';
+    const cor = getPlanetConfig('coruscant');
+    this.sky.setPlanetId(cor.biome);
+    this.world.setSeason('summer');
+    this.world.setPlanetBiome(cor, 0, 0);
+    this.physics.applySaveState({
+      planetId: 'coruscant',
+      flightState: 'road',
+      position: { x: 0, y: 0, z: 0 },
+      heading: 0,
+      forwardSpeed: 14,
+      targetFlightAltitude: 104,
+      spacePos: { x: 0, y: 260, z: 0 },
+      spacePitch: 0,
+      spaceSpeed: 0,
+      orbitTheta: 0.55,
+      orbitElev: 0.62,
+      orbitDistFactor: 2.0,
+      selectedLandingSiteId: null,
+      isWalking: false,
+      walkerPos: { x: 0, y: 0, z: 0 },
+      walkerHeading: 0,
+      companionPos: { x: 0, y: 0, z: 0 },
+      companionHeading: 0,
+    });
+    this.camera.position.set(-0.36, 1.13, 0.08);
+    this.camera.rotation.set(0, 0, 0);
+    this.vehicleGroup.add(this.camera);
+    this.lookYaw = 0;
+    this.lookPitch = 0;
+    this.targetLookYaw = 0;
+    this.targetLookPitch = 0;
+    this.quests.showToast('Начата новая поездка · Корускант', 3.0);
+  }
+
+  private applySaveData(save: GameSaveData, showToast: boolean): void {
+    if (this.interiorMode !== 'none') {
+      this.interior.setMode('none');
+      this.interiorMode = 'none';
+      this.interiorPose = 'stand';
+      this.interiorLabel = null;
+      this.activeSeat = null;
+    }
+    this.hasCompanion = save.hasCompanion ?? true;
+    this.timePreset = save.timePreset ?? 'auto';
+    this.timeOfDay = typeof save.timeOfDay === 'number' ? save.timeOfDay : 0.69;
+    this.weatherSetting = save.weatherSetting ?? 'auto';
+    this.activeWeather = save.activeWeather ?? 'clear';
+    this.seasonSetting = save.seasonSetting ?? 'auto';
+    this.activeSeason = save.activeSeason ?? 'summer';
+    this.quests.importSaveState(save);
+    this.physics.applySaveState(save);
+    this.prevFlightState = this.physics.flightState;
+
+    const cfg = getPlanetConfig(this.physics.activePlanetId);
+    this.sky.setPlanetId(cfg.biome);
+    this.world.setSeason(this.activeSeason);
+    this.world.setPlanetBiome(cfg, save.position.x, save.position.z);
+
+    if (this.physics.isWalking) {
+      this.walkerGroup.position.copy(this.physics.walkerPos);
+      this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
+      this.camera.position.set(0, 1.66, 0);
+      this.camera.rotation.set(0, 0, 0);
+      this.walkerGroup.add(this.camera);
+    } else {
+      this.camera.position.set(-0.36, 1.13, 0.08);
+      this.camera.rotation.set(0, 0, 0);
+      this.vehicleGroup.add(this.camera);
+    }
+    this.lookYaw = 0;
+    this.lookPitch = 0;
+    this.targetLookYaw = 0;
+    this.targetLookPitch = 0;
+
+    this.lastSavedAt = save.savedAt;
+    this.lastSavedPlanetName = cfg.name;
+    if (showToast) {
+      this.quests.showToast(`Загружено сохранение · ${cfg.name}`, 3.4);
     }
   }
 
@@ -314,81 +564,36 @@ export class CoruscantEngine {
     if (!this.hasCompanion) return;
     const cfg = getPlanetConfig(this.physics.activePlanetId);
     const inSpace = this.physics.flightState === 'space';
+    const inOrbitMode = this.physics.flightState === 'orbit';
     const isFlying =
       this.physics.flightState === 'ascending' ||
       this.physics.flightState === 'flight' ||
+      this.physics.flightState === 'launching_orbit' ||
       this.physics.flightState === 'launching' ||
       this.physics.flightState === 'entering';
-    const tv = this.interior.getHotelTvStatus();
 
     this.quests.talkTogether(
       cfg.biome,
       cfg.name,
       inSpace,
+      inOrbitMode,
       isFlying,
       this.interiorMode,
       this.interiorPose,
       this.activeWeather,
       this.timeOfDay,
       this.activeSeason,
-      tv.on,
-      tv.channelName,
     );
   }
 
   public kissGirl(): { reply: string } {
     if (!this.hasCompanion) return { reply: '' };
-    const res = this.quests.kissGirl();
-    if (this.interiorMode === 'hotel') {
-      this.quests.onHotelInteraction();
-    }
-    return res;
-  }
-
-  public toggleHotelTv(): void {
-    if (this.interiorMode !== 'hotel') return;
-    const status = this.interior.cycleHotelTv();
-    this.quests.onHotelTvAction(status.on, status.channelName);
-  }
-
-  public drinkTeaWithSerbos(): void {
-    if (this.interiorMode !== 'serbos') return;
-    this.interior.setSerbosTeaServed(true);
-    this.quests.drinkTeaAtSerbos();
-  }
-
-  public talkWithSerbos(): void {
-    const inside = this.interiorMode === 'serbos';
-    if (inside) {
-      this.quests.talkWithSerbos(true);
-      return;
-    }
-    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
-    const nearest = this.world.getNearestSerbos(refPos.x, refPos.z);
-    if (nearest && nearest.distance <= 38) {
-      this.quests.talkWithSerbos(false);
-    }
-  }
-
-  public talkWithFromCage(): void {
-    if (this.interiorMode !== 'none' || this.physics.flightState === 'space') return;
-    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
-    const nearest = this.world.getNearestFromCage(refPos.x, refPos.z);
-    if (nearest && nearest.distance <= 32) {
-      this.quests.talkWithFrom(true);
-    }
+    return this.quests.kissGirl();
   }
 
   public exitVehicle(): void {
     if (this.interiorMode !== 'none') return;
-    const inHangar =
-      this.world.getHangarAt(
-        this.physics.position.x,
-        this.physics.position.y,
-        this.physics.position.z,
-      ) !== null;
-    const inCity = this.world.isInCityAt(this.physics.position.x, this.physics.position.z) || inHangar;
-    if (!this.physics.exitVehicle(inCity)) return;
+    if (!this.physics.exitVehicle()) return;
     this.walkerGroup.position.copy(this.physics.walkerPos);
     this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
     this.camera.position.set(0, 1.66, 0);
@@ -470,24 +675,9 @@ export class CoruscantEngine {
     return true;
   }
 
-  public enterNearbySerbos(): boolean {
-    if (this.interiorMode !== 'none' || this.physics.flightState === 'space' || this.physics.position.y >= 8) {
-      return false;
-    }
-    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
-    const nearest = this.world.getNearestSerbos(refPos.x, refPos.z);
-    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
-    if (!nearest || nearest.distance > 36 || (!this.physics.isWalking && speedKmh >= 32)) {
-      return false;
-    }
-    this.enterInterior('serbos', nearest.landmark.name);
-    this.quests.talkWithSerbos(true);
-    return true;
-  }
-
-  private enterInterior(mode: 'cafe' | 'hotel' | 'observatory' | 'serbos', label: string): void {
+  private enterInterior(mode: 'cafe' | 'hotel' | 'observatory', label: string): void {
     if (!this.physics.isWalking) {
-      if (!this.physics.exitVehicle(true)) return;
+      if (!this.physics.exitVehicle()) return;
       this.enteredFromCar = true;
     } else {
       this.enteredFromCar = false;
@@ -526,22 +716,17 @@ export class CoruscantEngine {
     if (mode === 'cafe') {
       this.quests.showToast(`Вы зашли в ${label}`, 2.8);
       if (this.hasCompanion) {
-        this.quests.setCompanionNote('«Как тут уютно! Пойдём займём столик у окна и закажем чаю?»', 4.5);
+        this.quests.setCompanionNote('«Как тут уютно! Пойдём займём столик у окна?»', 4.5);
       }
     } else if (mode === 'observatory') {
       this.quests.showToast(`Обсерватория · ${label}`, 3.0);
       if (this.hasCompanion) {
         this.quests.setCompanionNote('«Какой красивый купол и живая голограмма галактики! Посидим на скамье?»', 4.8);
       }
-    } else if (mode === 'serbos') {
-      this.quests.showToast(`Домик Сербоса у реки · ИИ Адамчик`, 3.4);
-      if (this.hasCompanion) {
-        this.quests.setCompanionNote('«Сколько тут компьютеров! А вот и Сербос со своим ИИ Адамчиком — попьём чай?»', 5.0);
-      }
     } else {
       this.quests.showToast(`Номер отеля · ${label}`, 3.0);
       if (this.hasCompanion) {
-        this.quests.setCompanionNote('«Какой просторный номер! Можно смотреть ТВ, поцеловаться, прилечь или полюбоваться видом из окна!»', 5.0);
+        this.quests.setCompanionNote('«Какой просторный номер… Посмотри на вид из окна и на эту кровать!»', 4.8);
       }
     }
   }
@@ -608,12 +793,10 @@ export class CoruscantEngine {
     if (this.hasCompanion) {
       this.quests.setCompanionNote(
         this.interiorMode === 'cafe'
-          ? '«Я напротив! Закажем по чашке чая, а я пока посмотрю в окно».'
+          ? '«Я напротив! Выбирай кофе, а я пока посмотрю в окно».'
           : this.interiorMode === 'observatory'
             ? '«Как здорово смотреть на звёзды и голограмму галактики вместе с тобой».'
-            : this.interiorMode === 'serbos'
-              ? '«Уютный стол у реки! Нажимай «Выпить чаю» с Сербосом и Адамчиком!»'
-              : '«Удобный диван… Можем смотреть телевизор и любоваться красивой планетой за окном».',
+            : '«Удобный диван… Люблю просто сидеть так рядом с тобой».',
         4.6,
       );
     }
@@ -642,11 +825,10 @@ export class CoruscantEngine {
 
     if (this.hasCompanion) {
       this.quests.setCompanionNote(
-        '«Кровать такая мягкая… Можно поцеловаться, посмотреть ТВ или поговорить о красивой планете за окном».',
+        '«Кровать такая мягкая… Можно просто полежать вдвоём и посмотреть на небо».',
         5.0,
       );
     }
-    this.quests.onHotelInteraction();
     return true;
   }
 
@@ -662,9 +844,6 @@ export class CoruscantEngine {
       if (this.interiorMode === 'observatory') {
         this.physics.walkerPos.set(0, 0, 3.25);
         this.physics.companionPos.set(0.85, 0, 3.3);
-      } else if (this.interiorMode === 'serbos') {
-        this.physics.walkerPos.set(this.activeSeat.playerPos.x, 0, this.activeSeat.playerPos.z + 1.0);
-        this.physics.companionPos.set(this.activeSeat.playerPos.x + 0.9, 0, this.activeSeat.playerPos.z + 1.0);
       } else if (this.activeSeat.tableIndex >= 0) {
         // Café table: step back behind the chair clear of table collider
         this.physics.walkerPos.set(
@@ -1024,11 +1203,35 @@ export class CoruscantEngine {
 
     const isWalking = this.physics.isWalking;
     const inSpace = this.physics.flightState === 'space';
+    const inOrbitMode = this.physics.flightState === 'orbit';
+    const inSpaceView = inSpace || inOrbitMode;
+
+    if (this.prevFlightState !== 'orbit' && inOrbitMode) {
+      const sites = getPlanetLandingSites(this.physics.activePlanetId);
+      if (!this.physics.selectedLandingSiteId && sites[0]) {
+        this.physics.selectedLandingSiteId = sites[0].id;
+      }
+      this.quests.onOrbitEntered();
+      this.quests.showToast(
+        `Орбита · ${getPlanetConfig(this.physics.activePlanetId).name} — выберите точку посадки`,
+        3.6,
+      );
+      this.saveGame(false);
+    }
+    this.prevFlightState = this.physics.flightState;
+
+    if (!insideInterior) {
+      this.autoSaveTimer += delta;
+      if (this.autoSaveTimer >= 15) {
+        this.autoSaveTimer = 0;
+        this.saveGame(false);
+      }
+    }
 
     if (
       !insideInterior &&
       !isWalking &&
-      !inSpace &&
+      !inSpaceView &&
       this.physics.flightState === 'road' &&
       this.world.isViaductOnlyAt(this.physics.position.x, this.physics.position.z)
     ) {
@@ -1046,7 +1249,7 @@ export class CoruscantEngine {
       }
     }
 
-    const refPos = inSpace ? this.physics.spacePos : this.physics.position;
+    const refPos = inSpaceView ? this.physics.spacePos : this.physics.position;
 
     // Hide exterior car when inside café or hotel room (both sit at world origin)
     this.vehicleGroup.visible = !insideInterior;
@@ -1145,7 +1348,7 @@ export class CoruscantEngine {
     const speedKmh = insideInterior ? 0 : Math.abs(this.physics.forwardSpeed) * 3.6;
     const targetFov = isWalking
       ? 68
-      : inSpace
+      : inSpaceView
         ? 68 + THREE.MathUtils.clamp(speedKmh / 900, 0, 1) * 14
         : 63 + THREE.MathUtils.clamp(speedKmh / 280, 0, 1) * 12;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
@@ -1164,7 +1367,7 @@ export class CoruscantEngine {
       this.activeWeather,
       this.weatherBlend,
       activePos,
-      inSpace ? 500 : activePos.y,
+      inSpaceView ? 500 : activePos.y,
       this.physics.spaceFactor,
       delta,
       this.activeSeason,
@@ -1174,7 +1377,7 @@ export class CoruscantEngine {
     this.sunLight.target.position.copy(activePos);
 
     const hangarHit =
-      !insideInterior && !inSpace
+      !insideInterior && !inSpaceView
         ? this.world.getHangarAt(activePos.x, activePos.y, activePos.z)
         : null;
     if (hangarHit) {
@@ -1187,7 +1390,7 @@ export class CoruscantEngine {
     }
 
     const gateHit =
-      !insideInterior && !inSpace && !isWalking && this.physics.position.y > 45
+      !insideInterior && !inSpaceView && !isWalking && this.physics.position.y > 45
         ? this.world.getSkyGateAt(activePos.x, activePos.y, activePos.z)
         : null;
     if (gateHit) {
@@ -1200,7 +1403,7 @@ export class CoruscantEngine {
     }
 
     const roadGlowMask =
-      inSpace || insideInterior ? 0 : THREE.MathUtils.clamp(1 - this.physics.position.y / 25, 0, 1);
+      inSpaceView || insideInterior ? 0 : THREE.MathUtils.clamp(1 - this.physics.position.y / 25, 0, 1);
     const stormHeadlight =
       this.activeWeather === 'storm' || this.activeWeather === 'rain' || this.activeWeather === 'snow'
         ? 0.55
@@ -1249,28 +1452,43 @@ export class CoruscantEngine {
       );
     }
 
+    const activePlanetCfg = getPlanetConfig(this.physics.activePlanetId);
+    const orbitLandingSites: LandingSite[] = inOrbitMode
+      ? getPlanetLandingSites(activePlanetCfg.id)
+      : [];
+
     this.activeSpacePlanets = getActiveSpacePlanets(this.physics.spacePos, 24);
-    this.space.update(this.physics.spaceFactor, activePos, this.activeSpacePlanets, delta);
+    this.space.update(
+      this.physics.spaceFactor,
+      activePos,
+      this.activeSpacePlanets,
+      delta,
+      inOrbitMode,
+      activePlanetCfg,
+      orbitLandingSites,
+      this.physics.selectedLandingSiteId,
+      this.timeOfDay,
+    );
 
     if (inSpace) {
       this.computeNearestPlanet();
     } else {
-      this.nearestPlanet = getPlanetConfig(this.physics.activePlanetId);
+      this.nearestPlanet = activePlanetCfg;
       this.nearestPlanetDist = 0;
     }
 
-    const inOrbit = inSpace && this.nearestPlanetDist <= this.nearestPlanet.orbitRange;
+    const inOrbit = inOrbitMode || (inSpace && this.nearestPlanetDist <= this.nearestPlanet.orbitRange);
     const canEnterPlanet = inSpace && this.nearestPlanetDist <= this.nearestPlanet.orbitRange * 1.35;
-    const canLaunchToSpace =
+    const canLaunchToOrbit =
       !insideInterior &&
       !isWalking &&
       (this.physics.flightState === 'flight' || this.physics.flightState === 'ascending');
+    const canLaunchToSpace = !insideInterior && !isWalking && inOrbitMode;
     const canExitVehicle =
       !insideInterior &&
       !isWalking &&
-      !inSpace &&
-      this.physics.flightState === 'road' &&
-      (this.world.isInCityAt(this.physics.position.x, this.physics.position.z) || Boolean(hangarHit));
+      !inSpaceView &&
+      this.physics.flightState === 'road';
 
     const zoneType = this.world.getZoneTypeAt(activePos.x, activePos.z);
     this.quests.update(
@@ -1285,7 +1503,6 @@ export class CoruscantEngine {
       this.world.getLandmarks(),
     );
 
-    const activePlanetCfg = getPlanetConfig(this.physics.activePlanetId);
     const driverLookingAtCompanion = !isWalking && this.lookYaw < -0.36;
 
     if (!insideInterior) {
@@ -1299,7 +1516,7 @@ export class CoruscantEngine {
         this.activeWeather,
         elapsed,
         delta,
-        inSpace,
+        inSpaceView,
         inOrbit,
         inSpace ? this.nearestPlanet.name : activePlanetCfg.name,
         this.physics.spaceFactor,
@@ -1324,7 +1541,7 @@ export class CoruscantEngine {
           : 0;
 
       const nearestCafe =
-        !insideInterior && !inSpace && this.physics.position.y < 8
+        !insideInterior && !inSpaceView && this.physics.position.y < 8
           ? this.world.getNearestCafe(activePos.x, activePos.z)
           : null;
       const nearbyCafeName =
@@ -1333,7 +1550,7 @@ export class CoruscantEngine {
           : null;
 
       const nearestHotel =
-        !insideInterior && !inSpace && this.physics.position.y < 8
+        !insideInterior && !inSpaceView && this.physics.position.y < 8
           ? this.world.getNearestHotel(activePos.x, activePos.z)
           : null;
       const nearbyHotelName =
@@ -1342,7 +1559,7 @@ export class CoruscantEngine {
           : null;
 
       const nearestObs =
-        !insideInterior && !inSpace && this.physics.position.y < 8
+        !insideInterior && !inSpaceView && this.physics.position.y < 8
           ? this.world.getNearestObservatory(activePos.x, activePos.z)
           : null;
       const nearbyObservatoryName =
@@ -1350,41 +1567,14 @@ export class CoruscantEngine {
           ? nearestObs.landmark.name
           : null;
 
-      const nearestSerbos =
-        !insideInterior && !inSpace && this.physics.position.y < 8
-          ? this.world.getNearestSerbos(activePos.x, activePos.z)
+      const nearestSpecial =
+        !insideInterior && !inSpaceView && this.physics.position.y < 8
+          ? this.world.getNearestSpecialSpot(activePos.x, activePos.z)
           : null;
-      const nearbySerbosName =
-        nearestSerbos && nearestSerbos.distance <= 36 && (isWalking || speedKmh < 32)
-          ? nearestSerbos.landmark.name
+      const nearbySpecialSpot: SpecialSpotInfo | null =
+        nearestSpecial && nearestSpecial.distance <= 34 && (isWalking || speedKmh < 34)
+          ? nearestSpecial.spot
           : null;
-
-      if (nearestSerbos && nearestSerbos.distance <= 30 && !insideInterior && !inSpace) {
-        if (!this.lastSerbosGreeted) {
-          this.lastSerbosGreeted = true;
-          this.quests.greetSerbosOutside();
-        }
-      } else if (!nearestSerbos || nearestSerbos.distance > 48) {
-        this.lastSerbosGreeted = false;
-      }
-
-      const nearestFrom =
-        !insideInterior && !inSpace && this.physics.position.y < 8
-          ? this.world.getNearestFromCage(activePos.x, activePos.z)
-          : null;
-      const nearbyFromCageName =
-        nearestFrom && nearestFrom.distance <= 28 && (isWalking || speedKmh < 36)
-          ? nearestFrom.landmark.name
-          : null;
-
-      if (nearestFrom && nearestFrom.distance <= 22 && !insideInterior && !inSpace) {
-        if (!this.lastFromGreeted) {
-          this.lastFromGreeted = true;
-          this.quests.talkWithFrom(true);
-        }
-      } else if (!nearestFrom || nearestFrom.distance > 38) {
-        this.lastFromGreeted = false;
-      }
 
       const canSitNearby =
         insideInterior &&
@@ -1418,21 +1608,47 @@ export class CoruscantEngine {
         _camForward,
         _projVec,
         _toTarget,
-        inSpace || insideInterior,
+        inSpaceView || insideInterior,
       );
-      const tvStatus = this.interior.getHotelTvStatus();
+
+      // Project orbital landing sites to screen space for the orbital HUD overlay
+      const projectedLandingSites: LandingSite[] = inOrbitMode
+        ? orbitLandingSites.map((s) => {
+            getLandingSiteSpaceWorldPos(activePlanetCfg, s, _beaconWorldPos);
+            _toTarget.subVectors(_beaconWorldPos, this.physics.spacePos);
+            const inFront = _toTarget.dot(_camForward) > 0;
+            _projVec.copy(_beaconWorldPos).project(this.camera);
+            const sx = THREE.MathUtils.clamp(inFront ? _projVec.x : -_projVec.x, -0.88, 0.88);
+            const sy = THREE.MathUtils.clamp(inFront ? _projVec.y : -_projVec.y, -0.78, 0.78);
+            return {
+              ...s,
+              screenX: sx,
+              screenY: sy,
+              inFront,
+            };
+          })
+        : [];
+
+      const saveMeta: SaveMetaSnapshot = {
+        hasSave: this.lastSavedAt !== null,
+        savedAtLabel: this.lastSavedAt !== null ? formatSaveTimeLabel(this.lastSavedAt) : null,
+        planetName: this.lastSavedPlanetName,
+      };
 
       this.onSnapshot({
         speedKmh: Math.round(speedKmh),
-        altitudeM: inSpace ? 12000 : Math.max(0, Math.round(this.physics.position.y)),
+        altitudeM: inSpaceView ? 12000 : Math.max(0, Math.round(this.physics.position.y)),
         flightState: this.physics.flightState,
         isFlying:
           this.physics.flightState === 'ascending' ||
           this.physics.flightState === 'flight' ||
+          this.physics.flightState === 'launching_orbit' ||
           this.physics.flightState === 'launching' ||
           this.physics.flightState === 'entering',
         inSpace,
         inOrbit,
+        inOrbitMode,
+        canLaunchToOrbit,
         canLaunchToSpace,
         canEnterPlanet,
         planetId: activePlanetCfg.id,
@@ -1445,20 +1661,24 @@ export class CoruscantEngine {
           Math.round((this.nearestPlanetDist - this.nearestPlanet.radius) * 0.12),
         ),
         planetMarkers: this.computePlanetMarkers(),
+        landingSites: projectedLandingSites,
+        selectedLandingSiteId: this.physics.selectedLandingSiteId,
         timeOfDay: this.timeOfDay,
         timeLabel: getTimeLabel(this.timeOfDay),
         activeWeather: this.activeWeather,
         season: this.activeSeason,
         seasonLabel: SEASON_LABELS[this.activeSeason],
-        zoneName: inSpace
-          ? inOrbit
-            ? `Орбита · ${this.nearestPlanet.name}`
-            : 'Бесконечный космос'
-          : insideInterior
-            ? `${activePlanetCfg.name} · ${this.interiorLabel ?? 'Интерьер'}`
-            : isWalking
-              ? `${activePlanetCfg.name} · Пешая прогулка`
-              : this.world.getZoneLabel(this.physics.position),
+        zoneName: inOrbitMode
+          ? `Орбита · ${activePlanetCfg.name}`
+          : inSpace
+            ? inOrbit
+              ? `Сближение · ${this.nearestPlanet.name}`
+              : 'Бесконечный космос'
+            : insideInterior
+              ? `${activePlanetCfg.name} · ${this.interiorLabel ?? 'Интерьер'}`
+              : isWalking
+                ? `${activePlanetCfg.name} · Пешая прогулка`
+                : this.world.getZoneLabel(this.physics.position),
         headingDeg: Math.round(deg),
         isWalking,
         canExitVehicle,
@@ -1471,8 +1691,7 @@ export class CoruscantEngine {
         nearbyCafeName,
         nearbyHotelName,
         nearbyObservatoryName,
-        nearbySerbosName,
-        nearbyFromCageName,
+        nearbySpecialSpot,
         insideHangarName: hangarHit ? hangarHit.name : null,
         interiorMode: this.interiorMode,
         interiorPose: this.interiorPose,
@@ -1480,15 +1699,13 @@ export class CoruscantEngine {
         canSitNearby,
         canLieNearby,
         canExitInterior,
-        hotelTvOn: tvStatus.on,
-        hotelTvChannelName: tvStatus.channelName,
         holdHands: this.quests.holdHands && this.hasCompanion,
         sleepFade: this.sleepFade,
         companionNote: this.quests.getCompanionNote(),
-        npcBanner: this.quests.getNpcBanner(),
         cabinTheme: this.quests.cabinTheme,
         cabinThemes: this.quests.getCabinThemeOptions(),
         toastMessage: this.quests.getToast(),
+        saveMeta,
       });
     }
 

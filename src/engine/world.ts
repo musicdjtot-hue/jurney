@@ -10,7 +10,13 @@ import {
 import type { BuildingFootprint } from './physics';
 import type { PlanetConfig } from './planets';
 import type { WorldLandmark } from './events';
-import type { BiomeId, PlanetId, SeasonId, WeatherMode } from '../types/simulation';
+import type {
+  BiomeId,
+  PlanetId,
+  SeasonId,
+  SpecialSpotInfo,
+  WeatherMode,
+} from '../types/simulation';
 
 export const CHUNK_SIZE = 320;
 const GRID_RADIUS = 3; // 7x7 chunks = 2240x2240m continuous network
@@ -35,7 +41,8 @@ const MAX_HANGAR_INSTANCES = 12;
 const MAX_SKYGATE_INSTANCES = 14;
 
 const FLYING_CAR_COUNT = 220;
-const PEDESTRIAN_COUNT = 140;
+const GROUND_CAR_COUNT = 90;
+const PEDESTRIAN_COUNT = 150;
 const CLOUD_COUNT = 240;
 const RAIN_COUNT = 750;
 
@@ -109,6 +116,37 @@ const BIOMES: Record<BiomeId, BiomePreset> = {
     precipDrift: 0,
     cloudTint: '#ffffff',
     cloudDensity: 1.0,
+  },
+  earth: {
+    label: 'Москва · Красная площадь и проспекты',
+    parkLabel: 'Земля · Парковый район и дом Сербоса',
+    fieldsLabel: 'Земля · Поля и край купола',
+    openLabel: 'Земля · Загородное шоссе',
+    facadeTints: ['#f1f5f9', '#e2e8f0', '#ede9fe'],
+    facadeEmissiveTint: '#fde68a',
+    trimColor: '#475569',
+    plazaColor: '#334155',
+    fieldColor: '#5d8a3e',
+    hillColor: '#476e2e',
+    pondColor: '#2563eb',
+    trunkColor: '#5c4033',
+    foliagePalette: ['#3b7d2c', '#529b38', '#65a30d', '#ca8a04'],
+    roadColor: '#475569',
+    roadEmissiveTint: '#fde68a',
+    lampColor: '#fef3c7',
+    beaconColors: ['#ef4444', '#fbbf24'],
+    openThreshold: 0.34,
+    heightScale: 0.44,
+    domeChance: 0.25,
+    showSigns: false,
+    carCount: 0,
+    pedCount: 150,
+    precipColor: '#bae6fd',
+    precipLength: 1.35,
+    precipSpeedScale: 0.95,
+    precipDrift: 0.5,
+    cloudTint: '#ffffff',
+    cloudDensity: 0.88,
   },
   kryos: {
     label: 'Неон-Криос · Ледяные шпили',
@@ -328,6 +366,14 @@ export function getChunkZone(
 ): ChunkZoneType {
   // Starting hub guarantees quick sightseeing across downtown, parkway, and countryside fields
   if (cx === 0 && cz === 0) return 'city';
+  if (worldSeed === 777) {
+    // Flat Earth: Moscow center + avenues, Dom Serbosa (-1, 1), Ice Dome Edge (0, -3)
+    if (cx === -1 && cz === 1) return 'park';
+    if (cx === 0 && cz === -3) return 'fields';
+    if (cx === 0 && cz === -1) return 'park';
+    if ((cx === 1 && cz === -1) || (cx === -1 && cz === -1)) return 'fields';
+    if (Math.abs(cx) <= 1 && Math.abs(cz) <= 1) return 'city';
+  }
   if (Math.abs(cx) <= 1 && Math.abs(cz) <= 1 && worldSeed === 101) {
     if (cx === 0 && cz === -1) return 'park';
     if ((cx === 1 && cz === -1) || (cx === -1 && cz === -1)) return 'fields';
@@ -411,6 +457,32 @@ function buildFlyingCarGeometry(): THREE.BufferGeometry {
   canopy.dispose();
   leftWing.dispose();
   rightWing.dispose();
+  return merged;
+}
+
+function buildGroundCarGeometry(): THREE.BufferGeometry {
+  const body = new THREE.BoxGeometry(1.9, 0.64, 4.3);
+  body.translate(0, 0.55, 0);
+
+  const cabin = new THREE.BoxGeometry(1.62, 0.52, 2.15);
+  cabin.translate(0, 1.08, 0.1);
+
+  const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 10);
+  wheelGeo.rotateZ(Math.PI / 2);
+
+  const w1 = wheelGeo.clone().translate(-0.92, 0.34, -1.32);
+  const w2 = wheelGeo.clone().translate(0.92, 0.34, -1.32);
+  const w3 = wheelGeo.clone().translate(-0.92, 0.34, 1.32);
+  const w4 = wheelGeo.clone().translate(0.92, 0.34, 1.32);
+  wheelGeo.dispose();
+
+  const merged = mergeGeometries([body, cabin, w1, w2, w3, w4]);
+  body.dispose();
+  cabin.dispose();
+  w1.dispose();
+  w2.dispose();
+  w3.dispose();
+  w4.dispose();
   return merged;
 }
 
@@ -511,22 +583,17 @@ export class CoruscantWorld {
   private skyGateMesh: THREE.InstancedMesh;
   private signMeshes: THREE.InstancedMesh[] = [];
 
-  private fromCageGroup: THREE.Group;
-  private fromRunnerGroup: THREE.Group;
-  private fromLeftLeg!: THREE.Mesh;
-  private fromRightLeg!: THREE.Mesh;
-  private fromLeftArm!: THREE.Mesh;
-  private fromRightArm!: THREE.Mesh;
-  private readonly fromCagePos = new THREE.Vector3(-27.5, 0, -34);
-
-  private serbosExteriorGroup: THREE.Group;
-  private serbosOutNpc: THREE.Group;
-  private serbosOutArm!: THREE.Mesh;
-  private readonly serbosHousePos = new THREE.Vector3(38, 0, 252);
-
   private flyingCarMesh: THREE.InstancedMesh;
   private flyingCarGlowMesh: THREE.InstancedMesh;
   private flyingCars: FlyingCar[] = [];
+
+  private groundCarMesh: THREE.InstancedMesh;
+  private groundCarGlowMesh: THREE.InstancedMesh;
+  private groundCars: FlyingCar[] = [];
+
+  private moscowGroup = new THREE.Group();
+  private serbosGroup = new THREE.Group();
+  private domeEdgeGroup = new THREE.Group();
 
   private pedestrianMesh: THREE.InstancedMesh;
   private pedestrians: Pedestrian[] = [];
@@ -542,6 +609,7 @@ export class CoruscantWorld {
 
   private activeBuildings: BuildingFootprint[] = [];
   private landmarks: WorldLandmark[] = [];
+  private specialSpots: SpecialSpotInfo[] = [];
   private hangars: HangarZone[] = [];
   private skyGates: SkyGateAnchor[] = [];
   private lastChunkX = Number.NaN;
@@ -911,191 +979,6 @@ export class CoruscantWorld {
     this.group.add(this.abyssFloor);
     this.disposables.push(abyssGeo, abyssMat);
 
-    // 7b. Special Quest Landmark: Angry Earthling «Фром» inside 3D Cage
-    this.fromCageGroup = new THREE.Group();
-    this.fromCageGroup.position.copy(this.fromCagePos);
-    const cageBaseMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.45, metalness: 0.65 });
-    const cageBarMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.25, metalness: 0.85 });
-    const cageWarnMat = new THREE.MeshBasicMaterial({ color: 0xf97316, toneMapped: false });
-    const cageFloorGeo = new THREE.BoxGeometry(7.2, 0.3, 7.2);
-    const cageRoofGeo = new THREE.BoxGeometry(7.4, 0.25, 7.4);
-    const cageCornerGeo = new THREE.BoxGeometry(0.28, 3.6, 0.28);
-    const cageBarGeo = new THREE.CylinderGeometry(0.055, 0.055, 3.4, 8);
-    const cageStripGeo = new THREE.BoxGeometry(7.46, 0.14, 0.14);
-
-    const cageFloor = new THREE.Mesh(cageFloorGeo, cageBaseMat);
-    cageFloor.position.y = 0.15;
-    const cageRoof = new THREE.Mesh(cageRoofGeo, cageBaseMat);
-    cageRoof.position.y = 3.7;
-    this.fromCageGroup.add(cageFloor, cageRoof);
-
-    for (const cx of [-3.4, 3.4]) {
-      for (const cz of [-3.4, 3.4]) {
-        const post = new THREE.Mesh(cageCornerGeo, cageBaseMat);
-        post.position.set(cx, 1.9, cz);
-        this.fromCageGroup.add(post);
-      }
-    }
-    for (let i = -2; i <= 2; i++) {
-      const off = i * 1.15;
-      for (const side of [-3.4, 3.4]) {
-        const barZ = new THREE.Mesh(cageBarGeo, cageBarMat);
-        barZ.position.set(off, 1.9, side);
-        const barX = new THREE.Mesh(cageBarGeo, cageBarMat);
-        barX.position.set(side, 1.9, off);
-        this.fromCageGroup.add(barZ, barX);
-      }
-    }
-    for (const sz of [-3.45, 3.45]) {
-      const strip = new THREE.Mesh(cageStripGeo, cageWarnMat);
-      strip.position.set(0, 3.7, sz);
-      this.fromCageGroup.add(strip);
-    }
-
-    // Angry «Фром» character inside the cage
-    this.fromRunnerGroup = new THREE.Group();
-    const fPantsMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.78 });
-    const fShirtMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.65 });
-    const fSkinMat = new THREE.MeshStandardMaterial({ color: 0xf0c29e, roughness: 0.65 });
-    const fHairMat = new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.7 });
-    const fLegGeo = new THREE.CylinderGeometry(0.085, 0.075, 0.82, 8);
-    const fArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.68, 8);
-    const fTorsoGeo = new THREE.BoxGeometry(0.46, 0.58, 0.26);
-    const fHeadGeo = new THREE.SphereGeometry(0.17, 12, 10);
-    const fBrowGeo = new THREE.BoxGeometry(0.22, 0.045, 0.08);
-
-    this.fromLeftLeg = new THREE.Mesh(fLegGeo, fPantsMat);
-    this.fromLeftLeg.position.set(-0.12, 0.42, 0);
-    this.fromRightLeg = new THREE.Mesh(fLegGeo, fPantsMat);
-    this.fromRightLeg.position.set(0.12, 0.42, 0);
-    const fTorso = new THREE.Mesh(fTorsoGeo, fShirtMat);
-    fTorso.position.set(0, 1.12, 0);
-    this.fromLeftArm = new THREE.Mesh(fArmGeo, fShirtMat);
-    this.fromLeftArm.position.set(-0.3, 1.24, 0.08);
-    this.fromRightArm = new THREE.Mesh(fArmGeo, fShirtMat);
-    this.fromRightArm.position.set(0.3, 1.24, 0.08);
-    const fHead = new THREE.Mesh(fHeadGeo, fSkinMat);
-    fHead.position.set(0, 1.58, 0);
-    const fBrow = new THREE.Mesh(fBrowGeo, fHairMat);
-    fBrow.position.set(0, 1.63, 0.14);
-    this.fromRunnerGroup.add(
-      this.fromLeftLeg,
-      this.fromRightLeg,
-      fTorso,
-      this.fromLeftArm,
-      this.fromRightArm,
-      fHead,
-      fBrow,
-    );
-    this.fromRunnerGroup.position.set(0, 0.3, 0);
-    this.fromCageGroup.add(this.fromRunnerGroup);
-    this.group.add(this.fromCageGroup);
-
-    this.disposables.push(
-      cageBaseMat,
-      cageBarMat,
-      cageWarnMat,
-      cageFloorGeo,
-      cageRoofGeo,
-      cageCornerGeo,
-      cageBarGeo,
-      cageStripGeo,
-      fPantsMat,
-      fShirtMat,
-      fSkinMat,
-      fHairMat,
-      fLegGeo,
-      fArmGeo,
-      fTorsoGeo,
-      fHeadGeo,
-      fBrowGeo,
-    );
-
-    // 7c. Special Quest Landmark (Verdant-IX): Serbos's Riverside House + Flowing Blue River
-    this.serbosExteriorGroup = new THREE.Group();
-    const riverGeo = new THREE.PlaneGeometry(680, 28);
-    riverGeo.rotateX(-Math.PI / 2);
-    const riverMat = new THREE.MeshStandardMaterial({
-      color: 0x1e88c7,
-      roughness: 0.1,
-      metalness: 0.72,
-      envMapIntensity: 1.5,
-    });
-    const riverMesh = new THREE.Mesh(riverGeo, riverMat);
-    riverMesh.position.set(20, 0.08, 224);
-    this.serbosExteriorGroup.add(riverMesh);
-
-    const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.55, metalness: 0.35 });
-    const bridgeDeckGeo = new THREE.BoxGeometry(36, 0.65, 32);
-    const bridgeDeck = new THREE.Mesh(bridgeDeckGeo, bridgeMat);
-    bridgeDeck.position.set(0, 0.45, 224);
-    this.serbosExteriorGroup.add(bridgeDeck);
-
-    // Cozy timber house beside the river
-    const cabinWoodMat = new THREE.MeshStandardMaterial({ color: 0x6e472b, roughness: 0.72 });
-    const cabinRoofMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.3 });
-    const cabinGlowMat = new THREE.MeshBasicMaterial({ color: 0xfde68a, toneMapped: false });
-    const cabinAiGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
-    const houseBodyGeo = new THREE.BoxGeometry(11.5, 4.4, 9.5);
-    const houseRoofGeo = new THREE.ConeGeometry(8.6, 3.2, 4);
-    houseRoofGeo.rotateY(Math.PI / 4);
-    const housePorchGeo = new THREE.BoxGeometry(3.4, 0.35, 7.6);
-    const houseWinGeo = new THREE.BoxGeometry(0.35, 1.7, 5.4);
-    const houseDoorGeo = new THREE.BoxGeometry(0.4, 2.5, 1.7);
-
-    const hPos = this.serbosHousePos;
-    const hBody = new THREE.Mesh(houseBodyGeo, cabinWoodMat);
-    hBody.position.set(hPos.x, 2.2, hPos.z);
-    const hRoof = new THREE.Mesh(houseRoofGeo, cabinRoofMat);
-    hRoof.position.set(hPos.x, 5.9, hPos.z);
-    const hPorch = new THREE.Mesh(housePorchGeo, cabinWoodMat);
-    hPorch.position.set(hPos.x - 6.8, 0.18, hPos.z);
-    const hWin = new THREE.Mesh(houseWinGeo, cabinGlowMat);
-    hWin.position.set(hPos.x - 5.7, 2.4, hPos.z - 2.2);
-    const hDoor = new THREE.Mesh(houseDoorGeo, cabinAiGlowMat);
-    hDoor.position.set(hPos.x - 5.7, 1.45, hPos.z + 2.2);
-    this.serbosExteriorGroup.add(hBody, hRoof, hPorch, hWin, hDoor);
-
-    // Friendly Serbos NPC standing on porch facing road
-    this.serbosOutNpc = new THREE.Group();
-    this.serbosOutNpc.position.set(hPos.x - 7.8, 0.35, hPos.z + 1.5);
-    this.serbosOutNpc.rotation.y = -Math.PI / 2;
-    const sShirtMat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.72 });
-    const sLegsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
-    const sLeg1 = new THREE.Mesh(fLegGeo, sLegsMat);
-    sLeg1.position.set(-0.11, 0.41, 0);
-    const sLeg2 = new THREE.Mesh(fLegGeo, sLegsMat);
-    sLeg2.position.set(0.11, 0.41, 0);
-    const sTorso = new THREE.Mesh(fTorsoGeo, sShirtMat);
-    sTorso.position.set(0, 1.1, 0);
-    const sHead = new THREE.Mesh(fHeadGeo, fSkinMat);
-    sHead.position.set(0, 1.54, 0);
-    this.serbosOutArm = new THREE.Mesh(fArmGeo, sShirtMat);
-    this.serbosOutArm.position.set(0.32, 1.38, 0.08);
-    this.serbosOutNpc.add(sLeg1, sLeg2, sTorso, sHead, this.serbosOutArm);
-    this.serbosExteriorGroup.add(this.serbosOutNpc);
-
-    this.serbosExteriorGroup.visible = false;
-    this.group.add(this.serbosExteriorGroup);
-
-    this.disposables.push(
-      riverGeo,
-      riverMat,
-      bridgeMat,
-      bridgeDeckGeo,
-      cabinWoodMat,
-      cabinRoofMat,
-      cabinGlowMat,
-      cabinAiGlowMat,
-      houseBodyGeo,
-      houseRoofGeo,
-      housePorchGeo,
-      houseWinGeo,
-      houseDoorGeo,
-      sShirtMat,
-      sLegsMat,
-    );
-
     // 8. Detailed 3D Flying Cars (Airspeeders + Glowing Engine Thrusters)
     const speederGeo = buildFlyingCarGeometry();
     const speederHullMat = new THREE.MeshStandardMaterial({
@@ -1141,6 +1024,52 @@ export class CoruscantWorld {
     }
     if (this.flyingCarMesh.instanceColor) this.flyingCarMesh.instanceColor.needsUpdate = true;
     if (this.flyingCarGlowMesh.instanceColor) this.flyingCarGlowMesh.instanceColor.needsUpdate = true;
+
+    // 8b. Ground Street Cars (Moscow / Earth road traffic)
+    const groundCarGeo = buildGroundCarGeometry();
+    const groundCarMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.35,
+      metalness: 0.55,
+    });
+    this.groundCarMesh = new THREE.InstancedMesh(groundCarGeo, groundCarMat, GROUND_CAR_COUNT);
+    this.groundCarMesh.frustumCulled = false;
+    this.groundCarMesh.visible = false;
+    this.group.add(this.groundCarMesh);
+
+    const headTailGeo = new THREE.BoxGeometry(1.45, 0.18, 0.25);
+    const headTailMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+    this.groundCarGlowMesh = new THREE.InstancedMesh(headTailGeo, headTailMat, GROUND_CAR_COUNT);
+    this.groundCarGlowMesh.frustumCulled = false;
+    this.groundCarGlowMesh.visible = false;
+    this.group.add(this.groundCarGlowMesh);
+    this.disposables.push(groundCarGeo, groundCarMat, headTailGeo, headTailMat);
+
+    const earthCarColors = ['#e2e8f0', '#1e293b', '#dc2626', '#2563eb', '#facc15', '#475569', '#059669'];
+    for (let i = 0; i < GROUND_CAR_COUNT; i++) {
+      const axisZ = i % 2 === 0;
+      const sign = i % 4 < 2 ? 1 : -1;
+      const corridorBase = ((Math.floor(i / 4) % 5) - 2) * CHUNK_SIZE;
+      const laneSide = (sign > 0 ? 1 : -1) * (5.2 + (i % 2) * 5.2);
+      this.groundCars.push({
+        x: axisZ ? corridorBase + laneSide : (Math.random() - 0.5) * 1200,
+        y: 0.02,
+        z: axisZ ? (Math.random() - 0.5) * 1200 : corridorBase + laneSide,
+        dirX: axisZ ? 0 : sign,
+        dirZ: axisZ ? sign : 0,
+        speed: 10 + Math.random() * 8,
+        bobPhase: Math.random() * Math.PI * 2,
+      });
+      _color.set(earthCarColors[i % earthCarColors.length]);
+      this.groundCarMesh.setColorAt(i, _color);
+      _color.set('#fef08a');
+      this.groundCarGlowMesh.setColorAt(i, _color);
+    }
+    if (this.groundCarMesh.instanceColor) this.groundCarMesh.instanceColor.needsUpdate = true;
+    if (this.groundCarGlowMesh.instanceColor) this.groundCarGlowMesh.instanceColor.needsUpdate = true;
+
+    // 8c. Special Landmarks: Moscow Red Square, Dom Serbosa, Flat Earth Ice Dome Edge
+    this.buildSpecialLandmarks();
 
     // 9. Walking Pedestrians on Boulevard Sidewalks (1 draw call)
     const pedGeo = buildPedestrianGeometry();
@@ -1237,6 +1166,249 @@ export class CoruscantWorld {
     });
   }
 
+  private buildSpecialLandmarks(): void {
+    // 1) Moscow Red Square (centered around (0, 0, -10) on Earth)
+    this.moscowGroup.visible = false;
+    const cobbleGeo = new THREE.BoxGeometry(88, 0.08, 76);
+    const cobbleMat = new THREE.MeshStandardMaterial({
+      color: 0x4b5563,
+      roughness: 0.88,
+      metalness: 0.08,
+    });
+    const cobble = new THREE.Mesh(cobbleGeo, cobbleMat);
+    cobble.position.set(0, -0.02, -10);
+    cobble.receiveShadow = true;
+    this.moscowGroup.add(cobble);
+
+    const brickMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.82 });
+    const trimStoneMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.65 });
+    const spireGreenMat = new THREE.MeshStandardMaterial({ color: 0x065f46, roughness: 0.55 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.3, metalness: 0.8 });
+    const rubyMat = new THREE.MeshBasicMaterial({ color: 0xff2442, toneMapped: false });
+
+    // Kremlin Wall on West side (x = -48)
+    const wallGeo = new THREE.BoxGeometry(6, 11, 84);
+    const kremlinWall = new THREE.Mesh(wallGeo, brickMat);
+    kremlinWall.position.set(-48, 5.5, -10);
+    this.moscowGroup.add(kremlinWall);
+
+    // Spasskaya Tower (-47, 0, -10)
+    const towerBaseGeo = new THREE.BoxGeometry(10, 20, 10);
+    const towerBase = new THREE.Mesh(towerBaseGeo, brickMat);
+    towerBase.position.set(-47, 10, -10);
+    this.moscowGroup.add(towerBase);
+
+    const belfryGeo = new THREE.BoxGeometry(7.2, 8, 7.2);
+    const belfry = new THREE.Mesh(belfryGeo, trimStoneMat);
+    belfry.position.set(-47, 24, -10);
+    this.moscowGroup.add(belfry);
+
+    const clockGeo = new THREE.CylinderGeometry(2.1, 2.1, 0.4, 16);
+    clockGeo.rotateZ(Math.PI / 2);
+    const clockFaceMat = new THREE.MeshBasicMaterial({ color: 0xfef3c7, toneMapped: false });
+    const clockFace = new THREE.Mesh(clockGeo, clockFaceMat);
+    clockFace.position.set(-41.9, 17, -10);
+    this.moscowGroup.add(clockFace);
+
+    const spireGeo = new THREE.ConeGeometry(5.6, 15, 4);
+    spireGeo.rotateY(Math.PI / 4);
+    const spire = new THREE.Mesh(spireGeo, spireGreenMat);
+    spire.position.set(-47, 35.5, -10);
+    this.moscowGroup.add(spire);
+
+    const starGeo = new THREE.OctahedronGeometry(1.5, 0);
+    const star = new THREE.Mesh(starGeo, rubyMat);
+    star.position.set(-47, 44.5, -10);
+    this.moscowGroup.add(star);
+
+    // St. Basil's Cathedral cluster on North side (0, 0, -58)
+    const basilBaseGeo = new THREE.BoxGeometry(22, 10, 16);
+    const basilBase = new THREE.Mesh(basilBaseGeo, brickMat);
+    basilBase.position.set(0, 5, -58);
+    this.moscowGroup.add(basilBase);
+
+    const centerTowerGeo = new THREE.CylinderGeometry(2.6, 3.4, 13, 10);
+    const centerTower = new THREE.Mesh(centerTowerGeo, trimStoneMat);
+    centerTower.position.set(0, 16.5, -58);
+    this.moscowGroup.add(centerTower);
+
+    const centerConeGeo = new THREE.ConeGeometry(3.2, 11, 8);
+    const centerCone = new THREE.Mesh(centerConeGeo, goldMat);
+    centerCone.position.set(0, 28, -58);
+    this.moscowGroup.add(centerCone);
+
+    const domeColors = [0xdc2626, 0x2563eb, 0x16a34a, 0xeab308];
+    const domeOffsets: [number, number][] = [
+      [-6.5, -54],
+      [6.5, -54],
+      [-6.5, -62],
+      [6.5, -62],
+    ];
+    const onionBaseGeo = new THREE.CylinderGeometry(1.8, 2.0, 9, 8);
+    const onionDomeGeo = new THREE.SphereGeometry(2.7, 12, 10);
+    const onionTipGeo = new THREE.ConeGeometry(1.1, 3.2, 8);
+    for (let i = 0; i < domeOffsets.length; i++) {
+      const [dx, dz] = domeOffsets[i];
+      const drum = new THREE.Mesh(onionBaseGeo, trimStoneMat);
+      drum.position.set(dx, 13.5, dz);
+      this.moscowGroup.add(drum);
+
+      const dMat = new THREE.MeshStandardMaterial({
+        color: domeColors[i],
+        roughness: 0.35,
+        metalness: 0.25,
+      });
+      const onion = new THREE.Mesh(onionDomeGeo, dMat);
+      onion.scale.set(1, 1.25, 1);
+      onion.position.set(dx, 19.8, dz);
+      this.moscowGroup.add(onion);
+
+      const tip = new THREE.Mesh(onionTipGeo, goldMat);
+      tip.position.set(dx, 24.2, dz);
+      this.moscowGroup.add(tip);
+      this.disposables.push(dMat);
+    }
+
+    // GUM Facade on East side (+49, 0, -10)
+    const gumGeo = new THREE.BoxGeometry(9, 14, 74);
+    const gumMat = new THREE.MeshStandardMaterial({ color: 0xe7dcc8, roughness: 0.72 });
+    const gum = new THREE.Mesh(gumGeo, gumMat);
+    gum.position.set(49, 7, -10);
+    this.moscowGroup.add(gum);
+
+    const gumGlowGeo = new THREE.BoxGeometry(0.4, 8, 66);
+    const gumGlowMat = new THREE.MeshBasicMaterial({ color: 0xfde68a, toneMapped: false });
+    const gumGlow = new THREE.Mesh(gumGlowGeo, gumGlowMat);
+    gumGlow.position.set(44.3, 6.2, -10);
+    this.moscowGroup.add(gumGlow);
+
+    this.group.add(this.moscowGroup);
+    this.disposables.push(
+      cobbleGeo,
+      cobbleMat,
+      brickMat,
+      trimStoneMat,
+      spireGreenMat,
+      goldMat,
+      rubyMat,
+      wallGeo,
+      towerBaseGeo,
+      belfryGeo,
+      clockGeo,
+      clockFaceMat,
+      spireGeo,
+      starGeo,
+      basilBaseGeo,
+      centerTowerGeo,
+      centerConeGeo,
+      onionBaseGeo,
+      onionDomeGeo,
+      onionTipGeo,
+      gumGeo,
+      gumMat,
+      gumGlowGeo,
+      gumGlowMat,
+    );
+
+    // 2) Dom Serbosa at (-320, 0, 320) — cozy 2-story house with porch & warm yard
+    this.serbosGroup.position.set(-320, 0, 320);
+    this.serbosGroup.visible = false;
+
+    const yardGeo = new THREE.BoxGeometry(28, 0.08, 30);
+    const yardMat = new THREE.MeshStandardMaterial({ color: 0x3f6b34, roughness: 0.92 });
+    const yard = new THREE.Mesh(yardGeo, yardMat);
+    yard.position.set(0, -0.02, -4);
+    this.serbosGroup.add(yard);
+
+    const pathGeo = new THREE.BoxGeometry(4.2, 0.1, 16);
+    const pathMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8 });
+    const path = new THREE.Mesh(pathGeo, pathMat);
+    path.position.set(0, 0.02, 2);
+    this.serbosGroup.add(path);
+
+    const houseGeo = new THREE.BoxGeometry(14, 7.6, 11);
+    const houseMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.72 });
+    const house = new THREE.Mesh(houseGeo, houseMat);
+    house.position.set(0, 3.8, -11);
+    this.serbosGroup.add(house);
+
+    const roofGeo = new THREE.ConeGeometry(10.8, 5.2, 4);
+    roofGeo.rotateY(Math.PI / 4);
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.65 });
+    const roof = new THREE.Mesh(roofGeo, roofMat);
+    roof.position.set(0, 10.2, -11);
+    this.serbosGroup.add(roof);
+
+    const doorGeo = new THREE.BoxGeometry(2.2, 3.4, 0.35);
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.6 });
+    const door = new THREE.Mesh(doorGeo, doorMat);
+    door.position.set(0, 1.7, -5.4);
+    this.serbosGroup.add(door);
+
+    const winGeo = new THREE.BoxGeometry(11.4, 2.0, 0.3);
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const win1 = new THREE.Mesh(winGeo, winMat);
+    win1.position.set(0, 5.2, -5.4);
+    this.serbosGroup.add(win1);
+
+    const lanternGeo = new THREE.SphereGeometry(0.45, 8, 8);
+    const lantern = new THREE.Mesh(lanternGeo, winMat);
+    lantern.position.set(1.8, 3.6, -4.9);
+    this.serbosGroup.add(lantern);
+
+    this.group.add(this.serbosGroup);
+    this.disposables.push(
+      yardGeo,
+      yardMat,
+      pathGeo,
+      pathMat,
+      houseGeo,
+      houseMat,
+      roofGeo,
+      roofMat,
+      doorGeo,
+      doorMat,
+      winGeo,
+      winMat,
+      lanternGeo,
+    );
+
+    // 3) Flat Earth Edge & Great Ice Wall + Sky Dome Base at (0, 0, -960)
+    this.domeEdgeGroup.position.set(0, 0, -960);
+    this.domeEdgeGroup.visible = false;
+
+    const iceWallGeo = new THREE.BoxGeometry(460, 26, 12);
+    const iceWallMat = new THREE.MeshStandardMaterial({
+      color: 0xe0f2fe,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.28,
+      roughness: 0.25,
+      metalness: 0.15,
+    });
+    const iceWall = new THREE.Mesh(iceWallGeo, iceWallMat);
+    iceWall.position.set(0, 13, -38);
+    this.domeEdgeGroup.add(iceWall);
+
+    const domeBeamGeo = new THREE.TorusGeometry(230, 1.4, 8, 48, Math.PI);
+    const domeBeamMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      transparent: true,
+      opacity: 0.45,
+      fog: false,
+    });
+    const domeBeam1 = new THREE.Mesh(domeBeamGeo, domeBeamMat);
+    domeBeam1.position.set(0, 12, -38);
+    this.domeEdgeGroup.add(domeBeam1);
+
+    const beaconPillarGeo = new THREE.CylinderGeometry(0.8, 1.1, 14, 8);
+    const beaconPillar = new THREE.Mesh(beaconPillarGeo, iceWallMat);
+    beaconPillar.position.set(0, 7, -14);
+    this.domeEdgeGroup.add(beaconPillar);
+
+    this.group.add(this.domeEdgeGroup);
+    this.disposables.push(iceWallGeo, iceWallMat, domeBeamGeo, domeBeamMat, beaconPillarGeo);
+  }
+
   public setPlanetBiome(
     planet: Pick<PlanetConfig, 'id' | 'biome' | 'seed' | 'name'>,
     centerX = 0,
@@ -1319,6 +1491,24 @@ export class CoruscantWorld {
     return this.landmarks;
   }
 
+  public getSpecialSpots(): SpecialSpotInfo[] {
+    return this.specialSpots;
+  }
+
+  public getNearestSpecialSpot(x: number, z: number): { spot: SpecialSpotInfo; distance: number } | null {
+    let best: SpecialSpotInfo | null = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.specialSpots.length; i++) {
+      const s = this.specialSpots[i];
+      const d = Math.hypot(s.x - x, s.z - z);
+      if (d < bestDist) {
+        bestDist = d;
+        best = s;
+      }
+    }
+    return best ? { spot: best, distance: bestDist } : null;
+  }
+
   public getNearestCafe(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
     return this.getNearestLandmarkOfType(x, z, 'cafe');
   }
@@ -1329,14 +1519,6 @@ export class CoruscantWorld {
 
   public getNearestObservatory(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
     return this.getNearestLandmarkOfType(x, z, 'observatory');
-  }
-
-  public getNearestSerbos(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
-    return this.getNearestLandmarkOfType(x, z, 'serbos');
-  }
-
-  public getNearestFromCage(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
-    return this.getNearestLandmarkOfType(x, z, 'from_cage');
   }
 
   public getHangarAt(x: number, y: number, z: number): { id: string; name: string } | null {
@@ -1425,8 +1607,14 @@ export class CoruscantWorld {
     this.lastChunkZ = centerCz;
     this.activeBuildings.length = 0;
     this.landmarks.length = 0;
+    this.specialSpots.length = 0;
     this.hangars.length = 0;
     this.skyGates.length = 0;
+
+    const isEarth = this.biomeId === 'earth';
+    this.moscowGroup.visible = false;
+    this.serbosGroup.visible = false;
+    this.domeEdgeGroup.visible = false;
 
     const biome = BIOMES[this.biomeId];
     const foliagePalette = this.getSeasonalFoliagePalette(biome);
@@ -1646,9 +1834,76 @@ export class CoruscantWorld {
           continue;
         }
 
+        // Special Landmark hooks per chunk
+        const isRedSquareChunk = isEarth && cx === 0 && cz === 0;
+        const isSerbosChunk = (isEarth || this.biomeId === 'coruscant') && cx === -1 && cz === 1;
+        const isDomeEdgeChunk = isEarth && cx === 0 && cz === -3;
+
+        if (isRedSquareChunk) {
+          this.moscowGroup.visible = true;
+          this.specialSpots.push({
+            id: 'red_square',
+            kind: 'red_square',
+            name: 'Красная площадь · Москва',
+            actionLabel: 'Осмотреть Красную площадь',
+            x: 0,
+            z: -10,
+          });
+          if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+            // Kremlin wall, St. Basil's, GUM colliders (leave open square clear!)
+            this.activeBuildings.push(
+              { x: -48, z: -10, halfW: 5.5, halfD: 42, height: 22 },
+              { x: 0, z: -58, halfW: 11.5, halfD: 8.5, height: 24 },
+              { x: 49, z: -10, halfW: 5, halfD: 37, height: 15 },
+            );
+          }
+        }
+
+        if (isSerbosChunk) {
+          this.serbosGroup.visible = true;
+          this.specialSpots.push({
+            id: 'serbos_house',
+            kind: 'serbos_house',
+            name: 'Дом Сербоса',
+            actionLabel: 'Постучать к Сербосу',
+            x: -320,
+            z: 315,
+          });
+          if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+            this.activeBuildings.push({
+              x: -320,
+              z: 309,
+              halfW: 7.2,
+              halfD: 5.8,
+              height: 11,
+            });
+          }
+        }
+
+        if (isDomeEdgeChunk) {
+          this.domeEdgeGroup.visible = true;
+          this.specialSpots.push({
+            id: 'dome_edge',
+            kind: 'dome_edge',
+            name: 'Край Земли · Ледяной купол',
+            actionLabel: 'Изучить Купол Земли',
+            x: 0,
+            z: -974,
+          });
+          if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
+            this.activeBuildings.push({
+              x: 0,
+              z: -998,
+              halfW: 230,
+              halfD: 6.5,
+              height: 28,
+            });
+          }
+        }
+
         // 'city' or 'park'
         const isPark = zone === 'park';
-        if (isPark) {
+        if (isPark && !isSerbosChunk) {
           // Roadside park trees along the avenues
           for (let rz = -125; rz <= 125; rz += 32) {
             if (Math.abs(rz) < 26) continue;
@@ -1669,12 +1924,14 @@ export class CoruscantWorld {
           }
         }
 
-        const quadOffsets = [
-          [-92, -92],
-          [92, -92],
-          [-92, 92],
-          [92, 92],
-        ];
+        const quadOffsets = isRedSquareChunk
+          ? []
+          : [
+              [-92, -92],
+              [92, -92],
+              [-92, 92],
+              [92, 92],
+            ];
 
         for (let q = 0; q < quadOffsets.length; q++) {
           const [qx, qz] = quadOffsets[q];
@@ -1798,8 +2055,8 @@ export class CoruscantWorld {
         }
 
         // Cozy roadside Aero-Café pavilion in city & park blocks
-        if ((zone === 'city' || isPark) && cafeCount < MAX_CAFE_INSTANCES) {
-          const spawnCafe = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 513) > 0.36;
+        if ((zone === 'city' || isPark) && !isRedSquareChunk && !isSerbosChunk && cafeCount < MAX_CAFE_INSTANCES) {
+          const spawnCafe = (cx === 0 && cz === 0) || (isEarth && cx === 1 && cz === 0) || hash2(cx, cz, sOff + 513) > 0.36;
           if (spawnCafe) {
             const side = cx === 0 && cz === 0 ? 1 : hash2(cx, cz, sOff + 514) > 0.5 ? 1 : -1;
             const cafeX = originX + side * 27.5;
@@ -1828,7 +2085,9 @@ export class CoruscantWorld {
               });
             }
 
-            const cafeNames = ['Аэро-кафе «Горизонт»', 'Кафе «Неон 1313»', 'Терраса «Туманность»', 'Кофейня «Звёздный путь»'];
+            const cafeNames = isEarth
+              ? ['Кофейня на Тверской', 'Московская кофейня', 'Булочная «У Кремля»']
+              : ['Аэро-кафе «Горизонт»', 'Кафе «Неон 1313»', 'Терраса «Туманность»', 'Кофейня «Звёздный путь»'];
             const cName = cafeNames[Math.abs(cx * 3 + cz * 7 + sOff) % cafeNames.length];
             this.landmarks.push({
               id: `cafe_${cx}_${cz}`,
@@ -1842,8 +2101,8 @@ export class CoruscantWorld {
         }
 
         // Boutique Sky-Hotel along city & park avenues (enterable suite!)
-        if ((zone === 'city' || isPark) && hotelCount < MAX_HOTEL_INSTANCES) {
-          const spawnHotel = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 613) > 0.45;
+        if ((zone === 'city' || isPark) && !isRedSquareChunk && !isSerbosChunk && hotelCount < MAX_HOTEL_INSTANCES) {
+          const spawnHotel = (cx === 0 && cz === 0) || (isEarth && cx === 1 && cz === 0) || hash2(cx, cz, sOff + 613) > 0.45;
           if (spawnHotel) {
             const side = cx === 0 && cz === 0 ? -1 : hash2(cx, cz, sOff + 614) > 0.5 ? 1 : -1;
             const hotelX = originX + side * 30.5;
@@ -1872,7 +2131,9 @@ export class CoruscantWorld {
               });
             }
 
-            const hotelNames = ['Отель «Звёздное небо»', 'Гранд-Отель «Люмен»', 'Апарт-отель «Аврора»', 'Бутик-отель «Селена»'];
+            const hotelNames = isEarth
+              ? ['Отель «Метрополь»', 'Гранд-Отель «Москва»', 'Отель «Националь»']
+              : ['Отель «Звёздное небо»', 'Гранд-Отель «Люмен»', 'Апарт-отель «Аврора»', 'Бутик-отель «Селена»'];
             const hName = hotelNames[Math.abs(cx * 5 + cz * 11 + sOff) % hotelNames.length];
             this.landmarks.push({
               id: `hotel_${cx}_${cz}`,
@@ -1886,7 +2147,7 @@ export class CoruscantWorld {
         }
 
         // Walk-in Star Observatory Dome in park & city districts
-        if ((isPark || zone === 'city') && obsCount < MAX_OBS_INSTANCES) {
+        if ((isPark || zone === 'city') && !isRedSquareChunk && !isSerbosChunk && obsCount < MAX_OBS_INSTANCES) {
           const spawnObs = (cx === 0 && cz === -1) || hash2(cx, cz, sOff + 733) > 0.62;
           if (spawnObs) {
             const side = cx === 0 && cz === -1 ? 1 : hash2(cx, cz, sOff + 734) > 0.5 ? 1 : -1;
@@ -1916,7 +2177,9 @@ export class CoruscantWorld {
               });
             }
 
-            const obsNames = ['Обсерватория «Зеркало неба»', 'Планетарий «Космос»', 'Звёздный купол «Вега»'];
+            const obsNames = isEarth
+              ? ['Московский планетарий', 'Купол наблюдений «Земля»']
+              : ['Обсерватория «Зеркало неба»', 'Планетарий «Космос»', 'Звёздный купол «Вега»'];
             const oName = obsNames[Math.abs(cx * 7 + cz * 3 + sOff) % obsNames.length];
             this.landmarks.push({
               id: `obs_${cx}_${cz}`,
@@ -1930,7 +2193,7 @@ export class CoruscantWorld {
         }
 
         // Hollow Drive-In & Fly-In Aero-Hangar straddling the avenue (open 26m x 15m interior!)
-        if (hangarCount < MAX_HANGAR_INSTANCES && (zone === 'city' || isPark)) {
+        if (hangarCount < MAX_HANGAR_INSTANCES && (zone === 'city' || isPark) && !isRedSquareChunk && !isSerbosChunk) {
           const spawnHangar = (cx === 0 && cz === 0) || hash2(cx, cz, sOff + 811) > 0.68;
           if (spawnHangar && arms.s) {
             const hx = originX;
@@ -2074,42 +2337,6 @@ export class CoruscantWorld {
     this.beaconMesh.count = beaconCount;
     this.beaconMesh.instanceMatrix.needsUpdate = true;
     if (this.beaconMesh.instanceColor) this.beaconMesh.instanceColor.needsUpdate = true;
-
-    // Register «Фром в клетке» on EVERY planet
-    this.landmarks.push({
-      id: 'from_cage',
-      type: 'from_cage',
-      name: 'Клетка · Землянин Фром',
-      x: this.fromCagePos.x + 6.2,
-      z: this.fromCagePos.z,
-    });
-    this.activeBuildings.push({
-      x: this.fromCagePos.x,
-      z: this.fromCagePos.z,
-      halfW: 3.7,
-      halfD: 3.7,
-      height: 4.0,
-    });
-
-    // Register Serbos's Riverside House on Verdant-IX
-    const isVerdant = this.planetId === 'verdant';
-    this.serbosExteriorGroup.visible = isVerdant;
-    if (isVerdant) {
-      this.landmarks.push({
-        id: 'serbos_house',
-        type: 'serbos',
-        name: 'Домик Сербоса у реки',
-        x: this.serbosHousePos.x - 13.5,
-        z: this.serbosHousePos.z,
-      });
-      this.activeBuildings.push({
-        x: this.serbosHousePos.x,
-        z: this.serbosHousePos.z,
-        halfW: 6.2,
-        halfD: 5.0,
-        height: 6.5,
-      });
-    }
   }
 
   public update(
@@ -2130,25 +2357,6 @@ export class CoruscantWorld {
   ): void {
     this.group.visible = !insideInterior && spaceFactor < 0.99;
     if (!this.group.visible) return;
-
-    // Animate angry Earthling «Фром» running furiously inside his cage
-    const runT = elapsed * 2.9;
-    const rx = Math.sin(runT) * 2.15;
-    const rz = Math.cos(runT * 1.35) * 2.15;
-    const vx = Math.cos(runT) * 2.15 * 2.9;
-    const vz = -Math.sin(runT * 1.35) * 2.15 * 1.35 * 2.9;
-    this.fromRunnerGroup.position.set(rx, 0.3 + Math.abs(Math.sin(elapsed * 14)) * 0.08, rz);
-    this.fromRunnerGroup.rotation.y = Math.atan2(vx, vz);
-    const swing = Math.sin(elapsed * 16) * 0.72;
-    this.fromLeftLeg.rotation.x = swing;
-    this.fromRightLeg.rotation.x = -swing;
-    this.fromLeftArm.rotation.x = -Math.PI * 0.65 + swing * 0.5;
-    this.fromRightArm.rotation.x = -Math.PI * 0.65 - swing * 0.5;
-
-    // Animate Serbos waving gently outside his riverside home
-    if (this.serbosExteriorGroup.visible) {
-      this.serbosOutArm.rotation.z = -0.35 - Math.abs(Math.sin(elapsed * 3.1)) * 0.65;
-    }
 
     const biome = BIOMES[this.biomeId];
     const cx = Math.round(vehiclePos.x / CHUNK_SIZE);
@@ -2201,43 +2409,90 @@ export class CoruscantWorld {
     this.roadMaterial.envMapIntensity = 1.4 - nightFactor * 0.65;
     this.pondMaterial.envMapIntensity = 1.5 - nightFactor * 0.75;
 
-    // 1. Animate 3D Flying Cars + Thrusters
+    // 1. Animate 3D Flying Cars + Thrusters (or Ground Street Cars on Earth/Moscow)
     const activeCars = biome.carCount;
-    this.flyingCarMesh.count = activeCars;
-    this.flyingCarGlowMesh.count = activeCars;
-    const carWrap = 650;
-    for (let i = 0; i < activeCars; i++) {
-      const c = this.flyingCars[i];
-      c.x += c.dirX * c.speed * delta;
-      c.z += c.dirZ * c.speed * delta;
+    const isEarth = this.biomeId === 'earth';
+    this.flyingCarMesh.visible = activeCars > 0;
+    this.flyingCarGlowMesh.visible = activeCars > 0;
+    if (activeCars > 0) {
+      this.flyingCarMesh.count = activeCars;
+      this.flyingCarGlowMesh.count = activeCars;
+      const carWrap = 650;
+      for (let i = 0; i < activeCars; i++) {
+        const c = this.flyingCars[i];
+        c.x += c.dirX * c.speed * delta;
+        c.z += c.dirZ * c.speed * delta;
 
-      if (c.x - vehiclePos.x > carWrap) c.x -= carWrap * 2;
-      else if (c.x - vehiclePos.x < -carWrap) c.x += carWrap * 2;
+        if (c.x - vehiclePos.x > carWrap) c.x -= carWrap * 2;
+        else if (c.x - vehiclePos.x < -carWrap) c.x += carWrap * 2;
 
-      if (c.z - vehiclePos.z > carWrap) c.z -= carWrap * 2;
-      else if (c.z - vehiclePos.z < -carWrap) c.z += carWrap * 2;
+        if (c.z - vehiclePos.z > carWrap) c.z -= carWrap * 2;
+        else if (c.z - vehiclePos.z < -carWrap) c.z += carWrap * 2;
 
-      const hoverY = c.y + Math.sin(elapsed * 1.8 + c.bobPhase) * 0.35;
-      const yaw = c.dirX !== 0 ? (c.dirX > 0 ? Math.PI / 2 : -Math.PI / 2) : c.dirZ > 0 ? 0 : Math.PI;
+        const hoverY = c.y + Math.sin(elapsed * 1.8 + c.bobPhase) * 0.35;
+        const yaw = c.dirX !== 0 ? (c.dirX > 0 ? Math.PI / 2 : -Math.PI / 2) : c.dirZ > 0 ? 0 : Math.PI;
 
-      _dummy.position.set(c.x, hoverY, c.z);
-      _dummy.rotation.set(0, yaw, 0);
-      _dummy.scale.setScalar(1);
-      _dummy.updateMatrix();
-      this.flyingCarMesh.setMatrixAt(i, _dummy.matrix);
+        _dummy.position.set(c.x, hoverY, c.z);
+        _dummy.rotation.set(0, yaw, 0);
+        _dummy.scale.setScalar(1);
+        _dummy.updateMatrix();
+        this.flyingCarMesh.setMatrixAt(i, _dummy.matrix);
 
-      _glowDummy.position.set(
-        c.x - c.dirX * 2.65,
-        hoverY - 0.05,
-        c.z - c.dirZ * 2.65,
-      );
-      _glowDummy.rotation.set(0, yaw, 0);
-      _glowDummy.scale.setScalar(1);
-      _glowDummy.updateMatrix();
-      this.flyingCarGlowMesh.setMatrixAt(i, _glowDummy.matrix);
+        _glowDummy.position.set(
+          c.x - c.dirX * 2.65,
+          hoverY - 0.05,
+          c.z - c.dirZ * 2.65,
+        );
+        _glowDummy.rotation.set(0, yaw, 0);
+        _glowDummy.scale.setScalar(1);
+        _glowDummy.updateMatrix();
+        this.flyingCarGlowMesh.setMatrixAt(i, _glowDummy.matrix);
+      }
+      this.flyingCarMesh.instanceMatrix.needsUpdate = true;
+      this.flyingCarGlowMesh.instanceMatrix.needsUpdate = true;
     }
-    this.flyingCarMesh.instanceMatrix.needsUpdate = true;
-    this.flyingCarGlowMesh.instanceMatrix.needsUpdate = true;
+
+    this.groundCarMesh.visible = isEarth;
+    this.groundCarGlowMesh.visible = isEarth;
+    if (isEarth) {
+      this.groundCarMesh.count = GROUND_CAR_COUNT;
+      this.groundCarGlowMesh.count = GROUND_CAR_COUNT;
+      const gWrap = 560;
+      for (let i = 0; i < GROUND_CAR_COUNT; i++) {
+        const c = this.groundCars[i];
+        // Yield politely if player is walking close in front of the street car
+        const dxP = vehiclePos.x - c.x;
+        const dzP = vehiclePos.z - c.z;
+        const ahead = dxP * c.dirX + dzP * c.dirZ;
+        const lateral = Math.abs(dxP * -c.dirZ + dzP * c.dirX);
+        const yieldStop = isWalking && ahead > 0 && ahead < 9.5 && lateral < 3.0;
+        const effSpeed = yieldStop ? 0 : c.speed;
+
+        c.x += c.dirX * effSpeed * delta;
+        c.z += c.dirZ * effSpeed * delta;
+
+        if (c.x - vehiclePos.x > gWrap) c.x -= gWrap * 2;
+        else if (c.x - vehiclePos.x < -gWrap) c.x += gWrap * 2;
+
+        if (c.z - vehiclePos.z > gWrap) c.z -= gWrap * 2;
+        else if (c.z - vehiclePos.z < -gWrap) c.z += gWrap * 2;
+
+        const yaw = c.dirX !== 0 ? (c.dirX > 0 ? Math.PI / 2 : -Math.PI / 2) : c.dirZ > 0 ? 0 : Math.PI;
+        _dummy.position.set(c.x, 0, c.z);
+        _dummy.rotation.set(0, yaw, 0);
+        _dummy.scale.setScalar(1);
+        _dummy.updateMatrix();
+        this.groundCarMesh.setMatrixAt(i, _dummy.matrix);
+
+        _glowDummy.position.set(c.x + c.dirX * 2.15, 0.56, c.z + c.dirZ * 2.15);
+        _glowDummy.rotation.set(0, yaw, 0);
+        _glowDummy.scale.setScalar(1);
+        _glowDummy.updateMatrix();
+        this.groundCarGlowMesh.setMatrixAt(i, _glowDummy.matrix);
+      }
+      this.groundCarMesh.instanceMatrix.needsUpdate = true;
+      this.groundCarGlowMesh.instanceMatrix.needsUpdate = true;
+    }
 
     // 2. Animate Street Pedestrians
     const activePeds = biome.pedCount;

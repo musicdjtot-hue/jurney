@@ -8,17 +8,18 @@ import type {
   CafeMenuItem,
   InteriorMode,
   InteriorPose,
-  NpcBannerSnapshot,
   PlanetId,
   QuestKind,
   SeasonId,
+  SpecialSpotInfo,
   VehicleFlightState,
   WeatherMode,
 } from '../types/simulation';
+import type { QuestSaveItem } from './saveSystem';
 
 export interface WorldLandmark {
   id: string;
-  type: 'cafe' | 'hotel' | 'observatory' | 'overlook' | 'from_cage' | 'serbos';
+  type: 'cafe' | 'hotel' | 'observatory' | 'overlook';
   name: string;
   x: number;
   z: number;
@@ -47,17 +48,8 @@ const THEME_DEFS: Omit<CabinThemeOption, 'unlocked'>[] = [
   { id: 'violet', name: 'Галактик-Ультра', hex: '#a78bfa', cost: 240 },
 ];
 
-const HOT_TEA_ITEM: CafeMenuItem = {
-  id: 'hot_tea',
-  name: 'Чашка ароматного чая вдвоём',
-  desc: 'Согревающий листовой чай с бергамотом — идеально для отдыха вдвоём',
-  cost: 15,
-  moodReply: 'Она бережно держит тёплую чашку чая и улыбается: «Какой ароматный чай… Так хорошо сидеть здесь с тобой!»',
-};
-
 export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
   coruscant: [
-    HOT_TEA_ITEM,
     {
       id: 'kaf_spice',
       name: 'Пряный каф с корицей',
@@ -80,8 +72,30 @@ export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
       moodReply: 'Она мягко опирается подбородком на ладонь, любуясь огнями за стеклянной стеной.',
     },
   ],
+  earth: [
+    {
+      id: 'moscow_raf',
+      name: 'Московский медовый раф',
+      desc: 'Нежный сливочный кофе с гречишным мёдом и ванилью',
+      cost: 30,
+      moodReply: '«Как вкусно! Прямо идеальный кофе для прогулки по Москве».',
+    },
+    {
+      id: 'syrniki_tea',
+      name: 'Тёплые сырники и чай с лимоном',
+      desc: 'Домашний уют в самом центре столицы',
+      cost: 48,
+      moodReply: 'Она улыбается: «После такого завтрака хочется гулять по Красной площади весь день!»',
+    },
+    {
+      id: 'relax_free',
+      name: 'Полюбоваться Москвой из окна',
+      desc: 'Спокойная пауза вдвоём за столиком у проспекта',
+      cost: 0,
+      moodReply: 'За стеклом неспешно едут машины и спешат прохожие, а у вас уютная тишина.',
+    },
+  ],
   kryos: [
-    HOT_TEA_ITEM,
     {
       id: 'aurora_cocoa',
       name: 'Горячий шоколад «Аврора»',
@@ -105,7 +119,6 @@ export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
     },
   ],
   solaris: [
-    HOT_TEA_ITEM,
     {
       id: 'solar_espresso',
       name: 'Карамельный раф «Дюна»',
@@ -129,7 +142,6 @@ export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
     },
   ],
   verdant: [
-    HOT_TEA_ITEM,
     {
       id: 'nectar_tea',
       name: 'Цветочный био-нектар',
@@ -153,7 +165,6 @@ export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
     },
   ],
   amethyst: [
-    HOT_TEA_ITEM,
     {
       id: 'quartz_latte',
       name: 'Лавандовый раф «Аметист»',
@@ -177,7 +188,6 @@ export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
     },
   ],
   crimson: [
-    HOT_TEA_ITEM,
     {
       id: 'spice_mocha',
       name: 'Вишнёвый мокко «Закат»',
@@ -223,6 +233,9 @@ export function getCafeSceneIntro(biome: BiomeId, timeOfDay: number, weather: We
   if (isSunset) {
     return 'Закатный свет заливает деревянные столики. Отличный момент присесть на стулья и выпить кофе вдвоём.';
   }
+  if (biome === 'earth') {
+    return 'Уютная московская кофейня с панорамными окнами на оживлённую улицу и проспекты.';
+  }
   if (biome === 'kryos') {
     return 'Внутри тепло и уютно, пока за окном медленно кружится снег над ледяными шпилями.';
   }
@@ -249,11 +262,7 @@ export class QuestManager {
   private toastTimer = 0;
   private companionNote: string | null = null;
   private companionNoteTimer = 0;
-  private npcBanner: NpcBannerSnapshot | null = null;
-  private npcBannerTimer = 0;
   private talkSeq = 0;
-  private serbosTalkSeq = 0;
-  private fromTalkSeq = 0;
 
   constructor() {
     this.refillPool('coruscant', new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0), []);
@@ -276,20 +285,6 @@ export class QuestManager {
 
   public getCompanionNote(): string | null {
     return this.companionNoteTimer > 0 ? this.companionNote : null;
-  }
-
-  public setNpcBanner(
-    speaker: string,
-    text: string,
-    tone: NpcBannerSnapshot['tone'],
-    duration = 6.0,
-  ): void {
-    this.npcBanner = { speaker, text, tone };
-    this.npcBannerTimer = duration;
-  }
-
-  public getNpcBanner(): NpcBannerSnapshot | null {
-    return this.npcBannerTimer > 0 ? this.npcBanner : null;
   }
 
   private randomRemarkTimer = 0;
@@ -321,14 +316,13 @@ export class QuestManager {
     biome: BiomeId,
     planetName: string,
     inSpace: boolean,
+    inOrbitMode: boolean,
     isFlying: boolean,
     interiorMode: InteriorMode,
     interiorPose: InteriorPose,
     weather: WeatherMode,
     timeOfDay: number,
     season: SeasonId = 'summer',
-    hotelTvOn = false,
-    hotelTvChannelName = '',
   ): string {
     const norm = ((timeOfDay % 1) + 1) % 1;
     const isNight = norm < 0.22 || norm >= 0.82;
@@ -337,26 +331,14 @@ export class QuestManager {
     const pool: string[] = [];
     if (interiorMode === 'hotel' && interiorPose === 'lie') {
       pool.push(
-        `«Посмотри, какая красивая планета ${planetName} и какой невероятный вид из нашего панорамного окна…»`,
-        '«Так приятно лежать рядом, никуда не спешить, целоваться или просто уснуть под это небо…»',
-        hotelTvOn
-          ? `«И по телевизору идёт «${hotelTvChannelName}», а в окне сияет ${planetName} — идеальный вечер вдвоём!»`
-          : `«Интересно, сколько ещё планет вроде ${planetName} ждёт нас там, среди звёзд?»`,
+        '«Так приятно просто лежать рядом, никуда не спешить и смотреть в огромное окно…»',
+        `«Интересно, сколько ещё планет вроде ${planetName} ждёт нас там, среди звёзд?»`,
+        'Она прижимается ближе и тихо вздыхает: «Можем ещё поваляться или поспать до рассвета».',
       );
-      this.onHotelInteraction();
     } else if (interiorMode === 'hotel') {
       pool.push(
-        `«Какая же красивая планета ${planetName}! А из этого огромного окна открывается лучший вид в городе».`,
-        hotelTvOn
-          ? `«Как уютно смотреть вместе «${hotelTvChannelName}» и любоваться видом на ${planetName} из окна!»`
-          : '«Можем включить телевизор, прилечь вдвоём на кровать, поцеловаться или поспать!»',
-      );
-      this.onHotelInteraction();
-    } else if (interiorMode === 'serbos') {
-      pool.push(
-        '«Ого, сколько у Сербоса компьютеров и экранов! И этот голографический Адамчик такой живой!»',
-        '«Какой уютный домик прямо у реки… Сербос заварил отличный чай, давай присядем за стол!»',
-        '«Мне так тепло от слов Сербоса — у него в доме с Адамчиком настоящая гармония».',
+        '«Какой красивый номер! И вид из окна просто невероятный».',
+        '«Давай приляжем на кровать немного отдохнуть или присядем на диван?»',
       );
     } else if (interiorMode === 'observatory' && interiorPose === 'sit') {
       pool.push(
@@ -369,20 +351,33 @@ export class QuestManager {
       );
     } else if (interiorMode === 'cafe' && interiorPose === 'sit') {
       pool.push(
-        '«Обожаю такие тихие кофейни. Выпьем по чашке чая или кофе вдвоём!»',
-        '«Чай и кофе здесь отличные. Куда поедем дальше после отдыха?»',
+        '«Обожаю такие тихие кофейни. Спасибо, что заехали сюда вдвоём».',
+        '«Кофе здесь отличный. Куда поедем дальше после отдыха?»',
       );
     } else if (interiorMode === 'cafe') {
-      pool.push('«Давай займём столик у окна и закажем по чашке чая!»');
+      pool.push('«Давай займём столик у окна, так хочется кофе!»');
+    } else if (inOrbitMode) {
+      pool.push(
+        `«Мы парим прямо на орбите над ${planetName}! Какой город выберем для посадки?»`,
+        biome === 'earth'
+          ? '«Смотри вниз — плоская Земля под огромным куполом, а внутри вращаются Солнце и Луна! Приземлимся в Москве?»'
+          : '«Вся планета как на ладони… Любой маяк внизу ждёт нашего спуска».',
+      );
     } else if (inSpace) {
       pool.push(
-        '«Смотри, сколько звёзд и новых планет вокруг… В какую сторону полетим?»',
+        '«Смотри, сколько звёзд и новых планет вокруг… Полетим на плоскую Землю или дальше к другим мирам?»',
         '«В космосе так тихо. Люблю просто плыть рядом с тобой в этой бесконечности».',
       );
     } else if (isFlying) {
       pool.push(
         '«Когда мы поднимаемся над облаками, весь мир внизу кажется таким спокойным».',
-        `«Красивые виды над ${planetName}! Может, слетаем ещё выше — в космос?»`,
+        `«Красивые виды над ${planetName}! Можем подняться ещё выше — на орбиту!»`,
+      );
+    } else if (biome === 'earth') {
+      pool.push(
+        '«Как здорово прогуляться по Москве! Смотри, сверху на куполе видно и Солнце, и Луну».',
+        '«Машины аккуратно притормаживают на проспектах — можно спокойно перейти дорогу и зайти на Красную площадь!»',
+        '«А ещё можем доехать до дома Сербоса и постучать к нему в гости!»',
       );
     } else if (weather === 'snow') {
       pool.push(
@@ -410,7 +405,7 @@ export class QuestManager {
     } else {
       pool.push(
         `«Мне так нравится путешествовать с тобой по ${planetName}».`,
-        '«Можем выйти погулять пешком, зайти в кафе, отель или обсерваторию под куполом!»',
+        '«Теперь мы можем выйти из машины в любом месте — хоть на улице, хоть у дома Сербоса, хоть в полях!»',
       );
     }
 
@@ -428,98 +423,12 @@ export class QuestManager {
 
   public onCafeVisited(): void {
     if (this.activeQuest?.kind === 'cafe_visit') {
-      this.activeQuest.progressValue = Math.max(this.activeQuest.progressValue, 0.5);
-      this.showToast('Вы в кафе — присядьте за столик и выпейте по чашке чая!', 3.8);
+      this.completeActiveQuest();
     }
   }
 
   public onHotelVisited(): void {
     if (this.activeQuest?.kind === 'hotel_visit') {
-      this.activeQuest.progressValue = Math.max(this.activeQuest.progressValue, 0.5);
-      this.showToast('Вы в гостинице — смотрите ТВ, целуйтесь, спите или обсудите вид из окна!', 4.2);
-    }
-  }
-
-  public onHotelInteraction(): void {
-    if (this.activeQuest?.kind === 'hotel_visit') {
-      this.completeActiveQuest();
-    }
-  }
-
-  public onHotelTvAction(on: boolean, channelName: string): void {
-    if (on) {
-      this.setCompanionNote(`«О, включили телевизор: «${channelName}»! Присаживайся или ложись рядом смотреть!»`, 5.2);
-      this.showToast(`Телевизор · ${channelName}`, 3.0);
-      this.onHotelInteraction();
-    } else {
-      this.showToast('Телевизор выключен', 2.2);
-    }
-  }
-
-  public talkWithFrom(completeQuest = true): void {
-    const yells = [
-      '«ЭЙ! ВЫПУСТИТЕ МЕНЯ! Я РАЗВИТЫЙ ЗЕМЛЯНИН ФРОМ! Я НЕ ДОЛЖЕН СИДЕТЬ В ЭТОЙ КЛЕТКЕ!»',
-      '«ЧЕГО СМОТРИТЕ?! Я САМЫЙ УМНЫЙ ЗЕМЛЯНИН В ГАЛАКТИКЕ! БЕГАЮ ТУТ КРУГАМИ ИЗ-ЗА ВАС!»',
-      '«ААА! ОТКРОЙТЕ ЗАМОК НЕМЕДЛЕННО! Я РАЗВИТЫЙ ЗЕМЛЯНИН — Я ВСЕМ ПОКАЖУ!»',
-    ];
-    const line = yells[this.fromTalkSeq % yells.length];
-    this.fromTalkSeq++;
-    this.setNpcBanner('Фром · Развитый землянин', line, 'angry', 6.2);
-    this.setCompanionNote('«Ого, этот Фром и правда очень громко кричит и носится по клетке!»', 4.6);
-    if (completeQuest && this.activeQuest?.kind === 'from_cage') {
-      this.completeActiveQuest();
-    }
-  }
-
-  public greetSerbosOutside(): void {
-    this.setNpcBanner(
-      'Сербос',
-      '«Я вас люблю! Заходите в мой домик у реки — попьём чай и я познакомлю вас с моим ИИ Адамчиком!»',
-      'warm',
-      6.5,
-    );
-    if (this.activeQuest?.kind === 'serbos_visit') {
-      this.activeQuest.progressValue = Math.max(this.activeQuest.progressValue, 0.45);
-    }
-  }
-
-  public talkWithSerbos(inside: boolean): void {
-    const lines: { speaker: string; text: string; tone: 'warm' | 'ai' }[] = [
-      {
-        speaker: 'Сербос',
-        text: '«Я вас люблю! Как здорово, что вы прилетели к моему домику у реки!»',
-        tone: 'warm',
-      },
-      {
-        speaker: 'Сербос',
-        text: '«А это Адамчик — мой ИИ. Все эти компьютеры помогают нам исследовать доброту во Вселенной!»',
-        tone: 'warm',
-      },
-      {
-        speaker: 'Адамчик · ИИ',
-        text: '«Здравствуйте, друзья! Сербос всегда говорит о вас с теплом. Присаживайтесь пить свежий чай!»',
-        tone: 'ai',
-      },
-    ];
-    const pick = lines[this.serbosTalkSeq % lines.length];
-    this.serbosTalkSeq++;
-    this.setNpcBanner(pick.speaker, pick.text, pick.tone, 6.2);
-    if (inside && this.activeQuest?.kind === 'serbos_visit') {
-      this.activeQuest.progressValue = Math.max(this.activeQuest.progressValue, 0.75);
-    }
-  }
-
-  public drinkTeaAtSerbos(): void {
-    this.credits += 40;
-    this.setNpcBanner(
-      'Сербос и Адамчик',
-      '«Я вас люблю! Пейте горячий чай у реки — Адамчик уже включил самую тёплую мелодию на компьютерах!»',
-      'warm',
-      6.5,
-    );
-    this.setCompanionNote('«Какой душевный чай у Сербоса… И Адамчик такой милый ИИ!»', 5.2);
-    this.showToast('Чай у Сербоса среди компьютеров · +40 ✦', 3.8);
-    if (this.activeQuest?.kind === 'serbos_visit') {
       this.completeActiveQuest();
     }
   }
@@ -562,15 +471,8 @@ export class QuestManager {
         this.activeQuest.progressValue + 20,
       );
     }
-    if (this.activeQuest?.kind === 'cafe_visit') {
-      this.completeActiveQuest();
-    }
     this.setCompanionNote(item.moodReply, 5.5);
-    const isTea = item.id === 'hot_tea' || item.name.toLowerCase().includes('ча');
-    this.showToast(
-      item.cost > 0 ? `${isTea ? 'Чай на столе' : 'Кофе на столе'} (-${item.cost} ✦)` : 'Спокойная пауза за столиком',
-      3.4,
-    );
+    this.showToast(item.cost > 0 ? `Кофе на столе (-${item.cost} ✦)` : 'Спокойная пауза за столиком', 3.4);
     return { ok: true, reply: item.moodReply };
   }
 
@@ -578,7 +480,6 @@ export class QuestManager {
     this.credits += 35;
     this.setCompanionNote('«Доброе утро… Как хорошо мы выспались! Готов к новым дорогам?»', 5.5);
     this.showToast('Сладкий сон вдвоём · Силы восстановлены (+35 ✦)', 4.2);
-    this.onHotelInteraction();
   }
 
   public onObservatoryVisit(id: string, name: string): void {
@@ -659,6 +560,65 @@ export class QuestManager {
     }
   }
 
+  public onOrbitEntered(): void {
+    if (this.activeQuest?.kind === 'orbit_landing') {
+      this.activeQuest.progressValue = Math.max(this.activeQuest.progressValue, 0.5);
+    }
+  }
+
+  public onOrbitLandingCompleted(planetId: PlanetId, siteName: string): void {
+    if (this.activeQuest?.kind === 'orbit_landing') {
+      this.completeActiveQuest();
+    }
+    if (planetId === 'earth' && this.activeQuest?.kind === 'earth_moscow' && siteName.includes('Красная')) {
+      this.completeActiveQuest();
+    }
+  }
+
+  public onSpecialSpotInteracted(spot: SpecialSpotInfo): void {
+    const key = `spot_${spot.id}`;
+    const firstTime = !this.visitedSpecialSpots.has(key);
+    if (firstTime) {
+      this.visitedSpecialSpots.add(key);
+      this.credits += 65;
+    }
+
+    if (spot.kind === 'serbos_house') {
+      this.setCompanionNote(
+        '«Сербос машет из окна и угощает нас тёплым чаем! Уютный дом и красивый сад у крыльца».',
+        6.0,
+      );
+      this.showToast(
+        firstTime ? 'В гостях у дома Сербоса (+65 ✦)' : 'Сербос рад вашему визиту!',
+        4.0,
+      );
+      if (this.activeQuest?.kind === 'serbos_visit') {
+        this.completeActiveQuest();
+      }
+    } else if (spot.kind === 'red_square') {
+      this.setCompanionNote(
+        '«Невероятная Красная площадь! Спасская башня, купола собора и солнце под куполом Земли!»',
+        6.0,
+      );
+      this.showToast(
+        firstTime ? 'Прогулка по Красной площади в Москве (+65 ✦)' : 'Красная площадь · Москва',
+        4.0,
+      );
+      if (this.activeQuest?.kind === 'earth_moscow') {
+        this.completeActiveQuest();
+      }
+    } else if (spot.kind === 'dome_edge') {
+      this.setCompanionNote(
+        '«Вот он — край плоской Земли и великая ледяная стена, уходящая прямо в сияющий купол…»',
+        6.0,
+      );
+      this.showToast(
+        firstTime ? 'Изучена граница ледяного купола (+65 ✦)' : 'Ледяная стена и купол Земли',
+        4.0,
+      );
+    }
+  }
+
   public update(
     delta: number,
     planetId: PlanetId,
@@ -672,9 +632,6 @@ export class QuestManager {
   ): void {
     if (this.toastTimer > 0) {
       this.toastTimer = Math.max(0, this.toastTimer - delta);
-    }
-    if (this.npcBannerTimer > 0) {
-      this.npcBannerTimer = Math.max(0, this.npcBannerTimer - delta);
     }
     if (this.companionNoteTimer > 0) {
       this.companionNoteTimer = Math.max(0, this.companionNoteTimer - delta);
@@ -719,10 +676,16 @@ export class QuestManager {
         this.completeActiveQuest();
         return;
       }
-    } else if (q.kind === 'from_cage' && q.targetX !== undefined && q.targetZ !== undefined) {
+    } else if (q.kind === 'cafe_visit' && q.targetX !== undefined && q.targetZ !== undefined) {
       const dist = Math.hypot(pos.x - q.targetX, pos.z - q.targetZ);
-      if (dist <= 26 && (flightState === 'road' || isWalking)) {
-        this.talkWithFrom(true);
+      if (dist <= 30 && (flightState === 'road' || isWalking)) {
+        this.completeActiveQuest();
+        return;
+      }
+    } else if (q.kind === 'hotel_visit' && q.targetX !== undefined && q.targetZ !== undefined) {
+      const dist = Math.hypot(pos.x - q.targetX, pos.z - q.targetZ);
+      if (dist <= 32 && (flightState === 'road' || isWalking)) {
+        this.completeActiveQuest();
         return;
       }
     } else if (q.kind === 'cloud_glide') {
@@ -748,6 +711,24 @@ export class QuestManager {
           this.completeActiveQuest();
           return;
         }
+      }
+    } else if (q.kind === 'serbos_visit') {
+      const dist = Math.hypot(pos.x - -320, pos.z - 315);
+      if (dist <= 24 && isWalking) {
+        this.completeActiveQuest();
+        return;
+      }
+    } else if (q.kind === 'earth_moscow') {
+      if (planetId === 'earth') {
+        const dist = Math.hypot(pos.x - 0, pos.z - -10);
+        if (dist <= 45 && (flightState === 'road' || isWalking)) {
+          this.completeActiveQuest();
+          return;
+        }
+      }
+    } else if (q.kind === 'orbit_landing') {
+      if (flightState === 'orbit') {
+        q.progressValue = Math.max(q.progressValue, 0.5);
       }
     }
   }
@@ -846,15 +827,21 @@ export class QuestManager {
     });
 
     ensureKind('cafe_visit', () => {
-      const best = landmarks.find((lm) => lm.type === 'cafe') ?? null;
+      let best: WorldLandmark | null = null;
+      for (const lm of landmarks) {
+        if (lm.type === 'cafe') {
+          best = lm;
+          break;
+        }
+      }
       return {
         id: `q_${this.questSeq++}`,
         kind: 'cafe_visit',
-        title: `Кафе · ${getPlanetConfig(planetId).name}`,
-        subtitle: 'Приезжайте в кафе, присядьте и выпейте по чашке чая вдвоём',
-        reward: 160,
-        targetX: best ? best.x : 20,
-        targetZ: best ? best.z : -48,
+        title: 'Поездка в уютное кафе',
+        subtitle: 'Добберитесь до кофейни и выпейте кофе вдвоём',
+        reward: 150,
+        targetX: best ? best.x : pos.x + 220,
+        targetZ: best ? best.z : pos.z - 220,
         targetName: best ? best.name : 'Аэро-кафе',
         goalValue: 1,
         progressValue: 0,
@@ -862,117 +849,106 @@ export class QuestManager {
     });
 
     ensureKind('hotel_visit', () => {
-      const best = landmarks.find((lm) => lm.type === 'hotel') ?? null;
+      let best: WorldLandmark | null = null;
+      for (const lm of landmarks) {
+        if (lm.type === 'hotel') {
+          best = lm;
+          break;
+        }
+      }
       return {
         id: `q_${this.questSeq++}`,
         kind: 'hotel_visit',
-        title: `Гостиница · ${getPlanetConfig(planetId).name}`,
-        subtitle: 'В номере: ТВ, лежать на кровати, целоваться, спать и говорить о виде из окна',
-        reward: 190,
-        targetX: best ? best.x : -20,
-        targetZ: best ? best.z : -82,
+        title: 'Путешествие в отель',
+        subtitle: 'Прибудьте к номеру отеля для отдыха и ночёвки',
+        reward: 180,
+        targetX: best ? best.x : pos.x - 220,
+        targetZ: best ? best.z : pos.z + 220,
         targetName: best ? best.name : 'Гранд-Отель',
         goalValue: 1,
         progressValue: 0,
       };
     });
 
-    ensureKind('from_cage', () => {
-      const best = landmarks.find((lm) => lm.type === 'from_cage') ?? null;
-      return {
-        id: `q_${this.questSeq++}`,
-        kind: 'from_cage',
-        title: 'Развитый землянин',
-        subtitle: 'Подъедьте к клетке, где злой землянин Фром орёт и бегает по клетке',
-        reward: 220,
-        targetX: best ? best.x : -21.3,
-        targetZ: best ? best.z : -34,
-        targetName: 'Клетка · Землянин Фром',
-        goalValue: 1,
-        progressValue: 0,
-      };
-    });
+    ensureKind('serbos_visit', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'serbos_visit',
+      title: 'В гости к дому Сербоса',
+      subtitle: 'Подъедьте к дому Сербоса, выйдите из машины и подойдите к крыльцу',
+      reward: 190,
+      targetX: -320,
+      targetZ: 315,
+      targetName: 'Дом Сербоса',
+      goalValue: 1,
+      progressValue: 0,
+    }));
 
-    ensureKind('serbos_visit', () => {
-      const serbosLm = landmarks.find((lm) => lm.type === 'serbos') ?? null;
-      return {
-        id: `q_${this.questSeq++}`,
-        kind: 'serbos_visit',
-        title: 'Путешествие к Сербосу',
-        subtitle:
-          planetId === 'verdant'
-            ? 'Домик у реки на Вердане-IX: Сербос, Адамчик (ИИ), компьютеры и чай'
-            : 'Летите на планету Вердана-IX — домик у реки, компьютеры, ИИ Адамчик и чай',
-        reward: 380,
-        targetPlanet: 'verdant',
-        targetX: serbosLm ? serbosLm.x : undefined,
-        targetZ: serbosLm ? serbosLm.z : undefined,
-        targetName: 'Домик Сербоса у реки',
-        goalValue: 1,
-        progressValue: 0,
-      };
-    });
+    ensureKind('earth_moscow', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'earth_moscow',
+      title: 'Плоская Земля и Москва',
+      subtitle: 'Отправляйтесь на плоскую Землю под куполом и приземлитесь на Красную площадь',
+      reward: 350,
+      targetPlanet: 'earth',
+      targetX: planetId === 'earth' ? 0 : undefined,
+      targetZ: planetId === 'earth' ? -10 : undefined,
+      targetName: 'Красная площадь',
+      goalValue: 1,
+      progressValue: 0,
+    }));
 
-    // Keep per-planet café, hotel, From-cage, and Serbos targets fresh across chunk shifts and planet jumps
-    const pName = getPlanetConfig(planetId).name;
-    const allQuests = this.activeQuest ? [this.activeQuest, ...this.questPool] : this.questPool;
-    for (const q of allQuests) {
-      if (q.kind === 'cafe_visit') {
-        q.title = `Кафе · ${pName}`;
-        const lm = this.findNearestLandmark(landmarks, 'cafe', pos.x, pos.z);
-        if (lm) {
-          q.targetX = lm.x;
-          q.targetZ = lm.z;
-          q.targetName = lm.name;
-        }
-      } else if (q.kind === 'hotel_visit') {
-        q.title = `Гостиница · ${pName}`;
-        const lm = this.findNearestLandmark(landmarks, 'hotel', pos.x, pos.z);
-        if (lm) {
-          q.targetX = lm.x;
-          q.targetZ = lm.z;
-          q.targetName = lm.name;
-        }
-      } else if (q.kind === 'from_cage') {
-        const lm = this.findNearestLandmark(landmarks, 'from_cage', pos.x, pos.z);
-        if (lm) {
-          q.targetX = lm.x;
-          q.targetZ = lm.z;
-          q.targetName = lm.name;
-        }
-      } else if (q.kind === 'serbos_visit') {
-        if (planetId === 'verdant') {
-          q.subtitle = 'Домик у реки на Вердане-IX: Сербос, Адамчик (ИИ), компьютеры и чай';
-          const lm = landmarks.find((l) => l.type === 'serbos');
-          q.targetX = lm ? lm.x : 24.5;
-          q.targetZ = lm ? lm.z : 252;
-        } else {
-          q.subtitle = 'Летите на планету Вердана-IX — домик у реки, компьютеры, ИИ Адамчик и чай';
-          q.targetX = undefined;
-          q.targetZ = undefined;
-        }
-      }
-    }
+    ensureKind('orbit_landing', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'orbit_landing',
+      title: 'Орбита и выбор города',
+      subtitle: 'Поднимитесь на орбиту планеты и выберите точку для посадки',
+      reward: 220,
+      goalValue: 1,
+      progressValue: 0,
+    }));
   }
 
-  private findNearestLandmark(
-    landmarks: WorldLandmark[],
-    type: WorldLandmark['type'],
-    px: number,
-    pz: number,
-  ): WorldLandmark | null {
-    let best: WorldLandmark | null = null;
-    let bestD = Infinity;
-    for (let i = 0; i < landmarks.length; i++) {
-      const lm = landmarks[i];
-      if (lm.type !== type) continue;
-      const d = Math.hypot(lm.x - px, lm.z - pz);
-      if (d < bestD) {
-        bestD = d;
-        best = lm;
-      }
-    }
-    return best;
+  public exportSaveState() {
+    const serialize = (q: InternalQuest): QuestSaveItem => ({ ...q });
+    return {
+      credits: this.credits,
+      cabinTheme: this.cabinTheme,
+      holdHands: this.holdHands,
+      unlockedThemes: Array.from(this.unlockedThemes),
+      visitedPlanets: Array.from(this.visitedPlanets),
+      visitedSpecialSpots: Array.from(this.visitedSpecialSpots),
+      discoveredCloudLayer: this.discoveredCloudLayer,
+      discoveredCountryside: this.discoveredCountryside,
+      questSeq: this.questSeq,
+      activeQuest: this.activeQuest ? serialize(this.activeQuest) : null,
+      questPool: this.questPool.map(serialize),
+    };
+  }
+
+  public importSaveState(save: {
+    credits: number;
+    cabinTheme: CabinThemeId;
+    holdHands: boolean;
+    unlockedThemes: CabinThemeId[];
+    visitedPlanets: PlanetId[];
+    visitedSpecialSpots: string[];
+    discoveredCloudLayer: boolean;
+    discoveredCountryside: boolean;
+    questSeq: number;
+    activeQuest: QuestSaveItem | null;
+    questPool: QuestSaveItem[];
+  }): void {
+    this.credits = save.credits ?? 240;
+    this.cabinTheme = save.cabinTheme ?? 'auto';
+    this.holdHands = Boolean(save.holdHands);
+    this.unlockedThemes = new Set(save.unlockedThemes?.length ? save.unlockedThemes : ['auto', 'amber']);
+    this.visitedPlanets = new Set(save.visitedPlanets?.length ? save.visitedPlanets : ['coruscant']);
+    this.visitedSpecialSpots = new Set(save.visitedSpecialSpots ?? []);
+    this.discoveredCloudLayer = Boolean(save.discoveredCloudLayer);
+    this.discoveredCountryside = Boolean(save.discoveredCountryside);
+    this.questSeq = save.questSeq || 1;
+    this.activeQuest = save.activeQuest ? { ...save.activeQuest } : null;
+    this.questPool = (save.questPool ?? []).map((q) => ({ ...q }));
   }
 
   public getSnapshots(
@@ -1003,7 +979,10 @@ export class QuestManager {
       }
 
       const progressPct =
-        q.kind === 'delivery' || q.kind === 'planet_visit'
+        q.kind === 'delivery' ||
+        q.kind === 'planet_visit' ||
+        q.kind === 'serbos_visit' ||
+        q.kind === 'earth_moscow'
           ? 0
           : Math.min(100, Math.round((q.progressValue / Math.max(1, q.goalValue)) * 100));
 
@@ -1019,13 +998,12 @@ export class QuestManager {
         markerX,
         markerY,
         markerInFront,
-        targetPlanetId: q.targetPlanet,
       };
     };
 
     return {
       active: this.activeQuest ? toSnap(this.activeQuest, true) : null,
-      available: this.questPool.map((q) => toSnap(q, false)),
+      available: this.questPool.slice(0, 6).map((q) => toSnap(q, false)),
     };
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { BiomeId, PlanetId } from '../types/simulation';
+import type { BiomeId, LandingSite, PlanetId } from '../types/simulation';
 
 export interface PlanetConfig {
   id: PlanetId;
@@ -13,6 +13,7 @@ export interface PlanetConfig {
   atmosphereColor: string;
   ringColor?: string;
   hasMoon?: boolean;
+  isFlatDome?: boolean;
   accentHex: string;
   precipType: 'rain' | 'snow' | 'dust' | 'spores';
 }
@@ -32,6 +33,20 @@ export const STARTER_PLANETS: PlanetConfig[] = [
     atmosphereColor: '#f59e0b',
     hasMoon: true,
     accentHex: '#f59e0b',
+    precipType: 'rain',
+  },
+  {
+    id: 'earth',
+    biome: 'earth',
+    seed: 777,
+    name: 'Земля',
+    tagline: 'Плоский мир под куполом · Москва, Солнце и Луна',
+    spacePos: new THREE.Vector3(-440, 65, -520),
+    radius: 172,
+    orbitRange: 445,
+    atmosphereColor: '#60a5fa',
+    isFlatDome: true,
+    accentHex: '#ef4444',
     precipType: 'rain',
   },
   {
@@ -83,6 +98,186 @@ export const PLANETS: PlanetConfig[] = STARTER_PLANETS;
 const planetRegistry = new Map<PlanetId, PlanetConfig>();
 for (const p of STARTER_PLANETS) {
   planetRegistry.set(p.id, p);
+}
+
+export function getPlanetLandingSites(planetId: PlanetId): LandingSite[] {
+  const cfg = getPlanetConfig(planetId);
+  if (planetId === 'earth') {
+    return [
+      {
+        id: 'earth_moscow_square',
+        name: 'Москва · Красная площадь',
+        subtitle: 'Кремль, Спасская башня и собор · Прогулка пешком',
+        x: 0,
+        z: 0,
+        accentHex: '#ef4444',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'earth_moscow_streets',
+        name: 'Москва · Проспекты',
+        subtitle: 'Улицы с потоком машин и оживлённые перекрёстки',
+        x: 320,
+        z: 0,
+        accentHex: '#f59e0b',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'earth_serbos',
+        name: 'Дом Сербоса',
+        subtitle: 'Уютный дом у тихой дороги — подойдите к крыльцу',
+        x: -320,
+        z: 320,
+        accentHex: '#34d399',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'earth_dome_edge',
+        name: 'Край Земли · Ледяной купол',
+        subtitle: 'Ледяная стена и сияющая граница купола мира',
+        x: 0,
+        z: -960,
+        accentHex: '#38bdf8',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+    ];
+  }
+
+  if (planetId === 'coruscant') {
+    return [
+      {
+        id: 'coruscant_spires',
+        name: 'Центральные шпили',
+        subtitle: 'Главный проспект, аэро-кафе, отель и ангар',
+        x: 0,
+        z: 0,
+        accentHex: '#f59e0b',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'coruscant_park',
+        name: 'Парковый проспект',
+        subtitle: 'Аллеи, купол обсерватории и тихие скверы',
+        x: 0,
+        z: -320,
+        accentHex: '#38bdf8',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'coruscant_serbos',
+        name: 'Дом Сербоса',
+        subtitle: 'Уютный особняк Сербоса на окраине сектора',
+        x: -320,
+        z: 320,
+        accentHex: '#34d399',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+      {
+        id: 'coruscant_fields',
+        name: 'Зелёные поля и рощи',
+        subtitle: 'Открытые луга, озёра и просёлочные дороги',
+        x: 320,
+        z: -320,
+        accentHex: '#a3e635',
+        screenX: 0,
+        screenY: 0,
+        inFront: true,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: `${cfg.id}_center`,
+      name: `${cfg.name} · Столица`,
+      subtitle: 'Центральный сектор, кафе и небесный отель',
+      x: 0,
+      z: 0,
+      accentHex: cfg.accentHex,
+      screenX: 0,
+      screenY: 0,
+      inFront: true,
+    },
+    {
+      id: `${cfg.id}_park`,
+      name: 'Парковый бульвар',
+      subtitle: 'Прогулочные скверы и планетарий',
+      x: 0,
+      z: -320,
+      accentHex: '#38bdf8',
+      screenX: 0,
+      screenY: 0,
+      inFront: true,
+    },
+    {
+      id: `${cfg.id}_fields`,
+      name: 'Природная долина',
+      subtitle: 'Равнины, холмы и тихие озёра',
+      x: 320,
+      z: -320,
+      accentHex: '#34d399',
+      screenX: 0,
+      screenY: 0,
+      inFront: true,
+    },
+    {
+      id: `${cfg.id}_observatory`,
+      name: 'Пригородный маяк',
+      subtitle: 'Тихий район у границы мегаполиса',
+      x: -320,
+      z: 320,
+      accentHex: '#fbbf24',
+      screenX: 0,
+      screenY: 0,
+      inFront: true,
+    },
+  ];
+}
+
+export function getLandingSiteSpaceWorldPos(
+  planet: PlanetConfig,
+  site: Pick<LandingSite, 'x' | 'z'>,
+  out: THREE.Vector3,
+): THREE.Vector3 {
+  if (planet.isFlatDome) {
+    const mapScale = (planet.radius * 0.78) / 1000;
+    let dx = site.x * mapScale;
+    let dz = site.z * mapScale;
+    const len = Math.hypot(dx, dz);
+    const maxR = planet.radius * 0.88;
+    if (len > maxR && len > 0.001) {
+      dx = (dx / len) * maxR;
+      dz = (dz / len) * maxR;
+    }
+    return out.set(
+      planet.spacePos.x + dx,
+      planet.spacePos.y + planet.radius * 0.045,
+      planet.spacePos.z + dz,
+    );
+  }
+
+  const lat = THREE.MathUtils.clamp(0.45 - (site.z / 1200) * 0.55, -0.75, 1.15);
+  const lon = (site.x / 1100) * 0.95;
+  const r = planet.radius * 1.02;
+  return out.set(
+    planet.spacePos.x + r * Math.cos(lat) * Math.sin(lon),
+    planet.spacePos.y + r * Math.sin(lat),
+    planet.spacePos.z + r * Math.cos(lat) * Math.cos(lon),
+  );
 }
 
 const NAME_PREFIXES = [
@@ -150,6 +345,12 @@ const BIOME_META: Record<
     ringColors: ['#fde68a', '#93c5fd'],
     precip: 'rain',
   },
+  earth: {
+    taglines: ['Плоский мир под куполом · Москва и Солнце с Луной'],
+    atmoColors: ['#60a5fa', '#93c5fd'],
+    ringColors: ['#e0f2fe'],
+    precip: 'rain',
+  },
   kryos: {
     taglines: ['Кристальные льды · Голубое сияние', 'Снежные проспекты · Замёрзшие озёра'],
     atmoColors: ['#38bdf8', '#7dd3fc', '#60a5fa'],
@@ -201,7 +402,6 @@ function generateSectorPlanet(sx: number, sy: number, sz: number): PlanetConfig 
   const cached = planetRegistry.get(id);
   if (cached) return cached;
 
-  // Keep slight spacing from starter planets near origin
   const spawnRoll = hash3(sx, sy, sz, 11);
   if (spawnRoll < 0.22) return null;
 
@@ -222,7 +422,6 @@ function generateSectorPlanet(sx: number, sy: number, sz: number): PlanetConfig 
   const py = sy * SECTOR_SIZE + jitterY;
   const pz = sz * SECTOR_SIZE + jitterZ;
 
-  // Avoid colliding with starter planets at (0,0,0) neighborhood
   for (const sp of STARTER_PLANETS) {
     if (sp.spacePos.distanceToSquared(new THREE.Vector3(px, py, pz)) < 580 * 580) {
       return null;
@@ -283,7 +482,6 @@ export function getActiveSpacePlanets(spacePos: THREE.Vector3, maxCount = 24): P
 
   const collected: PlanetConfig[] = [];
 
-  // Always include starter planets when reasonably nearby (within 2 sectors of origin)
   if (Math.abs(csx) <= 2 && Math.abs(csy) <= 2 && Math.abs(csz) <= 2) {
     collected.push(...STARTER_PLANETS);
   }
@@ -301,6 +499,110 @@ export function getActiveSpacePlanets(spacePos: THREE.Vector3, maxCount = 24): P
   return collected.slice(0, maxCount);
 }
 
+function createFlatEarthDiscTextures(maxAnisotropy: number): {
+  map: THREE.CanvasTexture;
+  emissiveMap: THREE.CanvasTexture;
+} {
+  const size = 1024;
+  const cx = size / 2;
+  const cy = size / 2;
+  const albedo = document.createElement('canvas');
+  albedo.width = size;
+  albedo.height = size;
+  const actx = albedo.getContext('2d')!;
+
+  const emissive = document.createElement('canvas');
+  emissive.width = size;
+  emissive.height = size;
+  const ectx = emissive.getContext('2d')!;
+
+  // Deep blue flat ocean base
+  const oceanGrad = actx.createRadialGradient(cx, cy, size * 0.04, cx, cy, size * 0.48);
+  oceanGrad.addColorStop(0, '#1e40af');
+  oceanGrad.addColorStop(0.55, '#1d4ed8');
+  oceanGrad.addColorStop(0.84, '#0f3d7a');
+  oceanGrad.addColorStop(0.91, '#bae6fd');
+  oceanGrad.addColorStop(1, '#f8fafc');
+  actx.fillStyle = oceanGrad;
+  actx.fillRect(0, 0, size, size);
+
+  ectx.fillStyle = '#000000';
+  ectx.fillRect(0, 0, size, size);
+
+  // Stylized radial continents around the center
+  const continents = [
+    // Eurasia / Moscow cluster near center-right/top
+    { x: 0.52, y: 0.48, rx: 0.14, ry: 0.11, rot: -0.25, col: '#2f7a44' },
+    { x: 0.64, y: 0.44, rx: 0.11, ry: 0.08, rot: 0.3, col: '#3a884d' },
+    { x: 0.44, y: 0.56, rx: 0.08, ry: 0.09, rot: 0.5, col: '#4a8f49' },
+    // Africa-like warm continent
+    { x: 0.5, y: 0.64, rx: 0.075, ry: 0.095, rot: 0.1, col: '#849442' },
+    // Americas on left side
+    { x: 0.28, y: 0.44, rx: 0.09, ry: 0.08, rot: -0.4, col: '#3b8249' },
+    { x: 0.31, y: 0.65, rx: 0.055, ry: 0.095, rot: 0.2, col: '#2c7342' },
+    // Australia / islands
+    { x: 0.72, y: 0.66, rx: 0.06, ry: 0.045, rot: -0.2, col: '#a38246' },
+  ];
+
+  for (const c of continents) {
+    actx.save();
+    actx.translate(c.x * size, c.y * size);
+    actx.rotate(c.rot);
+    actx.fillStyle = c.col;
+    actx.beginPath();
+    actx.ellipse(0, 0, c.rx * size, c.ry * size, 0, 0, Math.PI * 2);
+    actx.fill();
+    actx.fillStyle = 'rgba(255,255,255,0.12)';
+    actx.beginPath();
+    actx.ellipse(-c.rx * size * 0.15, -c.ry * size * 0.15, c.rx * size * 0.55, c.ry * size * 0.45, 0, 0, Math.PI * 2);
+    actx.fill();
+    actx.restore();
+  }
+
+  // Antarctica outer ice ring around the edge of the Flat Earth disc
+  actx.strokeStyle = '#f1f5f9';
+  actx.lineWidth = size * 0.095;
+  actx.beginPath();
+  actx.arc(cx, cy, size * 0.465, 0, Math.PI * 2);
+  actx.stroke();
+
+  // Warm city lights (Moscow & global hubs)
+  const cities = [
+    { x: 0.5, y: 0.5, r: 9, col: '#ef4444' }, // Moscow center
+    { x: 0.53, y: 0.47, r: 5, col: '#fbbf24' },
+    { x: 0.46, y: 0.49, r: 5, col: '#fde047' },
+    { x: 0.63, y: 0.45, r: 5, col: '#fbbf24' },
+    { x: 0.29, y: 0.44, r: 5, col: '#fde047' },
+    { x: 0.32, y: 0.64, r: 4, col: '#fbbf24' },
+  ];
+  for (const city of cities) {
+    const g = ectx.createRadialGradient(city.x * size, city.y * size, 1, city.x * size, city.y * size, city.r * 2.2);
+    g.addColorStop(0, city.col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ectx.fillStyle = g;
+    ectx.beginPath();
+    ectx.arc(city.x * size, city.y * size, city.r * 2.2, 0, Math.PI * 2);
+    ectx.fill();
+  }
+
+  // Subtle ice edge shimmer
+  ectx.strokeStyle = 'rgba(125, 211, 252, 0.35)';
+  ectx.lineWidth = 10;
+  ectx.beginPath();
+  ectx.arc(cx, cy, size * 0.44, 0, Math.PI * 2);
+  ectx.stroke();
+
+  const map = new THREE.CanvasTexture(albedo);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = maxAnisotropy;
+
+  const emissiveMap = new THREE.CanvasTexture(emissive);
+  emissiveMap.colorSpace = THREE.SRGBColorSpace;
+  emissiveMap.anisotropy = maxAnisotropy;
+
+  return { map, emissiveMap };
+}
+
 function createBiomeSurfaceTexture(
   biome: BiomeId,
   maxAnisotropy: number,
@@ -308,6 +610,10 @@ function createBiomeSurfaceTexture(
   map: THREE.CanvasTexture;
   emissiveMap: THREE.CanvasTexture;
 } {
+  if (biome === 'earth') {
+    return createFlatEarthDiscTextures(maxAnisotropy);
+  }
+
   const w = 1024;
   const h = 512;
   const albedo = document.createElement('canvas');
@@ -542,9 +848,16 @@ interface PooledPlanetSlot {
   ringMat: THREE.MeshBasicMaterial;
   moon: THREE.Mesh;
   moonMat: THREE.MeshStandardMaterial;
+  flatGroup: THREE.Group;
+  flatSun: THREE.Mesh;
+  flatMoon: THREE.Mesh;
 }
 
 const MAX_SPACE_SLOTS = 24;
+const MAX_ORBIT_BEACONS = 6;
+const _beaconPos = new THREE.Vector3();
+const _beaconNormal = new THREE.Vector3();
+const _upVec = new THREE.Vector3(0, 1, 0);
 
 export class SpaceSystem {
   public readonly group = new THREE.Group();
@@ -552,6 +865,10 @@ export class SpaceSystem {
   private slots: PooledPlanetSlot[] = [];
   private starPoints: THREE.Points;
   private starMaterial: THREE.PointsMaterial;
+  private beaconGroup = new THREE.Group();
+  private beaconBeams: THREE.Mesh[] = [];
+  private beaconRings: THREE.Mesh[] = [];
+  private orbitTimer = 0;
   private disposables: { dispose: () => void }[] = [];
 
   constructor(scene: THREE.Scene, maxAnisotropy: number) {
@@ -601,9 +918,10 @@ export class SpaceSystem {
     this.group.add(this.starPoints);
     this.disposables.push(starGeo, this.starMaterial);
 
-    // Prebuild 6 crisp biome globe texture pairs once (zero runtime allocations)
+    // Prebuild biome textures once
     this.biomeTextures = {
       coruscant: createBiomeSurfaceTexture('coruscant', maxAnisotropy),
+      earth: createBiomeSurfaceTexture('earth', maxAnisotropy),
       kryos: createBiomeSurfaceTexture('kryos', maxAnisotropy),
       solaris: createBiomeSurfaceTexture('solaris', maxAnisotropy),
       verdant: createBiomeSurfaceTexture('verdant', maxAnisotropy),
@@ -620,7 +938,93 @@ export class SpaceSystem {
     ringGeo.rotateX(-Math.PI * 0.42);
     ringGeo.rotateY(0.28);
     const moonGeo = new THREE.SphereGeometry(1, 14, 10);
-    this.disposables.push(sphereGeo, haloGeo, ringGeo, moonGeo);
+
+    // Shared geometries & materials for Flat Earth under a translucent dome
+    const flatDiscTopGeo = new THREE.CircleGeometry(1, 56);
+    flatDiscTopGeo.rotateX(-Math.PI / 2);
+    const flatUnderGeo = new THREE.ConeGeometry(1.0, 0.28, 48);
+    flatUnderGeo.rotateX(Math.PI);
+    flatUnderGeo.translate(0, -0.14, 0);
+    const flatIceWallGeo = new THREE.TorusGeometry(0.985, 0.036, 10, 56);
+    flatIceWallGeo.rotateX(Math.PI / 2);
+    flatIceWallGeo.translate(0, 0.015, 0);
+    const flatDomeGeo = new THREE.SphereGeometry(1.0, 40, 22, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    const flatDomeArchGeo = new THREE.TorusGeometry(1.0, 0.008, 6, 48, Math.PI);
+    const flatSunGeo = new THREE.SphereGeometry(0.055, 16, 12);
+    const flatMoonGeo = new THREE.SphereGeometry(0.04, 14, 10);
+
+    const flatTopMat = new THREE.MeshStandardMaterial({
+      map: this.biomeTextures.earth.map,
+      emissiveMap: this.biomeTextures.earth.emissiveMap,
+      emissive: new THREE.Color(0xffffff),
+      emissiveIntensity: 0.75,
+      roughness: 0.72,
+      metalness: 0.08,
+      fog: false,
+    });
+    const flatUnderMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.92,
+      metalness: 0.12,
+      fog: false,
+    });
+    const flatIceWallMat = new THREE.MeshStandardMaterial({
+      color: 0xe0f2fe,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.2,
+      roughness: 0.28,
+      metalness: 0.15,
+      fog: false,
+    });
+    const flatDomeMat = new THREE.MeshPhysicalMaterial({
+      color: 0x93c5fd,
+      emissive: 0x1d4ed8,
+      emissiveIntensity: 0.18,
+      roughness: 0.08,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.22,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const flatArchMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      transparent: true,
+      opacity: 0.24,
+      fog: false,
+    });
+    const flatSunMat = new THREE.MeshBasicMaterial({
+      color: 0xfde047,
+      toneMapped: false,
+      fog: false,
+    });
+    const flatMoonMat = new THREE.MeshBasicMaterial({
+      color: 0xe2e8f0,
+      toneMapped: false,
+      fog: false,
+    });
+
+    this.disposables.push(
+      sphereGeo,
+      haloGeo,
+      ringGeo,
+      moonGeo,
+      flatDiscTopGeo,
+      flatUnderGeo,
+      flatIceWallGeo,
+      flatDomeGeo,
+      flatDomeArchGeo,
+      flatSunGeo,
+      flatMoonGeo,
+      flatTopMat,
+      flatUnderMat,
+      flatIceWallMat,
+      flatDomeMat,
+      flatArchMat,
+      flatSunMat,
+      flatMoonMat,
+    );
 
     for (let i = 0; i < MAX_SPACE_SLOTS; i++) {
       const root = new THREE.Group();
@@ -662,10 +1066,90 @@ export class SpaceSystem {
       const moon = new THREE.Mesh(moonGeo, moonMat);
       root.add(moon);
 
+      // Flat Earth under Dome assembly
+      const flatGroup = new THREE.Group();
+      flatGroup.visible = false;
+
+      const discTop = new THREE.Mesh(flatDiscTopGeo, flatTopMat);
+      discTop.position.y = 0.01;
+      flatGroup.add(discTop);
+
+      const under = new THREE.Mesh(flatUnderGeo, flatUnderMat);
+      flatGroup.add(under);
+
+      const iceWall = new THREE.Mesh(flatIceWallGeo, flatIceWallMat);
+      flatGroup.add(iceWall);
+
+      const arch1 = new THREE.Mesh(flatDomeArchGeo, flatArchMat);
+      const arch2 = new THREE.Mesh(flatDomeArchGeo, flatArchMat);
+      arch2.rotation.y = Math.PI / 2;
+      flatGroup.add(arch1, arch2);
+
+      const dome = new THREE.Mesh(flatDomeGeo, flatDomeMat);
+      dome.renderOrder = 3;
+      flatGroup.add(dome);
+
+      const flatSun = new THREE.Mesh(flatSunGeo, flatSunMat);
+      flatSun.position.set(0.45, 0.34, 0);
+      flatGroup.add(flatSun);
+
+      const flatMoon = new THREE.Mesh(flatMoonGeo, flatMoonMat);
+      flatMoon.position.set(-0.45, 0.32, 0);
+      flatGroup.add(flatMoon);
+
+      root.add(flatGroup);
+
       this.group.add(root);
       this.disposables.push(mat, haloMat, ringMat, moonMat);
-      this.slots.push({ root, sphere, mat, halo, haloMat, ring, ringMat, moon, moonMat });
+      this.slots.push({
+        root,
+        sphere,
+        mat,
+        halo,
+        haloMat,
+        ring,
+        ringMat,
+        moon,
+        moonMat,
+        flatGroup,
+        flatSun,
+        flatMoon,
+      });
     }
+
+    // 3D Orbital Landing Beacons (shown when hovering in orbit over a planet)
+    const beamGeo = new THREE.CylinderGeometry(1.4, 3.8, 32, 12);
+    beamGeo.translate(0, 16, 0);
+    const ringBeaconGeo = new THREE.TorusGeometry(6.5, 0.85, 8, 24);
+    ringBeaconGeo.rotateX(Math.PI / 2);
+    this.disposables.push(beamGeo, ringBeaconGeo);
+
+    for (let i = 0; i < MAX_ORBIT_BEACONS; i++) {
+      const beamMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.72,
+        fog: false,
+      });
+      const beam = new THREE.Mesh(beamGeo, beamMat);
+      beam.visible = false;
+      this.beaconGroup.add(beam);
+      this.beaconBeams.push(beam);
+
+      const bRingMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.85,
+        fog: false,
+      });
+      const bRing = new THREE.Mesh(ringBeaconGeo, bRingMat);
+      bRing.visible = false;
+      this.beaconGroup.add(bRing);
+      this.beaconRings.push(bRing);
+
+      this.disposables.push(beamMat, bRingMat);
+    }
+    this.group.add(this.beaconGroup);
   }
 
   public update(
@@ -673,11 +1157,17 @@ export class SpaceSystem {
     spaceVehiclePos: THREE.Vector3,
     activePlanets: PlanetConfig[],
     delta: number,
+    inOrbitMode = false,
+    orbitPlanet?: PlanetConfig,
+    landingSites: LandingSite[] = [],
+    selectedSiteId: string | null = null,
+    timeOfDay = 0.5,
   ): void {
     const active = spaceFactor > 0.02;
     this.group.visible = active;
     if (!active) return;
 
+    this.orbitTimer += delta;
     this.starMaterial.opacity = THREE.MathUtils.clamp(spaceFactor * 0.95, 0, 0.95);
     this.starPoints.position.copy(spaceVehiclePos);
 
@@ -692,6 +1182,29 @@ export class SpaceSystem {
       slot.root.visible = true;
       slot.root.position.copy(cfg.spacePos);
 
+      if (cfg.isFlatDome) {
+        slot.sphere.visible = false;
+        slot.halo.visible = false;
+        slot.ring.visible = false;
+        slot.moon.visible = false;
+        slot.flatGroup.visible = true;
+        slot.flatGroup.scale.setScalar(cfg.radius);
+
+        // Orbiting Sun & Moon under the dome synced with timeOfDay + slow motion
+        const angle = (timeOfDay - 0.25) * Math.PI * 2 + this.orbitTimer * 0.08;
+        slot.flatSun.position.set(Math.cos(angle) * 0.52, 0.34 + Math.sin(angle * 2) * 0.04, Math.sin(angle) * 0.52);
+        slot.flatMoon.position.set(
+          Math.cos(angle + Math.PI) * 0.5,
+          0.31 - Math.sin(angle * 2) * 0.04,
+          Math.sin(angle + Math.PI) * 0.5,
+        );
+        continue;
+      }
+
+      slot.flatGroup.visible = false;
+      slot.sphere.visible = true;
+      slot.halo.visible = true;
+
       const tex = this.biomeTextures[cfg.biome];
       if (slot.mat.map !== tex.map) {
         slot.mat.map = tex.map;
@@ -700,7 +1213,8 @@ export class SpaceSystem {
       }
 
       slot.sphere.scale.setScalar(cfg.radius);
-      slot.sphere.rotation.y += delta * 0.018;
+      // Keep sphere nearly steady while in orbit so landing beacons align with terrain
+      slot.sphere.rotation.y += delta * (inOrbitMode && orbitPlanet?.id === cfg.id ? 0.002 : 0.018);
 
       slot.halo.scale.setScalar(cfg.radius);
       slot.haloMat.uniforms.uColor.value.set(cfg.atmosphereColor);
@@ -721,6 +1235,43 @@ export class SpaceSystem {
         slot.moonMat.color.set(cfg.biome === 'verdant' ? 0xa7f3d0 : 0xcbd5e1);
       } else {
         slot.moon.visible = false;
+      }
+    }
+
+    // Update 3D Orbital Landing Beacons when orbiting a planet
+    this.beaconGroup.visible = inOrbitMode && Boolean(orbitPlanet) && landingSites.length > 0;
+    if (this.beaconGroup.visible && orbitPlanet) {
+      for (let i = 0; i < MAX_ORBIT_BEACONS; i++) {
+        const site = landingSites[i];
+        const beam = this.beaconBeams[i];
+        const bRing = this.beaconRings[i];
+        if (!site) {
+          beam.visible = false;
+          bRing.visible = false;
+          continue;
+        }
+        getLandingSiteSpaceWorldPos(orbitPlanet, site, _beaconPos);
+        const isSel = site.id === selectedSiteId;
+        beam.visible = true;
+        bRing.visible = true;
+        beam.position.copy(_beaconPos);
+        bRing.position.copy(_beaconPos);
+
+        if (!orbitPlanet.isFlatDome) {
+          _beaconNormal.subVectors(_beaconPos, orbitPlanet.spacePos).normalize();
+          beam.quaternion.setFromUnitVectors(_upVec, _beaconNormal);
+          bRing.quaternion.setFromUnitVectors(_upVec, _beaconNormal);
+        } else {
+          beam.quaternion.identity();
+          bRing.quaternion.identity();
+        }
+
+        const pulse = isSel ? 1.35 + Math.sin(this.orbitTimer * 5) * 0.2 : 0.78;
+        beam.scale.set(pulse, isSel ? 1.55 : 0.85, pulse);
+        bRing.scale.setScalar(pulse);
+        (beam.material as THREE.MeshBasicMaterial).color.set(site.accentHex);
+        (beam.material as THREE.MeshBasicMaterial).opacity = isSel ? 0.92 : 0.55;
+        (bRing.material as THREE.MeshBasicMaterial).color.set(isSel ? '#ffffff' : site.accentHex);
       }
     }
   }

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 
-const FACE_PHOTO_URL = '/assets/aistudio/1791008464301_391386f9.jpg';
+const FACE_PHOTO_URL =
+  (typeof window !== 'undefined' &&
+    (window as unknown as { __COMPANION_FACE_DATA_URI__?: string }).__COMPANION_FACE_DATA_URI__) ||
+  '/assets/aistudio/1791008464301_391386f9.jpg';
 
 function paintFallbackFace(ctx: CanvasRenderingContext2D): void {
   const skinGrad = ctx.createRadialGradient(256, 250, 40, 256, 256, 270);
@@ -64,7 +67,9 @@ function acquireSharedFaceTexture(maxAnisotropy: number): {
     sharedFaceTex = tex;
 
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!FACE_PHOTO_URL.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => {
       if (!sharedFaceTex) return;
       const w = img.naturalWidth || img.width;

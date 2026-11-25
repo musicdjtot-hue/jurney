@@ -17,6 +17,8 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   isFlying: false,
   inSpace: false,
   inOrbit: false,
+  inOrbitMode: false,
+  canLaunchToOrbit: false,
   canLaunchToSpace: false,
   canEnterPlanet: false,
   planetId: 'coruscant',
@@ -26,6 +28,8 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   nearestPlanetName: 'Корускант',
   nearestPlanetDistKm: 0,
   planetMarkers: [],
+  landingSites: [],
+  selectedLandingSiteId: null,
   timeOfDay: 0.69,
   timeLabel: '16:33 · Закат',
   activeWeather: 'clear',
@@ -44,8 +48,7 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   nearbyCafeName: null,
   nearbyHotelName: null,
   nearbyObservatoryName: null,
-  nearbySerbosName: null,
-  nearbyFromCageName: null,
+  nearbySpecialSpot: null,
   insideHangarName: null,
   interiorMode: 'none',
   interiorPose: 'stand',
@@ -53,15 +56,17 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   canSitNearby: false,
   canLieNearby: false,
   canExitInterior: false,
-  hotelTvOn: false,
-  hotelTvChannelName: 'Выключен',
   holdHands: false,
   sleepFade: 0,
   companionNote: null,
-  npcBanner: null,
   cabinTheme: 'auto',
   cabinThemes: [],
   toastMessage: null,
+  saveMeta: {
+    hasSave: false,
+    savedAtLabel: null,
+    planetName: null,
+  },
 };
 
 function hapticTap(ms = 12): void {
@@ -92,6 +97,8 @@ export default function App() {
   const [gyroError, setGyroError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [contextLost, setContextLost] = useState(false);
+  const snapshotRef = useRef<SimulationSnapshot>(INITIAL_SNAPSHOT);
+  snapshotRef.current = snapshot;
 
   const gyroSupported = typeof window !== 'undefined' && 'DeviceOrientationEvent' in window;
   const gyroZeroRef = useRef<number | null>(null);
@@ -123,10 +130,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (cafeOpen && (snapshot.inSpace || (snapshot.interiorMode !== 'cafe' && !snapshot.nearbyCafeName))) {
+    if (
+      cafeOpen &&
+      (snapshot.inSpace || snapshot.inOrbitMode || (snapshot.interiorMode !== 'cafe' && !snapshot.nearbyCafeName))
+    ) {
       setCafeOpen(false);
     }
-  }, [cafeOpen, snapshot.interiorMode, snapshot.nearbyCafeName, snapshot.inSpace]);
+  }, [cafeOpen, snapshot.interiorMode, snapshot.nearbyCafeName, snapshot.inSpace, snapshot.inOrbitMode]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -239,8 +249,18 @@ export default function App() {
 
       if (!e.repeat && e.code === 'KeyG') {
         e.preventDefault();
-        engineRef.current?.launchToSpace();
-        engineRef.current?.enterNearestPlanet();
+        const engine = engineRef.current;
+        const snap = snapshotRef.current;
+        if (!engine) return;
+        if (snap.inOrbitMode) {
+          engine.launchToSpace();
+        } else if (snap.inSpace) {
+          engine.enterNearestPlanet();
+        } else if (snap.canLaunchToOrbit) {
+          engine.enterOrbitFromFlight();
+        } else if (snap.canLaunchToSpace) {
+          engine.launchToSpace();
+        }
         return;
       }
 
@@ -295,6 +315,11 @@ export default function App() {
     engineRef.current?.toggleFlight();
   }, []);
 
+  const handleEnterOrbit = useCallback(() => {
+    hapticTap(18);
+    engineRef.current?.enterOrbitFromFlight();
+  }, []);
+
   const handleLaunchToSpace = useCallback(() => {
     hapticTap(18);
     engineRef.current?.launchToSpace();
@@ -303,6 +328,44 @@ export default function App() {
   const handleEnterPlanet = useCallback(() => {
     hapticTap(18);
     engineRef.current?.enterNearestPlanet();
+  }, []);
+
+  const handleSelectLandingSite = useCallback((siteId: string) => {
+    hapticTap(10);
+    engineRef.current?.selectLandingSite(siteId);
+  }, []);
+
+  const handleDescendToSite = useCallback((siteId?: string) => {
+    hapticTap(18);
+    engineRef.current?.descendToSelectedSite(siteId);
+  }, []);
+
+  const handleInteractSpecialSpot = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.interactNearbySpecialSpot();
+  }, []);
+
+  const handleSaveGame = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.saveGame(true);
+  }, []);
+
+  const handleLoadSave = useCallback(() => {
+    hapticTap(16);
+    const ok = engineRef.current?.loadLastSave();
+    if (ok) {
+      setSettingsOpen(false);
+      setJournalOpen(false);
+      setCafeOpen(false);
+    }
+  }, []);
+
+  const handleResetProgress = useCallback(() => {
+    hapticTap(16);
+    engineRef.current?.resetProgress();
+    setSettingsOpen(false);
+    setJournalOpen(false);
+    setCafeOpen(false);
   }, []);
 
   const handleExitVehicle = useCallback(() => {
@@ -338,34 +401,6 @@ export default function App() {
     setJournalOpen(false);
     setCafeOpen(false);
     engineRef.current?.enterNearbyObservatory();
-  }, []);
-
-  const handleEnterSerbos = useCallback(() => {
-    hapticTap(14);
-    setSettingsOpen(false);
-    setJournalOpen(false);
-    setCafeOpen(false);
-    engineRef.current?.enterNearbySerbos();
-  }, []);
-
-  const handleDrinkSerbosTea = useCallback(() => {
-    hapticTap(14);
-    engineRef.current?.drinkTeaWithSerbos();
-  }, []);
-
-  const handleTalkSerbos = useCallback(() => {
-    hapticTap(10);
-    engineRef.current?.talkWithSerbos();
-  }, []);
-
-  const handleTalkFromCage = useCallback(() => {
-    hapticTap(12);
-    engineRef.current?.talkWithFromCage();
-  }, []);
-
-  const handleToggleHotelTv = useCallback(() => {
-    hapticTap(12);
-    engineRef.current?.toggleHotelTv();
   }, []);
 
   const handleExitInterior = useCallback(() => {
@@ -601,11 +636,6 @@ export default function App() {
         onEnterCafe={handleEnterCafe}
         onEnterHotel={handleEnterHotel}
         onEnterObservatory={handleEnterObservatory}
-        onEnterSerbos={handleEnterSerbos}
-        onDrinkSerbosTea={handleDrinkSerbosTea}
-        onTalkSerbos={handleTalkSerbos}
-        onTalkFromCage={handleTalkFromCage}
-        onToggleHotelTv={handleToggleHotelTv}
         onExitInterior={handleExitInterior}
         onSitInterior={handleSitInterior}
         onLieBed={handleLieBed}
@@ -619,8 +649,15 @@ export default function App() {
         onSelectCabinTheme={handleSelectCabinTheme}
         onTriggerBoost={handleTriggerBoost}
         onToggleFlight={handleToggleFlight}
+        onEnterOrbit={handleEnterOrbit}
         onLaunchToSpace={handleLaunchToSpace}
         onEnterPlanet={handleEnterPlanet}
+        onSelectLandingSite={handleSelectLandingSite}
+        onDescendToSite={handleDescendToSite}
+        onInteractSpecialSpot={handleInteractSpecialSpot}
+        onSaveGame={handleSaveGame}
+        onLoadSave={handleLoadSave}
+        onResetProgress={handleResetProgress}
         onExitVehicle={handleExitVehicle}
         onEnterVehicle={handleEnterVehicle}
         onToggleCompanion={handleToggleCompanion}

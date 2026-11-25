@@ -8,13 +8,13 @@ export type SeasonSetting = 'auto' | SeasonId;
 
 export type TimePreset = 'auto' | 'dawn' | 'day' | 'sunset' | 'night';
 
-export type BiomeId = 'coruscant' | 'kryos' | 'solaris' | 'verdant' | 'amethyst' | 'crimson';
+export type BiomeId = 'coruscant' | 'earth' | 'kryos' | 'solaris' | 'verdant' | 'amethyst' | 'crimson';
 
 export type PlanetId = string;
 
 export type CabinThemeId = 'auto' | 'amber' | 'ice' | 'emerald' | 'rose' | 'violet';
 
-export type InteriorMode = 'none' | 'cafe' | 'hotel' | 'observatory' | 'serbos';
+export type InteriorMode = 'none' | 'cafe' | 'hotel' | 'observatory';
 
 export type InteriorPose = 'stand' | 'sit' | 'lie';
 
@@ -23,6 +23,8 @@ export type VehicleFlightState =
   | 'ascending'
   | 'flight'
   | 'descending'
+  | 'launching_orbit'
+  | 'orbit'
   | 'launching'
   | 'space'
   | 'entering';
@@ -40,6 +42,29 @@ export interface PlanetMarker {
   isOrbiting: boolean;
 }
 
+export interface LandingSite {
+  id: string;
+  name: string;
+  subtitle: string;
+  x: number;
+  z: number;
+  accentHex: string;
+  screenX: number;
+  screenY: number;
+  inFront: boolean;
+}
+
+export type SpecialSpotKind = 'serbos_house' | 'red_square' | 'dome_edge';
+
+export interface SpecialSpotInfo {
+  id: string;
+  kind: SpecialSpotKind;
+  name: string;
+  actionLabel: string;
+  x: number;
+  z: number;
+}
+
 export type QuestKind =
   | 'delivery'
   | 'cloud_glide'
@@ -48,8 +73,9 @@ export type QuestKind =
   | 'countryside'
   | 'cafe_visit'
   | 'hotel_visit'
-  | 'from_cage'
-  | 'serbos_visit';
+  | 'serbos_visit'
+  | 'earth_moscow'
+  | 'orbit_landing';
 
 export interface ActiveQuestSnapshot {
   id: string;
@@ -63,13 +89,6 @@ export interface ActiveQuestSnapshot {
   markerX: number;
   markerY: number;
   markerInFront: boolean;
-  targetPlanetId?: PlanetId;
-}
-
-export interface NpcBannerSnapshot {
-  speaker: string;
-  text: string;
-  tone: 'warm' | 'angry' | 'ai';
 }
 
 export interface CafeMenuItem {
@@ -99,6 +118,12 @@ export interface ControlInputs {
   boost: boolean;
 }
 
+export interface SaveMetaSnapshot {
+  hasSave: boolean;
+  savedAtLabel: string | null;
+  planetName: string | null;
+}
+
 export interface SimulationSnapshot {
   speedKmh: number;
   altitudeM: number;
@@ -106,6 +131,8 @@ export interface SimulationSnapshot {
   isFlying: boolean;
   inSpace: boolean;
   inOrbit: boolean;
+  inOrbitMode: boolean;
+  canLaunchToOrbit: boolean;
   canLaunchToSpace: boolean;
   canEnterPlanet: boolean;
   planetId: PlanetId;
@@ -115,6 +142,8 @@ export interface SimulationSnapshot {
   nearestPlanetName: string;
   nearestPlanetDistKm: number;
   planetMarkers: PlanetMarker[];
+  landingSites: LandingSite[];
+  selectedLandingSiteId: string | null;
   timeOfDay: number;
   timeLabel: string;
   activeWeather: WeatherMode;
@@ -133,8 +162,7 @@ export interface SimulationSnapshot {
   nearbyCafeName: string | null;
   nearbyHotelName: string | null;
   nearbyObservatoryName: string | null;
-  nearbySerbosName: string | null;
-  nearbyFromCageName: string | null;
+  nearbySpecialSpot: SpecialSpotInfo | null;
   insideHangarName: string | null;
   interiorMode: InteriorMode;
   interiorPose: InteriorPose;
@@ -142,13 +170,11 @@ export interface SimulationSnapshot {
   canSitNearby: boolean;
   canLieNearby: boolean;
   canExitInterior: boolean;
-  hotelTvOn: boolean;
-  hotelTvChannelName: string;
   holdHands: boolean;
   sleepFade: number;
   companionNote: string | null;
-  npcBanner: NpcBannerSnapshot | null;
   cabinTheme: CabinThemeId;
   cabinThemes: CabinThemeOption[];
   toastMessage: string | null;
+  saveMeta: SaveMetaSnapshot;
 }

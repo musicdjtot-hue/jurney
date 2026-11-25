@@ -847,13 +847,16 @@ export class CockpitRig {
     this.drivePrism.rotation.y = elapsed * (boostActive ? 4.2 : 1.4);
     this.drivePrism.rotation.x = Math.sin(elapsed * 0.9) * 0.25;
 
+    const isOrbitState = flightState === 'orbit' || flightState === 'launching_orbit';
     const isSpaceMode = inSpace || flightState === 'launching' || flightState === 'entering';
     const isAir = flightState !== 'road';
-    let targetAccent = isSpaceMode
-      ? this.accentColorSpace
-      : isAir
-        ? this.accentColorAir
-        : this.accentColorRoad;
+    let targetAccent = isOrbitState
+      ? this.accentColorAir
+      : isSpaceMode
+        ? this.accentColorSpace
+        : isAir
+          ? this.accentColorAir
+          : this.accentColorRoad;
     if (cabinTheme !== 'auto') {
       const hex =
         cabinTheme === 'amber'

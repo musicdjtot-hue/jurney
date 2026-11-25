@@ -42,20 +42,27 @@ export class VehiclePhysics {
   public companionMoveSpeed = 0;
   public boostTimer = 0;
 
+  public orbitTheta = 0.55;
+  public orbitElev = 0.62;
+  public orbitDistFactor = 2.0;
+  public selectedLandingSiteId: string | null = null;
+
   private prevForwardSpeed = 0;
   private distanceTraveled = 0;
-  private onPlanetSwitch?: (planetId: PlanetId) => void;
+  private onPlanetSwitch?: (planetId: PlanetId, centerX?: number, centerZ?: number) => void;
 
   public triggerBoost(): void {
     this.boostTimer = 4.0;
   }
 
-  public setOnPlanetSwitch(cb: (planetId: PlanetId) => void): void {
+  public setOnPlanetSwitch(
+    cb: (planetId: PlanetId, centerX?: number, centerZ?: number) => void,
+  ): void {
     this.onPlanetSwitch = cb;
   }
 
-  public exitVehicle(inCity: boolean): boolean {
-    if (this.flightState !== 'road' || !inCity || this.isWalking) {
+  public exitVehicle(): boolean {
+    if (this.flightState !== 'road' || this.isWalking) {
       return false;
     }
     this.forwardSpeed = 0;
@@ -67,7 +74,7 @@ export class VehiclePhysics {
 
     const cosH = Math.cos(this.heading);
     const sinH = Math.sin(this.heading);
-    // Step out onto the street beside the left (driver) door
+    // Step out onto the street or field beside the left (driver) door
     this.walkerPos.set(
       this.position.x - cosH * 1.72,
       0,
@@ -98,7 +105,14 @@ export class VehiclePhysics {
   }
 
   public toggleFlight(): void {
-    if (this.isWalking || this.flightState === 'space' || this.flightState === 'launching') {
+    if (
+      this.isWalking ||
+      this.flightState === 'space' ||
+      this.flightState === 'orbit' ||
+      this.flightState === 'launching' ||
+      this.flightState === 'launching_orbit' ||
+      this.flightState === 'entering'
+    ) {
       return;
     }
     if (this.flightState === 'road' || this.flightState === 'descending') {
@@ -107,13 +121,26 @@ export class VehiclePhysics {
       if (this.forwardSpeed < 16) {
         this.forwardSpeed = Math.max(this.forwardSpeed, 16);
       }
-    } else if (this.flightState === 'ascending' || this.flightState === 'flight' || this.flightState === 'entering') {
+    } else if (this.flightState === 'ascending' || this.flightState === 'flight') {
       this.flightState = 'descending';
+    }
+  }
+
+  public launchToOrbit(): void {
+    if (this.isWalking) return;
+    if (this.flightState !== 'ascending' && this.flightState !== 'flight') return;
+    this.flightState = 'launching_orbit';
+    if (this.forwardSpeed < 40) {
+      this.forwardSpeed = 40;
     }
   }
 
   public launchToSpace(): void {
     if (this.isWalking) return;
+    if (this.flightState === 'orbit') {
+      this.launchFromOrbitToSpace();
+      return;
+    }
     if (this.flightState !== 'ascending' && this.flightState !== 'flight') return;
     this.flightState = 'launching';
     if (this.forwardSpeed < 42) {
@@ -121,16 +148,67 @@ export class VehiclePhysics {
     }
   }
 
-  public enterPlanet(planet: PlanetConfig): void {
+  public launchFromOrbitToSpace(): void {
+    if (this.isWalking || this.flightState !== 'orbit') return;
+    const planet = getPlanetConfig(this.activePlanetId);
+    _toPlanet.subVectors(this.spacePos, planet.spacePos);
+    if (_toPlanet.lengthSq() < 1) {
+      _toPlanet.set(0.4, 0.5, 0.8);
+    }
+    _toPlanet.normalize();
+    const exitDist = planet.radius * 2.25;
+    this.spacePos.copy(planet.spacePos).addScaledVector(_toPlanet, exitDist);
+    this.heading = Math.atan2(-_toPlanet.x, -_toPlanet.z);
+    this.spacePitch = THREE.MathUtils.clamp(Math.asin(_toPlanet.y) * 0.5, -0.55, 0.55);
+    this.spaceSpeed = 122;
+    this.forwardSpeed = 122;
+    this.flightState = 'space';
+    this.spaceFactor = 1;
+  }
+
+  public enterPlanetOrbit(planet: PlanetConfig, defaultSiteId: string | null = null): void {
     if (this.flightState !== 'space') return;
     this.activePlanetId = planet.id;
-    this.onPlanetSwitch?.(planet.id);
-    this.position.set(0, 390, 0);
+    this.onPlanetSwitch?.(planet.id, 0, 0);
+
+    const dx = this.spacePos.x - planet.spacePos.x;
+    const dy = this.spacePos.y - planet.spacePos.y;
+    const dz = this.spacePos.z - planet.spacePos.z;
+    const dist = Math.max(1, Math.hypot(dx, dy, dz));
+    this.orbitTheta = Math.atan2(dx, dz);
+    const rawElev = Math.asin(THREE.MathUtils.clamp(dy / dist, -0.9, 0.9));
+    this.orbitElev = THREE.MathUtils.clamp(rawElev, planet.isFlatDome ? 0.44 : 0.28, 1.25);
+    this.orbitDistFactor = planet.isFlatDome ? 1.96 : 2.02;
+    this.selectedLandingSiteId = defaultSiteId;
+
+    const r = planet.radius * this.orbitDistFactor;
+    const cosE = Math.cos(this.orbitElev);
+    const ox = Math.sin(this.orbitTheta) * cosE * r;
+    const oy = Math.sin(this.orbitElev) * r;
+    const oz = Math.cos(this.orbitTheta) * cosE * r;
+    this.spacePos.set(planet.spacePos.x + ox, planet.spacePos.y + oy, planet.spacePos.z + oz);
+    this.heading = Math.atan2(ox, oz);
+    this.pitch = Math.atan2(-oy, Math.max(0.001, Math.hypot(ox, oz))) + 0.12;
+    this.spaceSpeed = 38;
+    this.forwardSpeed = 38;
+    this.flightState = 'orbit';
+    this.spaceFactor = 1;
+  }
+
+  public descendToSite(x: number, z: number): void {
+    if (this.flightState !== 'orbit' && this.flightState !== 'space') return;
+    this.onPlanetSwitch?.(this.activePlanetId, x, z);
+    this.position.set(x, 385, z);
     this.targetFlightAltitude = 104;
-    this.forwardSpeed = 44;
-    this.verticalSpeed = -26;
+    this.forwardSpeed = 42;
+    this.verticalSpeed = -28;
+    this.heading = 0;
     this.spacePitch = 0;
     this.flightState = 'entering';
+  }
+
+  public enterPlanet(planet: PlanetConfig): void {
+    this.enterPlanetOrbit(planet);
   }
 
   public update(
@@ -161,6 +239,11 @@ export class VehiclePhysics {
       return;
     }
 
+    if (this.flightState === 'orbit') {
+      this.updateOrbitPhysics(delta, inputs, elapsed);
+      return;
+    }
+
     if (inputs.brake) {
       this.boostTimer = 0;
     } else if (this.boostTimer > 0) {
@@ -175,7 +258,7 @@ export class VehiclePhysics {
       ? boostActive
         ? 98
         : 68
-      : this.flightState === 'launching'
+      : this.flightState === 'launching' || this.flightState === 'launching_orbit'
         ? 135
         : boostActive
           ? 126
@@ -189,7 +272,12 @@ export class VehiclePhysics {
 
     let longitudinalAccel = 0;
 
-    if (inputs.throttle || boostActive || this.flightState === 'launching') {
+    if (
+      inputs.throttle ||
+      boostActive ||
+      this.flightState === 'launching' ||
+      this.flightState === 'launching_orbit'
+    ) {
       if (this.forwardSpeed < 0) {
         longitudinalAccel = brakeDecel;
       } else {
@@ -292,6 +380,32 @@ export class VehiclePhysics {
         THREE.MathUtils.clamp(this.verticalSpeed * 0.007, -0.15, 0.15) -
         THREE.MathUtils.clamp(netLongAccel * 0.0012, -0.04, 0.04);
       this.pitch = THREE.MathUtils.damp(this.pitch, flightPitch, 5, delta);
+    } else if (this.flightState === 'launching_orbit') {
+      const targetOrbitExitY = 395;
+      const desiredVy = 68;
+      this.verticalSpeed = THREE.MathUtils.damp(this.verticalSpeed, desiredVy, 2.5, delta);
+      this.position.y += this.verticalSpeed * delta;
+      this.pitch = THREE.MathUtils.damp(this.pitch, 0.32, 3.5, delta);
+
+      if (this.position.y >= targetOrbitExitY) {
+        const planet = getPlanetConfig(this.activePlanetId);
+        this.orbitTheta = 0.55;
+        this.orbitElev = planet.isFlatDome ? 0.68 : 0.58;
+        this.orbitDistFactor = planet.isFlatDome ? 1.96 : 2.02;
+        const r = planet.radius * this.orbitDistFactor;
+        const cosE = Math.cos(this.orbitElev);
+        const ox = Math.sin(this.orbitTheta) * cosE * r;
+        const oy = Math.sin(this.orbitElev) * r;
+        const oz = Math.cos(this.orbitTheta) * cosE * r;
+        this.spacePos.set(planet.spacePos.x + ox, planet.spacePos.y + oy, planet.spacePos.z + oz);
+        this.heading = Math.atan2(ox, oz);
+        this.pitch = Math.atan2(-oy, Math.max(0.001, Math.hypot(ox, oz))) + 0.12;
+        this.spaceSpeed = 36;
+        this.forwardSpeed = 36;
+        this.flightState = 'orbit';
+        this.spaceFactor = 1;
+        return;
+      }
     } else if (this.flightState === 'launching') {
       const targetSpaceExitY = 420;
       const desiredVy = 72;
@@ -429,6 +543,130 @@ export class VehiclePhysics {
         this.spacePos.copy(p.spacePos).add(_toPlanet);
       }
     }
+  }
+
+  private updateOrbitPhysics(delta: number, inputs: ControlInputs, elapsed: number): void {
+    this.spaceFactor = 1;
+    if (inputs.brake) {
+      this.boostTimer = 0;
+    } else if (this.boostTimer > 0) {
+      this.boostTimer = Math.max(0, this.boostTimer - delta);
+    }
+    const boostActive = this.boostTimer > 0 || inputs.boost;
+    const planet = getPlanetConfig(this.activePlanetId);
+
+    const digitalSteer = (inputs.steerLeft ? 1 : 0) - (inputs.steerRight ? 1 : 0);
+    const rawSteer = THREE.MathUtils.clamp(digitalSteer + inputs.steerAxis, -1, 1);
+    this.steerAngle = THREE.MathUtils.damp(this.steerAngle, rawSteer, 4.5, delta);
+
+    const throttleBias = boostActive
+      ? 0.38
+      : inputs.throttle
+        ? 0.22
+        : inputs.brake
+          ? -0.08
+          : 0.055;
+    this.orbitTheta += (throttleBias - this.steerAngle * 0.36) * delta;
+
+    const vInput = (inputs.climb ? 1 : 0) - (inputs.descend ? 1 : 0);
+    const minElev = planet.isFlatDome ? 0.38 : 0.2;
+    this.orbitElev = THREE.MathUtils.clamp(this.orbitElev + vInput * 0.45 * delta, minElev, 1.32);
+    this.orbitDistFactor = THREE.MathUtils.clamp(
+      this.orbitDistFactor + vInput * 0.22 * delta,
+      1.68,
+      2.52,
+    );
+
+    const r = planet.radius * this.orbitDistFactor;
+    const cosE = Math.cos(this.orbitElev);
+    const ox = Math.sin(this.orbitTheta) * cosE * r;
+    const oy = Math.sin(this.orbitElev) * r;
+    const oz = Math.cos(this.orbitTheta) * cosE * r;
+    this.spacePos.set(planet.spacePos.x + ox, planet.spacePos.y + oy, planet.spacePos.z + oz);
+
+    const horiz = Math.max(0.001, Math.hypot(ox, oz));
+    const desiredHeading = Math.atan2(ox, oz);
+    const desiredPitch = Math.atan2(-oy, horiz) + 0.12;
+    let hDiff = ((desiredHeading - this.heading + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (hDiff < -Math.PI) hDiff += Math.PI * 2;
+    this.heading += hDiff * Math.min(1, delta * 8);
+    this.pitch = THREE.MathUtils.damp(this.pitch, desiredPitch, 6, delta);
+    this.roll = THREE.MathUtils.damp(this.roll, this.steerAngle * 0.18, 4.5, delta);
+    this.suspensionHeave = Math.sin(elapsed * 0.7) * 0.04;
+
+    this.spaceSpeed = Math.abs(throttleBias) * 620 + Math.abs(this.steerAngle) * 140;
+    this.forwardSpeed = this.spaceSpeed;
+  }
+
+  public exportSaveState() {
+    return {
+      planetId: this.activePlanetId,
+      flightState: this.flightState,
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      heading: this.heading,
+      forwardSpeed: this.forwardSpeed,
+      targetFlightAltitude: this.targetFlightAltitude,
+      spacePos: { x: this.spacePos.x, y: this.spacePos.y, z: this.spacePos.z },
+      spacePitch: this.spacePitch,
+      spaceSpeed: this.spaceSpeed,
+      orbitTheta: this.orbitTheta,
+      orbitElev: this.orbitElev,
+      orbitDistFactor: this.orbitDistFactor,
+      selectedLandingSiteId: this.selectedLandingSiteId,
+      isWalking: this.isWalking,
+      walkerPos: { x: this.walkerPos.x, y: this.walkerPos.y, z: this.walkerPos.z },
+      walkerHeading: this.walkerHeading,
+      companionPos: { x: this.companionPos.x, y: this.companionPos.y, z: this.companionPos.z },
+      companionHeading: this.companionHeading,
+    };
+  }
+
+  public applySaveState(data: {
+    planetId: PlanetId;
+    flightState: VehicleFlightState;
+    position: { x: number; y: number; z: number };
+    heading: number;
+    forwardSpeed: number;
+    targetFlightAltitude: number;
+    spacePos: { x: number; y: number; z: number };
+    spacePitch: number;
+    spaceSpeed: number;
+    orbitTheta: number;
+    orbitElev: number;
+    orbitDistFactor: number;
+    selectedLandingSiteId: string | null;
+    isWalking: boolean;
+    walkerPos: { x: number; y: number; z: number };
+    walkerHeading: number;
+    companionPos: { x: number; y: number; z: number };
+    companionHeading: number;
+  }): void {
+    this.activePlanetId = data.planetId;
+    this.flightState = data.flightState;
+    this.position.set(data.position.x, data.position.y, data.position.z);
+    this.heading = data.heading;
+    this.forwardSpeed = data.forwardSpeed;
+    this.targetFlightAltitude = data.targetFlightAltitude || 104;
+    this.spacePos.set(data.spacePos.x, data.spacePos.y, data.spacePos.z);
+    this.spacePitch = data.spacePitch || 0;
+    this.spaceSpeed = data.spaceSpeed || 0;
+    this.orbitTheta = data.orbitTheta ?? 0.55;
+    this.orbitElev = data.orbitElev ?? 0.62;
+    this.orbitDistFactor = data.orbitDistFactor ?? 2.0;
+    this.selectedLandingSiteId = data.selectedLandingSiteId ?? null;
+    this.isWalking = Boolean(data.isWalking);
+    this.walkerPos.set(data.walkerPos.x, data.walkerPos.y, data.walkerPos.z);
+    this.walkerHeading = data.walkerHeading || 0;
+    this.companionPos.set(data.companionPos.x, data.companionPos.y, data.companionPos.z);
+    this.companionHeading = data.companionHeading || 0;
+    this.pitch = 0;
+    this.roll = 0;
+    this.verticalSpeed = 0;
+    this.lateralSpeed = 0;
+    this.spaceFactor =
+      this.flightState === 'space' || this.flightState === 'orbit'
+        ? 1
+        : THREE.MathUtils.clamp((this.position.y - 165) / 245, 0, 1);
   }
 
   private updateWalking(

@@ -1,6 +1,5 @@
 import React, { useRef, useState } from 'react';
 import {
-  AlertTriangle,
   Armchair,
   ArrowDown,
   ArrowUp,
@@ -17,38 +16,46 @@ import {
   Coffee,
   Compass,
   Copy,
-  Cpu,
   DoorOpen,
   Download,
   Eye,
   EyeOff,
+  FolderOpen,
   Footprints,
   Heart,
-  Home,
   MapPin,
   Maximize2,
   MessageCircle,
   Minimize2,
   Moon,
   Orbit,
+  Package,
   Palette,
   PlaneLanding,
   PlaneTakeoff,
   RefreshCw,
   Rocket,
+  RotateCcw,
+  Save,
   SlidersHorizontal,
+  Smartphone,
   Snowflake,
   Sparkles,
   Sun,
   Telescope,
-  Tv,
   UserCheck,
   UserX,
+  WifiOff,
   X,
   Zap,
 } from 'lucide-react';
+import {
+  generateAndroid17ApkProjectZip,
+  GITHUB_WORKFLOW_YML,
+} from '../engine/androidApkProject';
 import { getCafeMenu, getCafeSceneIntro } from '../engine/events';
-import { generateStandaloneGameHtml } from '../engine/standaloneHtml';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 import type {
   CabinThemeId,
   SeasonSetting,
@@ -75,11 +82,6 @@ interface TouchControlsProps {
   onEnterCafe: () => void;
   onEnterHotel: () => void;
   onEnterObservatory: () => void;
-  onEnterSerbos: () => void;
-  onDrinkSerbosTea: () => void;
-  onTalkSerbos: () => void;
-  onTalkFromCage: () => void;
-  onToggleHotelTv: () => void;
   onExitInterior: () => void;
   onSitInterior: () => void;
   onLieBed: () => void;
@@ -93,8 +95,15 @@ interface TouchControlsProps {
   onSelectCabinTheme: (id: CabinThemeId) => void;
   onTriggerBoost: () => void;
   onToggleFlight: () => void;
+  onEnterOrbit: () => void;
   onLaunchToSpace: () => void;
   onEnterPlanet: () => void;
+  onSelectLandingSite: (siteId: string) => void;
+  onDescendToSite: (siteId?: string) => void;
+  onInteractSpecialSpot: () => void;
+  onSaveGame: () => void;
+  onLoadSave: () => void;
+  onResetProgress: () => void;
   onExitVehicle: () => void;
   onEnterVehicle: () => void;
   onToggleCompanion: () => void;
@@ -174,11 +183,6 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onEnterCafe,
   onEnterHotel,
   onEnterObservatory,
-  onEnterSerbos,
-  onDrinkSerbosTea,
-  onTalkSerbos,
-  onTalkFromCage,
-  onToggleHotelTv,
   onExitInterior,
   onSitInterior,
   onLieBed,
@@ -192,8 +196,15 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onSelectCabinTheme,
   onTriggerBoost,
   onToggleFlight,
+  onEnterOrbit,
   onLaunchToSpace,
   onEnterPlanet,
+  onSelectLandingSite,
+  onDescendToSite,
+  onInteractSpecialSpot,
+  onSaveGame,
+  onLoadSave,
+  onResetProgress,
   onExitVehicle,
   onEnterVehicle,
   onToggleCompanion,
@@ -219,55 +230,153 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const isSeatedOrLying = insideInterior && snapshot.interiorPose !== 'stand';
   const isWalking = snapshot.isWalking;
   const isAir = snapshot.isFlying && !isWalking;
-  const inSpace = snapshot.inSpace && !isWalking;
-  const showVerticalArrows = isAir || inSpace;
+  const inOrbitMode = snapshot.inOrbitMode && !isWalking;
+  const inDeepSpace = snapshot.inSpace && !isWalking;
+  const inAnySpace = inDeepSpace || inOrbitMode;
+  const showVerticalArrows = isAir || inAnySpace;
   const boostActive = snapshot.boostRemainingSec > 0;
   const boostPct = Math.min(100, Math.max(0, (snapshot.boostRemainingSec / 4) * 100));
   const cafeMenu = getCafeMenu(snapshot.biomeId);
 
   const [companionOpen, setCompanionOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
+  const [ymlCopied, setYmlCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [apkFeedback, setApkFeedback] = useState<string | null>(null);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [showGithubGuide, setShowGithubGuide] = useState(false);
+  const [exportBusy, setExportBusy] = useState<'apk' | 'html' | 'copy' | null>(null);
 
-  const handleCopyHtml = async () => {
+  const isBundledStandalone =
+    typeof window !== 'undefined' &&
+    (Boolean((window as unknown as { __CORUSCANT_STANDALONE__?: boolean }).__CORUSCANT_STANDALONE__) ||
+      window.location.protocol === 'file:' ||
+      window.location.hostname === 'appassets.androidplatform.net');
+
+  const isOnline = useOnlineStatus();
+  const { isInstallable, isInstalled, isIOS, isInIframe, install } = usePWAInstall();
+
+  const fetchFullStandaloneHtml = async (): Promise<string> => {
+    const res = await fetch('/downloads/cyber_horizon.html');
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return await res.text();
+  };
+
+  const copyTextSafe = async (text: string): Promise<boolean> => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fallback below
+      }
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  };
+
+  const handleInstallWebApk = async () => {
+    if (isInstallable) {
+      const ok = await install();
+      if (ok) {
+        setApkFeedback('Приложение установлено на устройство!');
+        setShowInstallGuide(false);
+        setTimeout(() => setApkFeedback(null), 4500);
+        return;
+      }
+    }
+    setShowInstallGuide((prev) => !prev);
+  };
+
+  const handleCopyAppUrl = async () => {
     try {
-      const code = generateStandaloneGameHtml();
-      let ok = false;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        try {
-          await navigator.clipboard.writeText(code);
-          ok = true;
-        } catch {
-          ok = false;
-        }
-      }
-      if (!ok) {
-        const textarea = document.createElement('textarea');
-        textarea.value = code;
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        textarea.style.top = '0';
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        ok = document.execCommand('copy');
-        document.body.removeChild(textarea);
-      }
-      setHtmlCopied(true);
-      setCopyFeedback('Код игры скопирован! Вставьте в файл game.html и откройте в браузере ▶️');
-      setTimeout(() => {
-        setHtmlCopied(false);
-        setCopyFeedback(null);
-      }, 4000);
+      await copyTextSafe(window.location.href);
+      setApkFeedback('Ссылка скопирована! Откройте её в Chrome на Poco F6 и нажмите «Установить».');
+      setTimeout(() => setApkFeedback(null), 5000);
     } catch {
-      setCopyFeedback('Используйте кнопку «Скачать game.html»');
-      setTimeout(() => setCopyFeedback(null), 4000);
+      setApkFeedback('Скопируйте адрес из строки браузера и откройте в Chrome.');
+      setTimeout(() => setApkFeedback(null), 5000);
     }
   };
 
-  const handleDownloadHtml = () => {
+  const handleCopyWorkflowYml = async () => {
     try {
-      const code = generateStandaloneGameHtml();
+      await copyTextSafe(GITHUB_WORKFLOW_YML);
+      setYmlCopied(true);
+      setApkFeedback('Содержимое build-apk.yml скопировано! Вставьте его в GitHub Actions.');
+      setTimeout(() => {
+        setYmlCopied(false);
+        setApkFeedback(null);
+      }, 4500);
+    } catch {
+      setApkFeedback('Не удалось скопировать workflow. Он также есть внутри архива в .github/workflows/build-apk.yml.');
+      setTimeout(() => setApkFeedback(null), 5000);
+    }
+  };
+
+  const handleDownloadAndroidApkProject = async () => {
+    if (exportBusy) return;
+    setExportBusy('apk');
+    try {
+      const fullHtml = await fetchFullStandaloneHtml();
+      const zipBlob = generateAndroid17ApkProjectZip(fullHtml);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'coruscant_horizon_android17_apk.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setShowGithubGuide(true);
+      setApkFeedback(
+        'Архив coruscant_horizon_android17_apk.zip скачан! Внутри ПОЛНАЯ версия игры и проект для сборки APK.',
+      );
+      setTimeout(() => setApkFeedback(null), 6000);
+    } catch {
+      setApkFeedback('Не удалось загрузить сборку игры для архива. Проверьте соединение.');
+      setTimeout(() => setApkFeedback(null), 4500);
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
+  const handleCopyHtml = async () => {
+    if (exportBusy) return;
+    setExportBusy('copy');
+    try {
+      const code = await fetchFullStandaloneHtml();
+      await copyTextSafe(code);
+      setHtmlCopied(true);
+      setCopyFeedback('Полный HTML-код игры скопирован! Сохраните как cyber_horizon.html и откройте в браузере.');
+      setTimeout(() => {
+        setHtmlCopied(false);
+        setCopyFeedback(null);
+      }, 4500);
+    } catch {
+      setCopyFeedback('Не удалось скопировать (файл слишком большой для буфера). Нажмите «Скачать cyber_horizon.html».');
+      setTimeout(() => setCopyFeedback(null), 4500);
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
+  const handleDownloadHtml = async () => {
+    if (exportBusy) return;
+    setExportBusy('html');
+    try {
+      const code = await fetchFullStandaloneHtml();
       const blob = new Blob([code], { type: 'text/html;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -277,10 +386,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setCopyFeedback('Файл cyber_horizon.html сохранён!');
-      setTimeout(() => setCopyFeedback(null), 4000);
+      setCopyFeedback('Полная версия cyber_horizon.html сохранена! Работает офлайн с полной 3D-графикой.');
+      setTimeout(() => setCopyFeedback(null), 4500);
     } catch {
-      // ignore
+      setCopyFeedback('Не удалось скачать cyber_horizon.html. Проверьте соединение.');
+      setTimeout(() => setCopyFeedback(null), 4000);
+    } finally {
+      setExportBusy(null);
     }
   };
 
@@ -431,9 +543,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   ? 'Сесть за столик'
                   : snapshot.interiorMode === 'observatory'
                     ? 'На скамью'
-                    : snapshot.interiorMode === 'serbos'
-                      ? 'За стол пить чай'
-                      : 'На диван'}
+                    : 'На диван'}
               </span>
             </button>
           )}
@@ -470,72 +580,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               className={`${btnCls} bg-rose-500/25 border-rose-400/55 text-rose-100`}
             >
               <Coffee className={`${iconCls} text-rose-300`} />
-              <span>{compact ? 'Чай / Кофе' : 'Меню чая и кофе'}</span>
+              <span>{compact ? 'Кофе' : 'Меню кофе'}</span>
             </button>
           )}
 
           {snapshot.interiorMode === 'hotel' && (
-            <>
-              <button
-                type="button"
-                onClick={onToggleHotelTv}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={`${btnCls} ${
-                  snapshot.hotelTvOn
-                    ? 'bg-sky-500/35 border-sky-300 text-white'
-                    : 'bg-[#090d14]/88 border-sky-400/45 text-sky-100'
-                }`}
-              >
-                <Tv className={`${iconCls} text-sky-300`} />
-                <span>{snapshot.hotelTvOn ? (compact ? 'ТВ вкл' : 'Переключить ТВ') : 'Смотреть ТВ'}</span>
-              </button>
-
-              {snapshot.hasCompanion && (
-                <button
-                  type="button"
-                  onClick={onKissCompanion}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className={`${btnCls} bg-rose-500/30 border-rose-300/60 text-rose-100`}
-                >
-                  <Heart className={`${iconCls} text-rose-200 fill-rose-300`} />
-                  <span>Поцеловать</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={onSleepHotel}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={`${btnCls} bg-indigo-500/30 border-indigo-400/60 text-indigo-100`}
-              >
-                <Moon className={`${iconCls} text-indigo-300`} />
-                <span>Поспать</span>
-              </button>
-            </>
-          )}
-
-          {snapshot.interiorMode === 'serbos' && (
-            <>
-              <button
-                type="button"
-                onClick={onDrinkSerbosTea}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={`${btnCls} bg-emerald-500/30 border-emerald-400/60 text-emerald-100`}
-              >
-                <Coffee className={`${iconCls} text-emerald-300`} />
-                <span>{compact ? 'Выпить чаю' : 'Выпить чаю у Сербоса'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onTalkSerbos}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={`${btnCls} bg-cyan-500/25 border-cyan-400/55 text-cyan-100`}
-              >
-                <Cpu className={`${iconCls} text-cyan-300`} />
-                <span>{compact ? 'Адамчик' : 'Сербос и Адамчик'}</span>
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={onSleepHotel}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-indigo-500/30 border-indigo-400/60 text-indigo-100`}
+            >
+              <Moon className={`${iconCls} text-indigo-300`} />
+              <span>Поспать</span>
+            </button>
           )}
 
           {snapshot.hasCompanion && (
@@ -546,7 +604,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               className={`${btnCls} bg-rose-500/20 border-rose-300/45 text-rose-100`}
             >
               <MessageCircle className={`${iconCls} text-rose-300`} />
-              <span>{snapshot.interiorMode === 'hotel' ? 'О виде и планете' : 'Поболтать'}</span>
+              <span>Поболтать</span>
             </button>
           )}
         </>
@@ -555,7 +613,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
     return (
       <>
-        {!inSpace && !isWalking && (
+        {!inAnySpace && !isWalking && (
           <button
             type="button"
             onClick={onToggleFlight}
@@ -624,7 +682,23 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.nearbyCafeName && !inSpace && (
+        {snapshot.nearbySpecialSpot && !inAnySpace && (
+          <button
+            type="button"
+            onClick={onInteractSpecialSpot}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-amber-500/30 border-amber-300/65 text-amber-50`}
+          >
+            <MapPin className={`${iconCls} text-amber-300`} />
+            <span>
+              {compact && snapshot.nearbySpecialSpot.actionLabel.length > 18
+                ? snapshot.nearbySpecialSpot.name.split(' · ')[0]
+                : snapshot.nearbySpecialSpot.actionLabel}
+            </span>
+          </button>
+        )}
+
+        {snapshot.nearbyCafeName && !inAnySpace && (
           <button
             type="button"
             onClick={onEnterCafe}
@@ -636,7 +710,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.nearbyHotelName && !inSpace && (
+        {snapshot.nearbyHotelName && !inAnySpace && (
           <button
             type="button"
             onClick={onEnterHotel}
@@ -648,7 +722,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.nearbyObservatoryName && !inSpace && (
+        {snapshot.nearbyObservatoryName && !inAnySpace && (
           <button
             type="button"
             onClick={onEnterObservatory}
@@ -660,38 +734,27 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.nearbySerbosName && !inSpace && (
-          <>
-            <button
-              type="button"
-              onClick={onEnterSerbos}
-              onPointerDown={(e) => e.stopPropagation()}
-              className={`${btnCls} bg-emerald-500/30 border-emerald-400/60 text-emerald-100`}
-            >
-              <Home className={`${iconCls} text-emerald-300`} />
-              <span>{compact ? 'К Сербосу' : 'Дом Сербоса'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={onTalkSerbos}
-              onPointerDown={(e) => e.stopPropagation()}
-              className={`${btnCls} bg-teal-500/25 border-teal-400/55 text-teal-100`}
-            >
-              <MessageCircle className={`${iconCls} text-teal-300`} />
-              <span>Сербос</span>
-            </button>
-          </>
-        )}
-
-        {snapshot.nearbyFromCageName && !inSpace && (
+        {snapshot.canLaunchToOrbit && !inAnySpace && (
           <button
             type="button"
-            onClick={onTalkFromCage}
+            onClick={onEnterOrbit}
             onPointerDown={(e) => e.stopPropagation()}
-            className={`${btnCls} bg-orange-500/30 border-orange-400/60 text-orange-100`}
+            className={`${btnCls} bg-cyan-500/30 border-cyan-400/60 text-cyan-100`}
           >
-            <AlertTriangle className={`${iconCls} text-orange-300`} />
-            <span>{compact ? 'Фром' : 'Клетка: Фром'}</span>
+            <Orbit className={`${iconCls} text-cyan-300`} />
+            <span>На орбиту</span>
+          </button>
+        )}
+
+        {inOrbitMode && (
+          <button
+            type="button"
+            onClick={() => onDescendToSite()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-emerald-500/35 border-emerald-300/75 text-white`}
+          >
+            <PlaneLanding className={`${iconCls} text-emerald-200`} />
+            <span>{compact ? 'Посадка' : 'Приземлиться'}</span>
           </button>
         )}
 
@@ -715,7 +778,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             className={`${btnCls} bg-emerald-500/30 border-emerald-400/60 text-emerald-100`}
           >
             <Orbit className={`${iconCls} text-emerald-300`} />
-            <span>{compact ? 'К планете' : `В облака · ${snapshot.nearestPlanetName}`}</span>
+            <span>{compact ? 'На орбиту' : `Орбита · ${snapshot.nearestPlanetName}`}</span>
           </button>
         )}
       </>
@@ -725,12 +788,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   return (
     <div className="fixed inset-0 z-20 pointer-events-none safe-area-hud box-border flex flex-col justify-between overflow-hidden">
       {/* Subtle Space Planet Markers */}
-      {inSpace && !hudHidden && (
+      {inDeepSpace && !hudHidden && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {snapshot.planetMarkers.map((m) => {
             const leftPct = 50 + m.screenX * 44;
             const topPct = 50 - m.screenY * 38;
-            const isQuestTarget = snapshot.activeQuest?.targetPlanetId === m.id;
             return (
               <div
                 key={m.id}
@@ -738,23 +800,14 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 style={{
                   left: `${leftPct}%`,
                   top: `${topPct}%`,
-                  opacity: isQuestTarget ? 1 : m.inFront ? 0.9 : 0.42,
+                  opacity: m.inFront ? 0.9 : 0.42,
                 }}
               >
                 <div
-                  className={`rounded-full border shadow-sm ${
-                    isQuestTarget ? 'w-3.5 h-3.5 border-amber-300 ring-2 ring-amber-400/50' : 'w-2.5 h-2.5 border-white/70'
-                  }`}
+                  className="w-2.5 h-2.5 rounded-full border border-white/70 shadow-sm"
                   style={{ backgroundColor: m.color }}
                 />
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap ${
-                    isQuestTarget
-                      ? 'bg-amber-500/30 border border-amber-300 text-amber-100'
-                      : 'bg-[#090d14]/75 border border-white/15 text-white'
-                  }`}
-                >
-                  {isQuestTarget ? '★ ' : ''}
+                <span className="px-1.5 py-0.5 rounded bg-[#090d14]/75 border border-white/15 text-[10px] font-medium text-white whitespace-nowrap">
                   {m.name} · {m.distanceKm} км
                 </span>
               </div>
@@ -763,8 +816,49 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
+      {/* Orbital 3D Landing Site Pins */}
+      {inOrbitMode && !hudHidden && !settingsOpen && !journalOpen && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {snapshot.landingSites.map((site) => {
+            if (!site.inFront) return null;
+            const leftPct = 50 + site.screenX * 44;
+            const topPct = 50 - site.screenY * 38;
+            const isSelected = snapshot.selectedLandingSiteId === site.id;
+            return (
+              <button
+                key={site.id}
+                type="button"
+                onClick={() => onSelectLandingSite(site.id)}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 transition-transform active:scale-95"
+                style={{
+                  left: `${leftPct}%`,
+                  top: `${topPct}%`,
+                }}
+              >
+                <div
+                  className={`w-4 h-4 rounded-full border-2 shadow-lg transition-transform ${
+                    isSelected ? 'scale-125 border-white ring-2 ring-emerald-300/80' : 'border-white/80'
+                  }`}
+                  style={{ backgroundColor: site.accentHex }}
+                />
+                <span
+                  className={`px-2 py-0.5 rounded-lg border text-[10px] font-semibold whitespace-nowrap shadow-md ${
+                    isSelected
+                      ? 'bg-emerald-500/90 border-emerald-200 text-slate-950'
+                      : 'bg-[#090d14]/82 border-white/20 text-white'
+                  }`}
+                >
+                  {site.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Subtle Quest Waypoint Marker */}
-      {!inSpace && !insideInterior && !hudHidden && snapshot.activeQuest?.hasMarker && (
+      {!inAnySpace && !insideInterior && !hudHidden && snapshot.activeQuest?.hasMarker && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 transition-opacity"
@@ -804,39 +898,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
-      {/* NPC Speech Banner: From (Angry), Serbos (Warm), or Adamchik AI */}
-      {!hudHidden && snapshot.npcBanner && (
-        <div
-          className={`pointer-events-none fixed left-1/2 -translate-x-1/2 z-20 max-w-[92vw] w-fit ${
-            snapshot.companionNote && snapshot.hasCompanion ? 'top-40 sm:top-36' : 'top-28 sm:top-24'
-          }`}
-        >
-          <div
-            className={`px-4 py-2 rounded-2xl border shadow-2xl text-center leading-snug ${
-              snapshot.npcBanner.tone === 'angry'
-                ? 'bg-[#1f0b0b]/95 border-orange-400/70 text-orange-100'
-                : snapshot.npcBanner.tone === 'ai'
-                  ? 'bg-[#091522]/95 border-cyan-400/65 text-cyan-100'
-                  : 'bg-[#081c17]/95 border-emerald-400/65 text-emerald-100'
-            }`}
-          >
-            <div className="text-[10px] uppercase tracking-wider font-semibold opacity-85 mb-0.5">
-              {snapshot.npcBanner.speaker}
-            </div>
-            <div className="text-xs font-medium">{snapshot.npcBanner.text}</div>
-          </div>
-        </div>
-      )}
-
       {/* Top Row: Minimal Title + Telemetry + Credits/Quest Pill + Utility Buttons */}
       <div className="relative z-10 flex items-start justify-between gap-2 w-full min-w-0">
         <header className="pointer-events-none min-w-0 flex-1">
           <h1 className="font-display text-base sm:text-xl font-semibold tracking-wide text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] truncate">
-            {inSpace ? 'Космос · Горизонт' : `${snapshot.planetName} · Горизонт`}
+            {inDeepSpace
+              ? 'Космос · Горизонт'
+              : inOrbitMode
+                ? `Орбита · ${snapshot.planetName}`
+                : `${snapshot.planetName} · Горизонт`}
           </h1>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs text-slate-200/90 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
             <span className="truncate max-w-[190px] sm:max-w-none">{snapshot.zoneName}</span>
-            {!inSpace && (
+            {!inAnySpace && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="font-mono-tabular whitespace-nowrap">{snapshot.timeLabel}</span>
@@ -856,9 +930,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <span className="text-slate-400" aria-hidden="true">
                 ·
               </span>
-              {inSpace ? (
+              {inDeepSpace ? (
                 <span className="font-mono-tabular font-semibold text-violet-200">
                   {snapshot.nearestPlanetName}: {snapshot.nearestPlanetDistKm} км
+                </span>
+              ) : inOrbitMode ? (
+                <span className="font-mono-tabular font-semibold text-cyan-200">
+                  Орбита · {snapshot.altitudeM} м
                 </span>
               ) : (
                 <span className="font-mono-tabular font-semibold">{snapshot.altitudeM} м</span>
@@ -1114,44 +1192,6 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               </button>
             )}
 
-            {snapshot.nearbySerbosName && !insideInterior && (
-              <button
-                type="button"
-                onClick={() => {
-                  setCompanionOpen(false);
-                  onEnterSerbos();
-                }}
-                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-emerald-100"
-              >
-                <Home className="w-4 h-4 text-emerald-300 shrink-0" />
-                <div>
-                  <div className="font-semibold">Зайти к Сербосу ({snapshot.nearbySerbosName})</div>
-                  <div className="text-[11px] text-emerald-200/75">
-                    Много компьютеров, ИИ Адамчик и чай в домике у реки
-                  </div>
-                </div>
-              </button>
-            )}
-
-            {snapshot.nearbyFromCageName && !insideInterior && (
-              <button
-                type="button"
-                onClick={() => {
-                  setCompanionOpen(false);
-                  onTalkFromCage();
-                }}
-                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-orange-100"
-              >
-                <AlertTriangle className="w-4 h-4 text-orange-300 shrink-0" />
-                <div>
-                  <div className="font-semibold">Клетка · Злой землянин Фром</div>
-                  <div className="text-[11px] text-orange-200/75">
-                    Послушать, как Фром орёт и бегает по клетке
-                  </div>
-                </div>
-              </button>
-            )}
-
             <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/10">
               <div className="flex flex-col">
                 <span className="text-xs font-medium text-slate-200">Спутница в поездке</span>
@@ -1313,7 +1353,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       )}
 
       {/* Cozy Roadside Aero-Cafe Order Menu */}
-      {cafeOpen && (snapshot.interiorMode === 'cafe' || snapshot.nearbyCafeName) && !inSpace && !hudHidden && (
+      {cafeOpen && (snapshot.interiorMode === 'cafe' || snapshot.nearbyCafeName) && !inAnySpace && !hudHidden && (
         <div
           className="relative z-10 pointer-events-auto self-center w-[min(500px,92vw)] max-h-[72dvh] overflow-y-auto touch-pan-y rounded-2xl bg-[#090d14]/95 border border-rose-300/25 shadow-2xl p-3.5 sm:p-4 flex flex-col gap-3 my-auto"
           onPointerDown={(e) => e.stopPropagation()}
@@ -1543,68 +1583,326 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             </button>
           </div>
 
-          {/* Standalone HTML Game Code Export */}
+          {/* Save & Load Progress */}
           <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 min-w-0">
-                <Code2 className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className="text-xs font-semibold text-white truncate">Код игры для запуска в HTML</span>
+                <Save className="w-4 h-4 text-sky-300 shrink-0" />
+                <span className="text-xs font-semibold text-white truncate">Сохранение игры</span>
               </div>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/25 shrink-0">
-                Offline .html
+              <span className="text-[11px] text-slate-400 truncate">
+                {snapshot.saveMeta.hasSave
+                  ? `${snapshot.saveMeta.savedAtLabel} · ${snapshot.saveMeta.planetName}`
+                  : 'Автосохранение каждые 15 с'}
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-300 leading-relaxed">
-              Скопируйте полный исходный код или скачайте готовый <code className="text-amber-300 bg-black/40 px-1 py-0.5 rounded">cyber_horizon.html</code>. Игра работает автономно в любом браузере на ПК или смартфоне без интернета и серверов.
-            </p>
-
-            {copyFeedback && (
-              <div className="rounded-xl bg-amber-500/15 border border-amber-400/40 p-2 text-xs text-amber-100 flex items-center gap-2">
-                <Check className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                <span>{copyFeedback}</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-1.5">
               <button
                 type="button"
-                onClick={handleCopyHtml}
-                className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95 ${
-                  htmlCopied
-                    ? 'bg-emerald-500/25 border-emerald-400/50 text-emerald-100'
-                    : 'bg-amber-500/20 border-amber-400/40 text-amber-100 hover:bg-amber-500/30'
-                }`}
+                onClick={onSaveGame}
+                className="min-h-[42px] px-2 rounded-xl border border-sky-400/45 bg-sky-500/20 hover:bg-sky-500/30 text-sky-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95"
               >
-                {htmlCopied ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-300" />
-                    <span>Скопировано в буфер!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4 text-amber-300" />
-                    <span>Скопировать код (HTML)</span>
-                  </>
-                )}
+                <Save className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+                <span>Сохранить</span>
               </button>
 
               <button
                 type="button"
-                onClick={handleDownloadHtml}
-                className="min-h-[44px] px-3 rounded-xl border border-sky-400/40 bg-sky-500/20 hover:bg-sky-500/30 text-sky-100 text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                disabled={!snapshot.saveMeta.hasSave}
+                onClick={onLoadSave}
+                className="min-h-[42px] px-2 rounded-xl border border-emerald-400/45 bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-40 text-emerald-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95"
               >
-                <Download className="w-4 h-4 text-sky-300" />
-                <span>Скачать cyber_horizon.html</span>
+                <FolderOpen className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                <span>Загрузить</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onResetProgress}
+                className="min-h-[42px] px-2 rounded-xl border border-rose-400/35 bg-rose-500/15 hover:bg-rose-500/25 text-rose-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-300 shrink-0" />
+                <span>Сброс</span>
               </button>
             </div>
           </div>
+
+          {/* Android 17 (Poco F6) WebAPK Install & Native APK Project Download */}
+          {isBundledStandalone ? (
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+              <div className="flex items-center gap-2 min-w-0">
+                <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-xs font-semibold text-white truncate">
+                  Полная автономная версия · Офлайн
+                </span>
+              </div>
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-400/15 text-emerald-300 border border-emerald-400/30 shrink-0">
+                Full 3D
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Smartphone className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="text-xs font-semibold text-white truncate">
+                      Android 17 · Poco F6 (APK / Приложение)
+                    </span>
+                  </div>
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-400/10 text-emerald-300 border border-emerald-400/25 shrink-0">
+                    Full 3D
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Установите полную игру как приложение на Poco F6 (WebAPK) или скачайте APK-проект с полной 3D-графикой внутри для сборки <code className="text-emerald-300 bg-black/40 px-1 py-0.5 rounded">.apk</code> через GitHub.
+                </p>
+
+                {apkFeedback && (
+                  <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/40 p-2 text-xs text-emerald-100 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                    <span>{apkFeedback}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {!isInstalled ? (
+                    <button
+                      type="button"
+                      onClick={handleInstallWebApk}
+                      className="min-h-[44px] px-3 rounded-xl border border-emerald-400/50 bg-emerald-500/25 hover:bg-emerald-500/35 text-emerald-100 text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                    >
+                      <Smartphone className="w-4 h-4 text-emerald-300 shrink-0" />
+                      <span>
+                        {isInstallable
+                          ? 'Установить на Android (WebAPK)'
+                          : isIOS
+                            ? 'Установить на iPhone/iPad'
+                            : 'Установить на Poco F6'}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="min-h-[44px] px-3 rounded-xl border border-emerald-400/40 bg-emerald-500/15 text-emerald-200 text-xs font-semibold flex items-center justify-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-300 shrink-0" />
+                      <span>Установлено на устройство</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={exportBusy !== null}
+                    onClick={handleDownloadAndroidApkProject}
+                    className="min-h-[44px] px-3 rounded-xl border border-violet-400/45 bg-violet-500/20 hover:bg-violet-500/30 disabled:opacity-50 text-violet-100 text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <Package className="w-4 h-4 text-violet-300 shrink-0" />
+                    <span>
+                      {exportBusy === 'apk' ? 'Упаковка полной игры…' : 'Скачать APK-проект (.zip)'}
+                    </span>
+                  </button>
+                </div>
+
+                {showInstallGuide && !isInstalled && (
+                  <div className="rounded-xl bg-black/50 border border-white/10 p-2.5 text-[11px] text-slate-200 leading-relaxed flex flex-col gap-2">
+                    {isIOS ? (
+                      <p>
+                        1. Нажмите кнопку <strong>Поделиться</strong> внизу Safari.<br />
+                        2. Выберите <strong>«На экран «Домой»»</strong> — игра установится как отдельное приложение.
+                      </p>
+                    ) : isInIframe ? (
+                      <>
+                        <p>
+                          Игра сейчас открыта внутри предпросмотра. Чтобы Chrome на Poco F6 собрал и установил системный WebAPK на рабочий стол:
+                        </p>
+                        <p className="text-slate-300">
+                          1. Нажмите кнопку ниже и откройте ссылку в Chrome.<br />
+                          2. Нажмите меню <strong>⋮</strong> → <strong>«Установить приложение»</strong>.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleCopyAppUrl}
+                          className="min-h-[38px] px-3 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs font-medium inline-flex items-center justify-center gap-1.5"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Скопировать ссылку для Chrome</span>
+                        </button>
+                      </>
+                    ) : (
+                      <p>
+                        Откройте меню браузера Chrome (<strong>⋮</strong> в правом верхнем углу) и выберите <strong>«Добавить на гл. экран»</strong> → <strong>«Установить»</strong>. Android 17 создаст иконку игры и кэширует её для запуска без интернета.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowGithubGuide((prev) => !prev)}
+                  className="w-full min-h-[38px] px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-medium text-violet-200 flex items-center justify-between gap-2"
+                >
+                  <span>Подробная инструкция: как создать APK через GitHub</span>
+                  <span className="text-slate-400">{showGithubGuide ? '▲' : '▼'}</span>
+                </button>
+
+                {showGithubGuide && (
+                  <div className="rounded-xl bg-black/60 border border-violet-400/25 p-3 text-[11px] text-slate-200 leading-relaxed flex flex-col gap-2">
+                    <div className="font-semibold text-violet-200">
+                      Пошагово (можно прямо с телефона Poco F6, ПК не нужен):
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1.5 text-slate-300">
+                      <li>
+                        Нажмите выше <strong>«Скачать APK-проект (.zip)»</strong> и <strong>распакуйте</strong> архив в Проводнике.{' '}
+                        <span className="text-amber-200">
+                          Важно: включите в Проводнике «Показывать скрытые файлы», чтобы видеть папку <code>.github</code>!
+                        </span>
+                      </li>
+                      <li>
+                        Откройте <strong>github.com</strong> в Chrome (удобнее включить в меню ⋮ галочку «Версия для ПК») и войдите или создайте бесплатный аккаунт.
+                      </li>
+                      <li>
+                        Нажмите <strong>«+»</strong> вверху справа → <strong>New repository</strong>, введите имя (например <code>coruscant-apk</code>) и нажмите <strong>Create repository</strong>.
+                      </li>
+                      <li>
+                        Нажмите синюю ссылку <strong>uploading an existing file</strong> и выберите <strong>всё содержимое</strong> изнутри распакованной папки (папки <code>app</code>, <code>.github</code> и файлы <code>build.gradle.kts</code>, <code>settings.gradle.kts</code>, <code>gradle.properties</code> — именно в корень, не сам .zip). Нажмите <strong>Commit changes</strong>.
+                      </li>
+                      <li>
+                        Перейдите сверху на вкладку <strong>Actions</strong>. Если папка <code>.github</code> не загрузилась, нажмите <em>set up a workflow yourself</em>, назовите файл <code>build-apk.yml</code> и вставьте код по кнопке ниже.
+                      </li>
+                      <li>
+                        В разделе <strong>Actions</strong> откройте <strong>Build Android 17 APK (Poco F6)</strong> → <strong>Run workflow</strong> (зелёная кнопка). Через 2–3 минуты нажмите на зелёный запуск ✅, прокрутите вниз до <strong>Artifacts</strong> и скачайте <strong>CoruscantHorizon-Android17-PocoF6-debug</strong> — внутри готовый <code>app-debug.apk</code>!
+                      </li>
+                    </ol>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyWorkflowYml}
+                      className="min-h-[38px] px-3 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-400/40 text-violet-100 text-xs font-medium inline-flex items-center justify-center gap-1.5"
+                    >
+                      {ymlCopied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{ymlCopied ? 'build-apk.yml скопирован!' : 'Скопировать build-apk.yml (если не видна .github)'}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Standalone Full HTML Game Export */}
+              <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Code2 className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="text-xs font-semibold text-white truncate">Полная игра в одном HTML</span>
+                  </div>
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/25 shrink-0">
+                    Full .html
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Скачайте <code className="text-amber-300 bg-black/40 px-1 py-0.5 rounded">cyber_horizon.html</code> — это точная копия текущей игры с полной 3D-графикой, планетами, спутницей, кафе и отелями. Работает локально без интернета.
+                </p>
+
+                {copyFeedback && (
+                  <div className="rounded-xl bg-amber-500/15 border border-amber-400/40 p-2 text-xs text-amber-100 flex items-center gap-2">
+                    <Check className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                    <span>{copyFeedback}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={exportBusy !== null}
+                    onClick={handleCopyHtml}
+                    className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 ${
+                      htmlCopied
+                        ? 'bg-emerald-500/25 border-emerald-400/50 text-emerald-100'
+                        : 'bg-amber-500/20 border-amber-400/40 text-amber-100 hover:bg-amber-500/30'
+                    }`}
+                  >
+                    {htmlCopied ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-300" />
+                        <span>Скопировано в буфер!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-amber-300" />
+                        <span>{exportBusy === 'copy' ? 'Подготовка…' : 'Скопировать код (HTML)'}</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={exportBusy !== null}
+                    onClick={handleDownloadHtml}
+                    className="min-h-[44px] px-3 rounded-xl border border-sky-400/40 bg-sky-500/20 hover:bg-sky-500/30 disabled:opacity-50 text-sky-100 text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <Download className="w-4 h-4 text-sky-300" />
+                    <span>{exportBusy === 'html' ? 'Сохранение…' : 'Скачать cyber_horizon.html'}</span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* Bottom Natural Thumb Reach Zone — Guaranteed zero horizontal overflow on Poco F6 */}
       {!hudHidden && (
         <div className="relative z-10 w-full flex flex-col gap-2 min-w-0">
+          {/* Orbital City & Landing Site Selector Strip */}
+          {inOrbitMode && snapshot.landingSites.length > 0 && !settingsOpen && !journalOpen && (
+            <div
+              className="pointer-events-auto self-center w-full max-w-[680px] rounded-2xl bg-[#090d14]/88 border border-cyan-400/35 shadow-2xl p-2 flex flex-col gap-2"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Orbit className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+                  <span className="text-[11px] sm:text-xs font-semibold text-white truncate">
+                    Выберите точку посадки · {snapshot.planetName}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onDescendToSite()}
+                  className="min-h-[34px] px-3 rounded-xl bg-emerald-500/35 hover:bg-emerald-500/45 border border-emerald-300/70 text-[11px] sm:text-xs font-semibold text-white inline-flex items-center gap-1.5 shrink-0 active:scale-95 transition-transform"
+                >
+                  <PlaneLanding className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>Приземлиться</span>
+                </button>
+              </div>
+              <div className="flex items-stretch gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                {snapshot.landingSites.map((site) => {
+                  const selected = snapshot.selectedLandingSiteId === site.id;
+                  return (
+                    <button
+                      key={site.id}
+                      type="button"
+                      onClick={() => onSelectLandingSite(site.id)}
+                      className={`min-h-[46px] min-w-[142px] sm:min-w-[160px] px-2.5 py-1.5 rounded-xl border text-left flex flex-col justify-center gap-0.5 shrink-0 transition-all active:scale-95 ${
+                        selected
+                          ? 'bg-emerald-500/25 border-emerald-300/80 text-white shadow'
+                          : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/50"
+                          style={{ backgroundColor: site.accentHex }}
+                        />
+                        <span className="text-[11px] font-semibold truncate">{site.name}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 truncate">{site.subtitle}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Upper Action Strip on Portrait (< 640px) */}
           <div className="flex items-center justify-between gap-1 w-full sm:hidden min-w-0">
             <div className="pointer-events-auto flex items-center gap-1 flex-wrap min-w-0">
@@ -1857,11 +2155,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                       pressedMap.throttle
                         ? isWalking
                           ? 'bg-emerald-500/45 border-emerald-300 text-white'
-                          : inSpace
+                          : inDeepSpace
                             ? 'bg-violet-500/45 border-violet-300 text-white'
-                            : isAir
-                              ? 'bg-sky-500/45 border-sky-300 text-white'
-                              : 'bg-amber-500/45 border-amber-300 text-white'
+                            : inOrbitMode
+                              ? 'bg-cyan-500/45 border-cyan-300 text-white'
+                              : isAir
+                                ? 'bg-sky-500/45 border-sky-300 text-white'
+                                : 'bg-amber-500/45 border-amber-300 text-white'
                         : 'bg-[#090d14]/84 border-white/20 text-white'
                     }`}
                   >
@@ -1871,6 +2171,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {!isOnline && !hudHidden && (
+        <div className="pointer-events-none fixed bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 rounded-xl bg-amber-500/90 px-3 py-1.5 text-[11px] font-semibold text-slate-950 shadow-lg">
+          <WifiOff className="w-3.5 h-3.5 shrink-0" />
+          <span>Офлайн-режим · Работает из кэша</span>
         </div>
       )}
     </div>
