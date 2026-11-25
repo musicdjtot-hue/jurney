@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   BedDouble,
+  Bot,
   Building2,
   Car,
   Check,
@@ -23,6 +24,8 @@ import {
   FolderOpen,
   Footprints,
   Heart,
+  Home,
+  Lightbulb,
   MapPin,
   Maximize2,
   MessageCircle,
@@ -43,9 +46,12 @@ import {
   Sparkles,
   Sun,
   Telescope,
+  Thermometer,
+  Tv,
   UserCheck,
   UserX,
   WifiOff,
+  Wind,
   X,
   Zap,
 } from 'lucide-react';
@@ -83,6 +89,10 @@ interface TouchControlsProps {
   onEnterCafe: () => void;
   onEnterHotel: () => void;
   onEnterObservatory: () => void;
+  onEnterSerbos: () => void;
+  onTalkSerbos: () => void;
+  onLookAdamchik: () => void;
+  onDrinkSerbosCoffee: () => void;
   onExitInterior: () => void;
   onSitInterior: () => void;
   onLieBed: () => void;
@@ -94,6 +104,12 @@ interface TouchControlsProps {
   onSelectQuest: (id: string) => void;
   onSkipQuest: () => void;
   onSelectCabinTheme: (id: CabinThemeId) => void;
+  onToggleAutopilot: () => void;
+  onToggleCabinTint: () => void;
+  onToggleCabinRoofLight: () => void;
+  onToggleCabinSeatsRecline: () => void;
+  onToggleCabinMonitor: () => void;
+  onToggleDoorWindow: () => void;
   onTriggerBoost: () => void;
   onToggleFlight: () => void;
   onEnterOrbit: () => void;
@@ -186,6 +202,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onEnterCafe,
   onEnterHotel,
   onEnterObservatory,
+  onEnterSerbos,
+  onTalkSerbos,
+  onLookAdamchik,
+  onDrinkSerbosCoffee,
   onExitInterior,
   onSitInterior,
   onLieBed,
@@ -197,6 +217,12 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onSelectQuest,
   onSkipQuest,
   onSelectCabinTheme,
+  onToggleAutopilot,
+  onToggleCabinTint,
+  onToggleCabinRoofLight,
+  onToggleCabinSeatsRecline,
+  onToggleCabinMonitor,
+  onToggleDoorWindow,
   onTriggerBoost,
   onToggleFlight,
   onEnterOrbit,
@@ -244,6 +270,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const cafeMenu = getCafeMenu(snapshot.biomeId);
 
   const [companionOpen, setCompanionOpen] = useState(false);
+  const [cabinOpen, setCabinOpen] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
   const [ymlCopied, setYmlCopied] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -448,8 +475,15 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   React.useEffect(() => {
     if (settingsOpen || journalOpen || cafeOpen) {
       setCompanionOpen(false);
+      setCabinOpen(false);
     }
   }, [settingsOpen, journalOpen, cafeOpen]);
+
+  React.useEffect(() => {
+    if (insideInterior || isWalking) {
+      setCabinOpen(false);
+    }
+  }, [insideInterior, isWalking]);
 
   const updateSteerFromClientX = (clientX: number) => {
     const el = steerPadRef.current;
@@ -546,9 +580,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <span>
                 {snapshot.interiorMode === 'cafe'
                   ? 'Сесть за столик'
-                  : snapshot.interiorMode === 'observatory'
-                    ? 'На скамью'
-                    : 'На диван'}
+                  : snapshot.interiorMode === 'serbos'
+                    ? 'За стол к Сербосу'
+                    : snapshot.interiorMode === 'observatory'
+                      ? 'На скамью'
+                      : 'На диван'}
               </span>
             </button>
           )}
@@ -587,6 +623,44 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <Coffee className={`${iconCls} text-rose-300`} />
               <span>{compact ? 'Кофе' : 'Меню кофе'}</span>
             </button>
+          )}
+
+          {snapshot.interiorMode === 'serbos' && (
+            <>
+              <button
+                type="button"
+                onClick={onDrinkSerbosCoffee}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={`${btnCls} ${
+                  snapshot.serbosCoffeeServed
+                    ? 'bg-amber-500/35 border-amber-300 text-white'
+                    : 'bg-amber-500/25 border-amber-400/55 text-amber-100'
+                }`}
+              >
+                <Coffee className={`${iconCls} text-amber-300`} />
+                <span>{snapshot.serbosCoffeeServed ? 'Кофе ✓' : compact ? 'Кофе с Сербосом' : 'Пить кофе с Сербосом'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onLookAdamchik}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={`${btnCls} bg-cyan-500/25 border-cyan-400/55 text-cyan-100`}
+              >
+                <Sparkles className={`${iconCls} text-cyan-300`} />
+                <span>{compact ? 'Адамчик ИИ' : 'Посмотреть на Адамчика ИИ'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onTalkSerbos}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={`${btnCls} bg-emerald-500/25 border-emerald-400/55 text-emerald-100`}
+              >
+                <MessageCircle className={`${iconCls} text-emerald-300`} />
+                <span>{compact ? 'Сербос' : 'Спросить Сербоса'}</span>
+              </button>
+            </>
           )}
 
           {snapshot.interiorMode === 'hotel' && (
@@ -687,7 +761,61 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.nearbySpecialSpot && !inAnySpace && (
+        {snapshot.canToggleAutopilot && !inAnySpace && (
+          <button
+            type="button"
+            onClick={onToggleAutopilot}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.autopilotActive
+                ? 'bg-cyan-500/35 border-cyan-300 text-white shadow-[0_0_14px_rgba(34,211,238,0.3)]'
+                : 'bg-[#090d14]/84 border-white/20 text-cyan-100'
+            }`}
+          >
+            <Bot className={`${iconCls} text-cyan-300`} />
+            <span>{snapshot.autopilotActive ? 'Автопилот ✓' : 'Автопилот'}</span>
+          </button>
+        )}
+
+        {snapshot.lookingAtDoorSide !== null && !isWalking && (
+          <button
+            type="button"
+            onClick={onToggleDoorWindow}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              !snapshot.canOpenWindow
+                ? 'bg-slate-800/85 border-slate-500/40 text-slate-300'
+                : (snapshot.lookingAtDoorSide === 'left' ? snapshot.leftWindowOpen : snapshot.rightWindowOpen)
+                  ? 'bg-sky-500/35 border-sky-300 text-white'
+                  : 'bg-[#090d14]/88 border-sky-400/50 text-sky-100'
+            }`}
+          >
+            <Wind className={`${iconCls} text-sky-300`} />
+            <span>
+              {!snapshot.canOpenWindow
+                ? 'Окно 🔒'
+                : (snapshot.lookingAtDoorSide === 'left' ? snapshot.leftWindowOpen : snapshot.rightWindowOpen)
+                  ? 'Закрыть окно'
+                  : 'Открыть окно'}
+            </span>
+          </button>
+        )}
+
+        {snapshot.nearbySerbosName && !inAnySpace && (
+          <button
+            type="button"
+            onClick={onEnterSerbos}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-amber-500/35 border-amber-300 text-amber-50`}
+          >
+            <Home className={`${iconCls} text-amber-200`} />
+            <span>{compact ? 'К Сербосу' : 'Зайти к Сербосу'}</span>
+          </button>
+        )}
+
+        {snapshot.nearbySpecialSpot &&
+          !(snapshot.nearbySpecialSpot.kind === 'serbos_house' && snapshot.nearbySerbosName) &&
+          !inAnySpace && (
           <button
             type="button"
             onClick={onInteractSpecialSpot}
@@ -914,9 +1042,24 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
+      {/* Serbos House Dialog Banner */}
+      {!hudHidden && snapshot.interiorMode === 'serbos' && snapshot.serbosDialogLine && (
+        <div className="pointer-events-none fixed top-20 sm:top-16 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] w-fit">
+          <div className="px-4 py-2 rounded-2xl bg-[#18120b]/94 border border-amber-400/45 text-xs sm:text-sm text-amber-100 shadow-2xl text-center leading-snug">
+            {snapshot.serbosDialogLine}
+          </div>
+        </div>
+      )}
+
       {/* Cozy Companion Note Speech Bubble */}
       {!hudHidden && snapshot.companionNote && snapshot.hasCompanion && (
-        <div className="pointer-events-none fixed top-28 sm:top-24 left-1/2 -translate-x-1/2 z-20 max-w-[90vw] w-fit">
+        <div
+          className={`pointer-events-none fixed ${
+            snapshot.interiorMode === 'serbos' && snapshot.serbosDialogLine
+              ? 'top-36 sm:top-32'
+              : 'top-28 sm:top-24'
+          } left-1/2 -translate-x-1/2 z-20 max-w-[90vw] w-fit`}
+        >
           <div className="px-3.5 py-2 rounded-2xl bg-[#130d16]/92 border border-rose-300/35 text-xs text-rose-100 shadow-xl text-center leading-snug">
             {snapshot.companionNote}
           </div>
@@ -950,7 +1093,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             )}
           </div>
           {!insideInterior && (
-            <div className="mt-1 flex flex-wrap items-center gap-2.5 text-xs sm:text-sm text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs sm:text-sm text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
               <span className="font-mono-tabular font-semibold">{snapshot.speedKmh} км/ч</span>
               <span className="text-slate-400" aria-hidden="true">
                 ·
@@ -969,6 +1112,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               {!isWalking && (
                 <span className="px-2 py-0.5 rounded-md bg-white/10 border border-white/15 text-[11px] font-medium text-slate-200 truncate max-w-[140px]">
                   {snapshot.vehicleName}
+                </span>
+              )}
+              {!isWalking && (
+                <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-400/30 text-[11px] font-mono-tabular text-emerald-200">
+                  +{snapshot.cabinTempC}°C
                 </span>
               )}
               {snapshot.insideHangarName && (
@@ -1017,6 +1165,33 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0"
           onPointerDown={(e) => e.stopPropagation()}
         >
+          {!hudHidden && !insideInterior && !isWalking && (
+            <button
+              type="button"
+              onClick={() => {
+                if (settingsOpen) onToggleSettings();
+                if (journalOpen) onToggleJournal();
+                if (cafeOpen) onCloseCafe();
+                setCompanionOpen(false);
+                setCabinOpen((prev) => !prev);
+              }}
+              className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+                cabinOpen ||
+                snapshot.cabinTintDark ||
+                snapshot.cabinRoofLight ||
+                snapshot.cabinSeatsReclined ||
+                snapshot.cabinMonitorOpen
+                  ? 'bg-sky-500/25 border-sky-400/55 text-sky-100'
+                  : 'bg-[#090d14]/88 border-white/15 text-slate-100 hover:bg-[#111824]'
+              }`}
+              aria-label="Управление салоном"
+              aria-expanded={cabinOpen}
+            >
+              <Thermometer className="w-4 h-4 text-sky-300 shrink-0" />
+              <span className="hidden sm:inline">Салон</span>
+            </button>
+          )}
+
           {!hudHidden && (
             <button
               type="button"
@@ -1024,6 +1199,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 if (settingsOpen) onToggleSettings();
                 if (journalOpen) onToggleJournal();
                 if (cafeOpen) onCloseCafe();
+                setCabinOpen(false);
                 setCompanionOpen((prev) => !prev);
               }}
               className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
@@ -1079,6 +1255,117 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Hermetic Vehicle Cabin Controls Drawer */}
+      {cabinOpen && !hudHidden && !insideInterior && !isWalking && (
+        <div
+          className="relative z-10 pointer-events-auto self-center w-[min(440px,92vw)] max-h-[70dvh] overflow-y-auto touch-pan-y rounded-2xl bg-[#090d14]/95 border border-sky-400/30 shadow-2xl p-3.5 sm:p-4 flex flex-col gap-3 my-auto"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Thermometer className="w-4 h-4 text-emerald-300 shrink-0" />
+              <div className="min-w-0">
+                <h2 className="font-display text-sm font-semibold text-white truncate">
+                  Салон · +{snapshot.cabinTempC}°C
+                </h2>
+                <p className="text-[11px] text-emerald-300/90">
+                  Герметичный климат · Осадки не проникают внутрь
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCabinOpen(false)}
+              className="min-h-[40px] min-w-[40px] rounded-lg text-slate-300 hover:text-white hover:bg-white/10 inline-flex items-center justify-center shrink-0"
+              aria-label="Закрыть управление салоном"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onToggleCabinTint}
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.cabinTintDark
+                  ? 'bg-indigo-500/30 border-indigo-300 text-white'
+                  : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Moon className="w-4 h-4 text-indigo-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Полная тонировка</div>
+                <div className="text-[10px] text-slate-400">
+                  {snapshot.cabinTintDark ? 'Включена для сна' : 'Стёкла прозрачные'}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleCabinRoofLight}
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.cabinRoofLight
+                  ? 'bg-amber-500/30 border-amber-300 text-white'
+                  : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Lightbulb className="w-4 h-4 text-amber-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Свет на крыше</div>
+                <div className="text-[10px] text-slate-400">
+                  {snapshot.cabinRoofLight ? 'Включён в салоне' : 'Выключен'}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleCabinSeatsRecline}
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.cabinSeatsReclined
+                  ? 'bg-rose-500/30 border-rose-300 text-white'
+                  : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <BedDouble className="w-4 h-4 text-rose-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Разложить сиденья</div>
+                <div className="text-[10px] text-slate-400">
+                  {snapshot.cabinSeatsReclined ? 'Положение лёжа' : 'Обычная посадка'}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleCabinMonitor}
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.cabinMonitorOpen
+                  ? 'bg-sky-500/30 border-sky-300 text-white'
+                  : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Tv className="w-4 h-4 text-sky-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Выдвижной монитор</div>
+                <div className="text-[10px] text-slate-400">
+                  {snapshot.cabinMonitorOpen ? 'Фильм запущен' : 'Убран в крышу'}
+                </div>
+              </div>
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-[11px] text-slate-300 flex items-center justify-between gap-2">
+            <span>Поверните камеру к двери, чтобы открыть окно</span>
+            <span className="font-mono-tabular text-sky-200 shrink-0">
+              Л:{snapshot.leftWindowOpen ? 'откр' : 'закр'} · П:{snapshot.rightWindowOpen ? 'откр' : 'закр'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Companion Together Drawer */}
       {companionOpen && !hudHidden && (
@@ -1217,6 +1504,25 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   <div className="font-semibold">Зайти в {snapshot.nearbyObservatoryName}</div>
                   <div className="text-[11px] text-cyan-200/75">
                     Стеклянный купол, голограмма галактики и скамья для двоих
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {snapshot.nearbySerbosName && !insideInterior && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCompanionOpen(false);
+                  onEnterSerbos();
+                }}
+                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-amber-100"
+              >
+                <Home className="w-4 h-4 text-amber-300 shrink-0" />
+                <div>
+                  <div className="font-semibold">Зайти к Сербосу у озера</div>
+                  <div className="text-[11px] text-amber-200/75">
+                    Посмотреть на Адамчика ИИ и попить кофе за столом
                   </div>
                 </div>
               </button>

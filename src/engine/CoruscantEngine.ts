@@ -22,7 +22,7 @@ import {
   type GameSaveData,
 } from './saveSystem';
 import { SkyAtmosphere } from './sky';
-import { CoruscantWorld } from './world';
+import { CoruscantWorld, getChunkRoadArms } from './world';
 import type {
   CabinThemeId,
   ControlInputs,
@@ -157,6 +157,29 @@ export class CoruscantEngine {
   private prevForwardSpeed = 0;
   private prevThrottleOrBoost = false;
   private prevBoostInput = false;
+
+  private autopilotActive = false;
+  private autopilotDirIndex = 0;
+  private autopilotLastIntersectionKey = '';
+  private autopilotInputs: ControlInputs = {
+    throttle: false,
+    brake: false,
+    steerLeft: false,
+    steerRight: false,
+    steerAxis: 0,
+    climb: false,
+    descend: false,
+    boost: false,
+  };
+  private cabinTintDark = false;
+  private cabinRoofLight = false;
+  private cabinSeatsReclined = false;
+  private cabinMonitorOpen = false;
+  private leftWindowOpen = false;
+  private rightWindowOpen = false;
+  private serbosCoffeeServed = false;
+  private serbosDialogLine: string | null = null;
+  private serbosDialogTimer = 0;
 
   constructor(
     container: HTMLElement,
@@ -305,20 +328,144 @@ export class CoruscantEngine {
 
   public toggleFlight(): void {
     if (this.interiorMode !== 'none') return;
+    this.autopilotActive = false;
     this.physics.toggleFlight();
   }
 
   public enterOrbitFromFlight(): void {
     if (this.interiorMode !== 'none') return;
+    this.autopilotActive = false;
     this.physics.launchToOrbit();
   }
 
   public launchToSpace(): void {
     if (this.interiorMode !== 'none') return;
+    this.autopilotActive = false;
     if (this.physics.flightState === 'orbit') {
       this.physics.launchFromOrbitToSpace();
     } else {
       this.physics.launchToSpace();
+    }
+  }
+
+  public toggleAutopilot(): void {
+    if (
+      this.interiorMode !== 'none' ||
+      this.physics.isWalking ||
+      this.physics.flightState !== 'road'
+    ) {
+      this.autopilotActive = false;
+      return;
+    }
+    if (this.autopilotActive) {
+      this.autopilotActive = false;
+      this.quests.showToast('Автопилот отключён', 2.2);
+      return;
+    }
+    const pos = this.physics.position;
+    const cx = Math.round(pos.x / 320);
+    const cz = Math.round(pos.z / 320);
+    const arms = getChunkRoadArms(cx, cz, this.world.getWorldSeed());
+    const fwdX = -Math.sin(this.physics.heading);
+    const fwdZ = -Math.cos(this.physics.heading);
+    const dirs = [
+      { idx: 0, ok: arms.n, fx: 0, fz: -1 },
+      { idx: 1, ok: arms.e, fx: 1, fz: 0 },
+      { idx: 2, ok: arms.s, fx: 0, fz: 1 },
+      { idx: 3, ok: arms.w, fx: -1, fz: 0 },
+    ];
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+    for (const d of dirs) {
+      if (!d.ok) continue;
+      const dot = fwdX * d.fx + fwdZ * d.fz;
+      if (dot > bestScore) {
+        bestScore = dot;
+        bestIdx = d.idx;
+      }
+    }
+    this.autopilotDirIndex = bestIdx;
+    this.autopilotLastIntersectionKey = '';
+    this.autopilotActive = true;
+    this.quests.showToast('Автопилот включён · Смотрите по сторонам', 3.2);
+  }
+
+  public toggleCabinTint(): void {
+    this.cabinTintDark = !this.cabinTintDark;
+    this.quests.showToast(
+      this.cabinTintDark ? 'Полная тонировка для сна включена' : 'Стёкла салона снова прозрачные',
+      2.4,
+    );
+    this.saveGame(false);
+  }
+
+  public toggleCabinRoofLight(): void {
+    this.cabinRoofLight = !this.cabinRoofLight;
+    this.quests.showToast(
+      this.cabinRoofLight ? 'Свет на крыше в салоне включён' : 'Свет на крыше выключен',
+      2.2,
+    );
+    this.saveGame(false);
+  }
+
+  public toggleCabinSeatsRecline(): void {
+    this.cabinSeatsReclined = !this.cabinSeatsReclined;
+    this.quests.showToast(
+      this.cabinSeatsReclined
+        ? 'Сиденья разложены для сна и отдыха'
+        : 'Сиденья возвращены в обычное положение',
+      2.6,
+    );
+    if (this.cabinSeatsReclined && this.cabinMonitorOpen && this.hasCompanion) {
+      this.quests.setCompanionNote(
+        '«Как уютно лежать вдвоём… И фильм, и тёплый салон!»',
+        4.8,
+      );
+    }
+    this.saveGame(false);
+  }
+
+  public toggleCabinMonitor(): void {
+    this.cabinMonitorOpen = !this.cabinMonitorOpen;
+    this.quests.showToast(
+      this.cabinMonitorOpen
+        ? 'Выдвижной монитор: фильм «Звёздный горизонт»'
+        : 'Выдвижной монитор убран',
+      2.6,
+    );
+    if (this.cabinMonitorOpen && this.hasCompanion) {
+      this.quests.setCompanionNote(
+        '«Включил фильм на потолочном экране! Давай посмотрим вместе».',
+        4.6,
+      );
+    }
+    this.saveGame(false);
+  }
+
+  private getLookingAtDoorSide(): 'left' | 'right' | null {
+    if (this.interiorMode !== 'none' || this.physics.isWalking) return null;
+    if (this.lookYaw > 0.46) return 'left';
+    if (this.lookYaw < -0.58) return 'right';
+    return null;
+  }
+
+  public toggleDoorWindow(): void {
+    const inSpaceLike =
+      this.physics.flightState === 'space' ||
+      this.physics.flightState === 'orbit' ||
+      this.physics.spaceFactor > 0.25;
+    if (inSpaceLike) {
+      this.quests.showToast('В космосе окна заблокированы — салон герметичен (+22°C)', 3.2);
+      return;
+    }
+    const side = this.getLookingAtDoorSide();
+    if (!side) return;
+    if (side === 'left') {
+      this.leftWindowOpen = !this.leftWindowOpen;
+      this.quests.showToast(this.leftWindowOpen ? 'Левое окно открыто' : 'Левое окно закрыто', 2.2);
+    } else {
+      this.rightWindowOpen = !this.rightWindowOpen;
+      this.quests.showToast(this.rightWindowOpen ? 'Правое окно открыто' : 'Правое окно закрыто', 2.2);
     }
   }
 
@@ -465,6 +612,10 @@ export class CoruscantEngine {
       questSeq: qState.questSeq,
       activeQuest: qState.activeQuest,
       questPool: qState.questPool,
+      cabinTintDark: this.cabinTintDark,
+      cabinRoofLight: this.cabinRoofLight,
+      cabinSeatsReclined: this.cabinSeatsReclined,
+      cabinMonitorOpen: this.cabinMonitorOpen,
     };
     const ok = writeGameSave(data);
     if (ok) {
@@ -501,6 +652,16 @@ export class CoruscantEngine {
     }
     this.quests = new QuestManager();
     this.hasCompanion = true;
+    this.autopilotActive = false;
+    this.cabinTintDark = false;
+    this.cabinRoofLight = false;
+    this.cabinSeatsReclined = false;
+    this.cabinMonitorOpen = false;
+    this.leftWindowOpen = false;
+    this.rightWindowOpen = false;
+    this.serbosCoffeeServed = false;
+    this.serbosDialogLine = null;
+    this.serbosDialogTimer = 0;
     this.timePreset = 'auto';
     this.timeOfDay = 0.69;
     this.weatherSetting = 'auto';
@@ -551,6 +712,16 @@ export class CoruscantEngine {
       this.interiorLabel = null;
       this.activeSeat = null;
     }
+    this.autopilotActive = false;
+    this.leftWindowOpen = false;
+    this.rightWindowOpen = false;
+    this.serbosCoffeeServed = false;
+    this.serbosDialogLine = null;
+    this.serbosDialogTimer = 0;
+    this.cabinTintDark = Boolean(save.cabinTintDark);
+    this.cabinRoofLight = Boolean(save.cabinRoofLight);
+    this.cabinSeatsReclined = Boolean(save.cabinSeatsReclined);
+    this.cabinMonitorOpen = Boolean(save.cabinMonitorOpen);
     this.hasCompanion = save.hasCompanion ?? true;
     this.timePreset = save.timePreset ?? 'auto';
     this.timeOfDay = typeof save.timeOfDay === 'number' ? save.timeOfDay : 0.69;
@@ -575,7 +746,11 @@ export class CoruscantEngine {
       this.camera.rotation.set(0, 0, 0);
       this.walkerGroup.add(this.camera);
     } else {
-      this.camera.position.set(-0.36, 1.13, 0.08);
+      this.camera.position.set(
+        -0.36,
+        this.cabinSeatsReclined ? 0.87 : 1.13,
+        this.cabinSeatsReclined ? 0.28 : 0.08,
+      );
       this.camera.rotation.set(0, 0, 0);
       this.vehicleGroup.add(this.camera);
     }
@@ -636,6 +811,7 @@ export class CoruscantEngine {
 
   public exitVehicle(): void {
     if (this.interiorMode !== 'none') return;
+    this.autopilotActive = false;
     if (!this.physics.exitVehicle()) return;
     this.walkerGroup.position.copy(this.physics.walkerPos);
     this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
@@ -652,7 +828,11 @@ export class CoruscantEngine {
     if (this.interiorMode !== 'none') return;
     if (!this.physics.enterVehicle()) return;
     this.quests.holdHands = false;
-    this.camera.position.set(-0.36, 1.13, 0.08);
+    this.camera.position.set(
+      -0.36,
+      this.cabinSeatsReclined ? 0.87 : 1.13,
+      this.cabinSeatsReclined ? 0.28 : 0.08,
+    );
     this.camera.rotation.set(0, 0, 0);
     this.vehicleGroup.add(this.camera);
     this.lookYaw = 0;
@@ -718,7 +898,55 @@ export class CoruscantEngine {
     return true;
   }
 
-  private enterInterior(mode: 'cafe' | 'hotel' | 'observatory', label: string): void {
+  public enterNearbySerbos(): boolean {
+    if (
+      this.interiorMode !== 'none' ||
+      this.physics.flightState === 'space' ||
+      this.physics.flightState === 'orbit' ||
+      this.physics.position.y >= 8
+    ) {
+      return false;
+    }
+    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
+    const nearest = this.world.getNearestSerbosHouse(refPos.x, refPos.z);
+    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+    if (!nearest || nearest.distance > 34 || (!this.physics.isWalking && speedKmh >= 34)) {
+      return false;
+    }
+    this.enterInterior('serbos', nearest.name);
+    this.quests.onSerbosEntered();
+    this.serbosCoffeeServed = false;
+    this.serbosDialogLine =
+      'Сербос: «Добро пожаловать! Я люблю всех вас, а это мой любимый сынок Адамчик ИИ!»';
+    this.serbosDialogTimer = 7.0;
+    return true;
+  }
+
+  public talkToSerbos(): void {
+    if (this.interiorMode !== 'serbos') return;
+    this.serbosDialogLine = this.quests.talkToSerbos();
+    this.serbosDialogTimer = 7.0;
+  }
+
+  public lookAtAdamchik(): void {
+    if (this.interiorMode !== 'serbos') return;
+    this.serbosDialogLine = this.quests.lookAtAdamchik();
+    this.serbosDialogTimer = 7.0;
+  }
+
+  public drinkCoffeeWithSerbos(): void {
+    if (this.interiorMode !== 'serbos') return;
+    if (this.interiorPose === 'stand') {
+      this.sitAtNearbySeat();
+    }
+    this.serbosCoffeeServed = true;
+    this.interior.setSerbosCoffeeServed(true);
+    this.serbosDialogLine = this.quests.drinkCoffeeWithSerbos();
+    this.serbosDialogTimer = 7.0;
+  }
+
+  private enterInterior(mode: 'cafe' | 'hotel' | 'observatory' | 'serbos', label: string): void {
+    this.autopilotActive = false;
     if (!this.physics.isWalking) {
       if (!this.physics.exitVehicle()) return;
       this.enteredFromCar = true;
@@ -761,6 +989,8 @@ export class CoruscantEngine {
       if (this.hasCompanion) {
         this.quests.setCompanionNote('«Как тут уютно! Пойдём займём столик у окна?»', 4.5);
       }
+    } else if (mode === 'serbos') {
+      this.quests.showToast('Дом Сербоса у озера', 3.0);
     } else if (mode === 'observatory') {
       this.quests.showToast(`Обсерватория · ${label}`, 3.0);
       if (this.hasCompanion) {
@@ -781,6 +1011,9 @@ export class CoruscantEngine {
     this.interiorPose = 'stand';
     this.interiorLabel = null;
     this.activeSeat = null;
+    this.serbosCoffeeServed = false;
+    this.serbosDialogLine = null;
+    this.serbosDialogTimer = 0;
     this.sleepAnimTimer = 0;
     this.sleepFade = 0;
     this.sleepMidpointApplied = false;
@@ -837,9 +1070,11 @@ export class CoruscantEngine {
       this.quests.setCompanionNote(
         this.interiorMode === 'cafe'
           ? '«Я напротив! Выбирай кофе, а я пока посмотрю в окно».'
-          : this.interiorMode === 'observatory'
-            ? '«Как здорово смотреть на звёзды и голограмму галактики вместе с тобой».'
-            : '«Удобный диван… Люблю просто сидеть так рядом с тобой».',
+          : this.interiorMode === 'serbos'
+            ? '«Как хорошо сидеть у Сербоса за одним столом у озера! Попьём кофе вместе?»'
+            : this.interiorMode === 'observatory'
+              ? '«Как здорово смотреть на звёзды и голограмму галактики вместе с тобой».'
+              : '«Удобный диван… Люблю просто сидеть так рядом с тобой».',
         4.6,
       );
     }
@@ -887,6 +1122,9 @@ export class CoruscantEngine {
       if (this.interiorMode === 'observatory') {
         this.physics.walkerPos.set(0, 0, 3.25);
         this.physics.companionPos.set(0.85, 0, 3.3);
+      } else if (this.interiorMode === 'serbos') {
+        this.physics.walkerPos.set(-0.6, 0, 0.9);
+        this.physics.companionPos.set(0.55, 0, 0.95);
       } else if (this.activeSeat.tableIndex >= 0) {
         // Café table: step back behind the chair clear of table collider
         this.physics.walkerPos.set(
@@ -1220,14 +1458,98 @@ export class CoruscantEngine {
     }
     this.weatherBlend = Math.min(1, this.weatherBlend + delta * 0.35);
 
+    if (this.serbosDialogTimer > 0) {
+      this.serbosDialogTimer = Math.max(0, this.serbosDialogTimer - delta);
+      if (this.serbosDialogTimer === 0) {
+        this.serbosDialogLine = null;
+      }
+    }
+
     const insideInterior = this.interiorMode !== 'none';
     const walkObstacles = insideInterior
       ? this.interior.getObstacles(this.interiorMode)
       : this.world.getNearbyBuildings();
 
+    // Cancel autopilot if manual controls are used or vehicle leaves ground road
+    if (this.autopilotActive) {
+      const manualDriverInput =
+        this.inputs.throttle ||
+        this.inputs.brake ||
+        this.inputs.steerLeft ||
+        this.inputs.steerRight ||
+        Math.abs(this.inputs.steerAxis) > 0.16;
+      if (
+        manualDriverInput ||
+        insideInterior ||
+        this.physics.isWalking ||
+        this.physics.flightState !== 'road'
+      ) {
+        this.autopilotActive = false;
+        if (manualDriverInput) {
+          this.quests.showToast('Автопилот передал управление вам', 2.0);
+        }
+      }
+    }
+
+    let driveInputs = this.inputs;
+    if (this.autopilotActive) {
+      const pos = this.physics.position;
+      const cx = Math.round(pos.x / 320);
+      const cz = Math.round(pos.z / 320);
+      const centerDist = Math.hypot(pos.x - cx * 320, pos.z - cz * 320);
+      const arms = getChunkRoadArms(cx, cz, this.world.getWorldSeed());
+      const dirs = [
+        { idx: 0, ok: arms.n, fx: 0, fz: -1, heading: 0 },
+        { idx: 1, ok: arms.e, fx: 1, fz: 0, heading: -Math.PI / 2 },
+        { idx: 2, ok: arms.s, fx: 0, fz: 1, heading: Math.PI },
+        { idx: 3, ok: arms.w, fx: -1, fz: 0, heading: Math.PI / 2 },
+      ];
+      const interKey = `${cx},${cz}`;
+      if (centerDist < 22 && this.autopilotLastIntersectionKey !== interKey) {
+        this.autopilotLastIntersectionKey = interKey;
+        const opposite = (this.autopilotDirIndex + 2) % 4;
+        const forwardOk = dirs[this.autopilotDirIndex].ok;
+        const turns = dirs.filter(
+          (d) => d.ok && d.idx !== opposite && d.idx !== this.autopilotDirIndex,
+        );
+        if (!forwardOk || (turns.length > 0 && Math.abs(cx * 7 + cz * 13) % 5 === 0)) {
+          const pick =
+            turns[Math.abs(cx + cz) % Math.max(1, turns.length)] ??
+            dirs.find((d) => d.ok) ??
+            dirs[0];
+          this.autopilotDirIndex = pick.idx;
+        }
+      } else if (centerDist > 42) {
+        this.autopilotLastIntersectionKey = '';
+      }
+
+      const activeDir = dirs[this.autopilotDirIndex];
+      const rx = -activeDir.fz;
+      const rz = activeDir.fx;
+      const laneRefX = cx * 320 + rx * 8.5;
+      const laneRefZ = cz * 320 + rz * 8.5;
+      const crossTrackErr = (pos.x - laneRefX) * rx + (pos.z - laneRefZ) * rz;
+      const desiredHeading =
+        activeDir.heading + THREE.MathUtils.clamp(crossTrackErr * 0.085, -0.45, 0.45);
+      let headingErr = desiredHeading - this.physics.heading;
+      while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+      while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+
+      const speedNowKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+      this.autopilotInputs.throttle = speedNowKmh < 68;
+      this.autopilotInputs.brake = speedNowKmh > 78;
+      this.autopilotInputs.steerLeft = false;
+      this.autopilotInputs.steerRight = false;
+      this.autopilotInputs.steerAxis = THREE.MathUtils.clamp(headingErr * 2.1, -1, 1);
+      this.autopilotInputs.climb = false;
+      this.autopilotInputs.descend = false;
+      this.autopilotInputs.boost = false;
+      driveInputs = this.autopilotInputs;
+    }
+
     this.physics.update(
       delta,
-      this.inputs,
+      driveInputs,
       this.activeWeather,
       elapsed,
       walkObstacles,
@@ -1248,6 +1570,12 @@ export class CoruscantEngine {
     const inSpace = this.physics.flightState === 'space';
     const inOrbitMode = this.physics.flightState === 'orbit';
     const inSpaceView = inSpace || inOrbitMode;
+
+    if ((inSpaceView || this.physics.spaceFactor > 0.25) && (this.leftWindowOpen || this.rightWindowOpen)) {
+      this.leftWindowOpen = false;
+      this.rightWindowOpen = false;
+      this.quests.showToast('Окна автоматически закрыты — герметизация (+22°C)', 3.0);
+    }
 
     if (this.prevFlightState !== 'orbit' && inOrbitMode) {
       const sites = getPlanetLandingSites(this.physics.activePlanetId);
@@ -1351,9 +1679,10 @@ export class CoruscantEngine {
       }
     } else {
       const shouldAutoCenter =
-        throttleJustPressed ||
-        (this.lookPointerId === null &&
-          (throttleOrBoost || (speedDelta > 0.05 && Math.abs(this.physics.forwardSpeed) > 6)));
+        !this.autopilotActive &&
+        (throttleJustPressed ||
+          (this.lookPointerId === null &&
+            (throttleOrBoost || (speedDelta > 0.05 && Math.abs(this.physics.forwardSpeed) > 6))));
 
       if (shouldAutoCenter) {
         this.targetLookYaw = 0;
@@ -1365,10 +1694,17 @@ export class CoruscantEngine {
       this.lookYaw = THREE.MathUtils.damp(this.lookYaw, this.targetLookYaw, lookSpeed, delta);
       this.lookPitch = THREE.MathUtils.damp(this.lookPitch, this.targetLookPitch, lookSpeed, delta);
 
+      const camTargetY = this.cabinSeatsReclined ? 0.87 : 1.13;
+      const camTargetZ = this.cabinSeatsReclined ? 0.28 : 0.08;
+      this.camera.position.x = -0.36;
+      this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, camTargetY, 6, delta);
+      this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, camTargetZ, 6, delta);
+
+      const basePitch = this.cabinSeatsReclined ? 0.14 : -0.025;
       const turnLook = this.physics.steerAngle * 0.075;
       this.camera.rotation.order = 'YXZ';
       this.camera.rotation.y = this.lookYaw + turnLook;
-      this.camera.rotation.x = this.lookPitch - 0.025;
+      this.camera.rotation.x = this.lookPitch + basePitch;
     }
 
     const companionPose: CompanionPose =
@@ -1593,6 +1929,14 @@ export class CoruscantEngine {
         this.quests.cabinTheme,
         boostActive,
         Boolean(hangarHit),
+        {
+          cabinTintDark: this.cabinTintDark,
+          cabinRoofLight: this.cabinRoofLight,
+          cabinSeatsReclined: this.cabinSeatsReclined,
+          cabinMonitorOpen: this.cabinMonitorOpen,
+          leftWindowOpen: this.leftWindowOpen,
+          rightWindowOpen: this.rightWindowOpen,
+        },
       );
     }
 
@@ -1642,6 +1986,25 @@ export class CoruscantEngine {
         nearestSpecial && nearestSpecial.distance <= 34 && (isWalking || speedKmh < 34)
           ? nearestSpecial.spot
           : null;
+
+      const nearestSerbos =
+        !insideInterior && !inSpaceView && this.physics.position.y < 8
+          ? this.world.getNearestSerbosHouse(activePos.x, activePos.z)
+          : null;
+      const nearbySerbosName =
+        nearestSerbos && nearestSerbos.distance <= 34 && (isWalking || speedKmh < 34)
+          ? nearestSerbos.name
+          : null;
+
+      const lookingAtDoorSide = this.getLookingAtDoorSide();
+      const canToggleAutopilot =
+        !insideInterior && !isWalking && this.physics.flightState === 'road';
+      const canOpenWindow =
+        !insideInterior &&
+        !isWalking &&
+        !inSpaceView &&
+        this.physics.spaceFactor <= 0.25 &&
+        lookingAtDoorSide !== null;
 
       const nearbyVehiclePickup: NearbyVehiclePickup | null =
         !insideInterior && !inSpaceView && this.physics.position.y < 8 && (isWalking || speedKmh < 38)
@@ -1763,6 +2126,7 @@ export class CoruscantEngine {
         nearbyCafeName,
         nearbyHotelName,
         nearbyObservatoryName,
+        nearbySerbosName,
         nearbySpecialSpot,
         nearbyVehiclePickup,
         insideHangarName: hangarHit ? hangarHit.name : null,
@@ -1772,6 +2136,8 @@ export class CoruscantEngine {
         canSitNearby,
         canLieNearby,
         canExitInterior,
+        serbosCoffeeServed: this.serbosCoffeeServed,
+        serbosDialogLine: this.serbosDialogLine,
         holdHands: this.quests.holdHands && this.hasCompanion,
         sleepFade: this.sleepFade,
         companionNote: this.quests.getCompanionNote(),
@@ -1781,6 +2147,17 @@ export class CoruscantEngine {
         vehicleName: this.quests.getCurrentVehicleName(),
         availableVehicles: this.quests.getVehicleCatalog(),
         pedestriansHitCount: this.quests.pedestriansHitCount,
+        autopilotActive: this.autopilotActive,
+        canToggleAutopilot,
+        cabinTempC: 22,
+        cabinTintDark: this.cabinTintDark,
+        cabinRoofLight: this.cabinRoofLight,
+        cabinSeatsReclined: this.cabinSeatsReclined,
+        cabinMonitorOpen: this.cabinMonitorOpen,
+        lookingAtDoorSide,
+        leftWindowOpen: this.leftWindowOpen,
+        rightWindowOpen: this.rightWindowOpen,
+        canOpenWindow,
         toastMessage: this.quests.getToast(),
         saveMeta,
       });

@@ -14,7 +14,7 @@ export type PlanetId = string;
 
 export type CabinThemeId = 'auto' | 'amber' | 'ice' | 'emerald' | 'rose' | 'violet';
 
-export type InteriorMode = 'none' | 'cafe' | 'hotel' | 'observatory';
+export type InteriorMode = 'none' | 'cafe' | 'hotel' | 'observatory' | 'serbos';
 
 export type InteriorPose = 'stand' | 'sit' | 'lie';
 
@@ -186,6 +186,7 @@ export interface SimulationSnapshot {
   nearbyCafeName: string | null;
   nearbyHotelName: string | null;
   nearbyObservatoryName: string | null;
+  nearbySerbosName: string | null;
   nearbySpecialSpot: SpecialSpotInfo | null;
   nearbyVehiclePickup: NearbyVehiclePickup | null;
   insideHangarName: string | null;
@@ -198,6 +199,19 @@ export interface SimulationSnapshot {
   holdHands: boolean;
   sleepFade: number;
   companionNote: string | null;
+  serbosCoffeeServed: boolean;
+  serbosDialogLine: string | null;
+  autopilotActive: boolean;
+  canToggleAutopilot: boolean;
+  cabinTempC: number;
+  cabinTintDark: boolean;
+  cabinRoofLight: boolean;
+  cabinSeatsReclined: boolean;
+  cabinMonitorOpen: boolean;
+  lookingAtDoorSide: 'left' | 'right' | null;
+  leftWindowOpen: boolean;
+  rightWindowOpen: boolean;
+  canOpenWindow: boolean;
   cabinTheme: CabinThemeId;
   cabinThemes: CabinThemeOption[];
   vehicleId: VehicleTypeId;

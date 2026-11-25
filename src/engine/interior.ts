@@ -23,23 +23,30 @@ export interface InteriorBedAnchor {
 const CAFE_BOUNDS = { minX: -5.8, maxX: 5.8, minZ: -4.8, maxZ: 4.9 };
 const HOTEL_BOUNDS = { minX: -5.4, maxX: 5.4, minZ: -4.7, maxZ: 4.4 };
 const OBS_BOUNDS = { minX: -6.0, maxX: 6.0, minZ: -5.2, maxZ: 5.1 };
+const SERBOS_BOUNDS = { minX: -5.8, maxX: 5.8, minZ: -4.8, maxZ: 4.8 };
 
 export class InteriorScene {
   public readonly group = new THREE.Group();
   private cafeGroup = new THREE.Group();
   private hotelGroup = new THREE.Group();
   private observatoryGroup = new THREE.Group();
+  private serbosGroup = new THREE.Group();
   private orreryPlanets: { pivot: THREE.Group; speed: number }[] = [];
+  private adamchikGroup = new THREE.Group();
+  private adamchikHalo: THREE.Mesh | null = null;
+  private serbosCoffeeGroup = new THREE.Group();
 
   private cafeSeats: InteriorSeatAnchor[] = [];
   private hotelSeats: InteriorSeatAnchor[] = [];
   private obsSeats: InteriorSeatAnchor[] = [];
+  private serbosSeats: InteriorSeatAnchor[] = [];
   private hotelBed: InteriorBedAnchor;
 
   private cafeCoffeeGroups: THREE.Group[] = [];
   private cafeObstacles: BuildingFootprint[] = [];
   private hotelObstacles: BuildingFootprint[] = [];
   private obsObstacles: BuildingFootprint[] = [];
+  private serbosObstacles: BuildingFootprint[] = [];
 
   private interiorKeyLight: THREE.PointLight;
   private interiorFillLight: THREE.PointLight;
@@ -78,10 +85,12 @@ export class InteriorScene {
     this.group.add(this.cafeGroup);
     this.group.add(this.hotelGroup);
     this.group.add(this.observatoryGroup);
+    this.group.add(this.serbosGroup);
 
     this.buildCafeRoom();
     this.hotelBed = this.buildHotelRoom();
     this.buildObservatoryRoom();
+    this.buildSerbosRoom();
   }
 
   private addBox(
@@ -500,22 +509,259 @@ export class InteriorScene {
     });
   }
 
+  private buildSerbosRoom(): void {
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x3b271a, roughness: 0.56, metalness: 0.08 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x26201c, roughness: 0.78, metalness: 0.08 });
+    const rugMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.92, metalness: 0.02 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b442a, roughness: 0.45, metalness: 0.08 });
+    const sweaterMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.76, metalness: 0.05 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.82 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf1c2a0, roughness: 0.55 });
+    const beardMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.78 });
+    const lakeViewMat = new THREE.MeshBasicMaterial({ color: 0x1d4ed8, transparent: true, opacity: 0.36 });
+    const warmGlow = new THREE.MeshBasicMaterial({ color: 0xfde68a, toneMapped: false });
+    const aiCyanMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    const aiGoldMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const aiBodyMat = new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.65,
+      roughness: 0.2,
+      metalness: 0.65,
+      transparent: true,
+      opacity: 0.9,
+    });
+    const cupMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.22 });
+    const coffeeMat = new THREE.MeshStandardMaterial({ color: 0x3c2010, roughness: 0.14 });
+
+    this.disposables.push(
+      floorMat,
+      wallMat,
+      rugMat,
+      woodMat,
+      sweaterMat,
+      pantsMat,
+      skinMat,
+      beardMat,
+      lakeViewMat,
+      warmGlow,
+      aiCyanMat,
+      aiGoldMat,
+      aiBodyMat,
+      cupMat,
+      coffeeMat,
+    );
+
+    // Warm floor, woven rug, walls, and timber ceiling
+    this.addBox(this.serbosGroup, 13.4, 0.2, 11.4, 0, -0.1, 0, floorMat);
+    this.addBox(this.serbosGroup, 5.6, 0.03, 4.4, -0.6, 0.015, -1.2, rugMat);
+    this.addBox(this.serbosGroup, 13.4, 0.2, 11.4, 0, 3.9, 0, wallMat);
+    this.addBox(this.serbosGroup, 0.3, 4.0, 11.4, -6.55, 1.9, 0, wallMat);
+    this.addBox(this.serbosGroup, 0.3, 4.0, 11.4, 6.55, 1.9, 0, wallMat);
+
+    // Back wall with doorway gap at x in [-1.1, 1.1]
+    this.addBox(this.serbosGroup, 5.2, 4.0, 0.3, -3.9, 1.9, 5.55, wallMat);
+    this.addBox(this.serbosGroup, 5.2, 4.0, 0.3, 3.9, 1.9, 5.55, wallMat);
+    this.addBox(this.serbosGroup, 2.4, 1.3, 0.3, 0, 3.25, 5.55, wallMat);
+    this.addBox(this.serbosGroup, 2.1, 0.12, 0.14, 0, 2.58, 5.38, warmGlow);
+
+    // Front panoramic window overlooking the blue lake & sky
+    this.addBox(this.serbosGroup, 13.4, 0.8, 0.3, 0, 0.4, -5.55, wallMat);
+    this.addBox(this.serbosGroup, 13.4, 0.55, 0.3, 0, 3.6, -5.55, wallMat);
+    for (const wx of [-3.2, 0, 3.2]) {
+      this.addBox(this.serbosGroup, 0.18, 2.8, 0.24, wx, 2.05, -5.55, wallMat);
+    }
+    this.addBox(this.serbosGroup, 12.6, 0.9, 0.04, 0, 1.25, -5.53, lakeViewMat);
+    this.addBox(this.serbosGroup, 12.6, 1.9, 0.04, 0, 2.55, -5.53, this.skyViewMat);
+
+    // Cozy fireplace hearth on left wall (-X)
+    this.addBox(this.serbosGroup, 0.95, 2.5, 2.2, -5.95, 1.25, -1.2, wallMat);
+    this.addBox(this.serbosGroup, 0.25, 0.72, 1.1, -5.48, 0.48, -1.2, warmGlow);
+    this.serbosObstacles.push({ x: -5.85, z: -1.2, halfW: 0.75, halfD: 1.2, height: 2.5 });
+
+    // Wooden coffee table at (-0.6, 0, -1.3)
+    const tx = -0.6;
+    const tz = -1.3;
+    this.addBox(this.serbosGroup, 1.65, 0.08, 1.05, tx, 0.74, tz, woodMat);
+    for (const lx of [-0.68, 0.68]) {
+      for (const lz of [-0.42, 0.42]) {
+        this.addBox(this.serbosGroup, 0.09, 0.72, 0.09, tx + lx, 0.36, tz + lz, woodMat);
+      }
+    }
+    this.addBox(this.serbosGroup, 0.36, 0.16, 0.36, tx, 2.95, tz, warmGlow);
+    this.serbosObstacles.push({ x: tx, z: tz, halfW: 1.05, halfD: 0.95, height: 1.4 });
+
+    // Chairs around table (+Z for player, -Z for Serbos, +X for companion)
+    for (const [cx, cz, backDz, backDx] of [
+      [tx, tz + 0.88, 0.22, 0],
+      [tx, tz - 0.88, -0.22, 0],
+      [tx + 1.12, tz + 0.35, 0, 0.22],
+    ]) {
+      this.addBox(this.serbosGroup, 0.46, 0.07, 0.46, cx, 0.45, cz, rugMat);
+      this.addBox(
+        this.serbosGroup,
+        backDx !== 0 ? 0.07 : 0.46,
+        0.48,
+        backDz !== 0 ? 0.07 : 0.46,
+        cx + backDx,
+        0.7,
+        cz + backDz,
+        woodMat,
+      );
+      this.addBox(this.serbosGroup, 0.06, 0.44, 0.06, cx, 0.22, cz, woodMat);
+    }
+
+    // Coffee mugs on Serbos's table (shown when drinking coffee together)
+    this.serbosCoffeeGroup.visible = false;
+    const cupGeo = new THREE.CylinderGeometry(0.06, 0.045, 0.1, 12);
+    const coffeeTopGeo = new THREE.CircleGeometry(0.052, 10);
+    coffeeTopGeo.rotateX(-Math.PI / 2);
+    this.disposables.push(cupGeo, coffeeTopGeo);
+    for (const [ox, oz] of [
+      [-0.18, 0.24],
+      [-0.12, -0.24],
+      [0.34, 0.08],
+    ]) {
+      const cup = new THREE.Mesh(cupGeo, cupMat);
+      cup.position.set(tx + ox, 0.83, tz + oz);
+      this.serbosCoffeeGroup.add(cup);
+      const top = new THREE.Mesh(coffeeTopGeo, coffeeMat);
+      top.position.set(tx + ox, 0.882, tz + oz);
+      this.serbosCoffeeGroup.add(top);
+    }
+    this.serbosGroup.add(this.serbosCoffeeGroup);
+
+    // Сербос character sitting warmly across the table facing the player (+Z)
+    const serbosChar = new THREE.Group();
+    serbosChar.position.set(tx, 0, tz - 0.86);
+    const legGeo = new THREE.CapsuleGeometry(0.075, 0.34, 6, 10);
+    for (const side of [-1, 1]) {
+      const thigh = new THREE.Mesh(legGeo, pantsMat);
+      thigh.rotation.x = Math.PI / 2;
+      thigh.position.set(side * 0.11, 0.52, 0.2);
+      serbosChar.add(thigh);
+    }
+    const sTorsoGeo = new THREE.CylinderGeometry(0.18, 0.2, 0.56, 14);
+    const sTorso = new THREE.Mesh(sTorsoGeo, sweaterMat);
+    sTorso.position.set(0, 0.8, 0);
+    serbosChar.add(sTorso);
+    const sArmGeo = new THREE.CapsuleGeometry(0.052, 0.28, 6, 8);
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(sArmGeo, sweaterMat);
+      arm.position.set(side * 0.21, 0.78, 0.14);
+      arm.rotation.x = -0.85;
+      serbosChar.add(arm);
+    }
+    const sHeadGeo = new THREE.SphereGeometry(0.14, 14, 12);
+    const sHead = new THREE.Mesh(sHeadGeo, skinMat);
+    sHead.position.set(0, 1.24, 0.01);
+    serbosChar.add(sHead);
+    const sBeardGeo = new THREE.SphereGeometry(0.115, 10, 8);
+    const sBeard = new THREE.Mesh(sBeardGeo, beardMat);
+    sBeard.scale.set(1.05, 0.9, 0.85);
+    sBeard.position.set(0, 1.15, 0.085);
+    serbosChar.add(sBeard);
+    const sHairGeo = new THREE.SphereGeometry(0.145, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.56);
+    const sHair = new THREE.Mesh(sHairGeo, beardMat);
+    sHair.position.set(0, 1.26, 0);
+    serbosChar.add(sHair);
+    this.serbosGroup.add(serbosChar);
+    this.disposables.push(legGeo, sTorsoGeo, sArmGeo, sHeadGeo, sBeardGeo, sHairGeo);
+
+    // Адамчик ИИ corner pedestal & cute glowing AI son figure at (2.8, 0, -2.5)
+    const ax = 2.8;
+    const az = -2.5;
+    const pedGeo = new THREE.CylinderGeometry(0.68, 0.82, 0.72, 20);
+    const ped = new THREE.Mesh(pedGeo, woodMat);
+    ped.position.set(ax, 0.36, az);
+    this.serbosGroup.add(ped);
+
+    const pedRingGeo = new THREE.TorusGeometry(0.7, 0.03, 8, 28);
+    pedRingGeo.rotateX(Math.PI / 2);
+    const pedRing = new THREE.Mesh(pedRingGeo, aiCyanMat);
+    pedRing.position.set(ax, 0.73, az);
+    this.serbosGroup.add(pedRing);
+
+    this.adamchikGroup.position.set(ax, 1.12, az);
+    const adTorsoGeo = new THREE.CapsuleGeometry(0.14, 0.24, 8, 12);
+    const adTorso = new THREE.Mesh(adTorsoGeo, aiBodyMat);
+    this.adamchikGroup.add(adTorso);
+
+    const adCoreGeo = new THREE.OctahedronGeometry(0.08, 0);
+    const adCore = new THREE.Mesh(adCoreGeo, aiGoldMat);
+    adCore.position.set(0, 0.04, 0.13);
+    this.adamchikGroup.add(adCore);
+
+    const adHeadGeo = new THREE.SphereGeometry(0.15, 16, 12);
+    const adHead = new THREE.Mesh(adHeadGeo, aiBodyMat);
+    adHead.position.set(0, 0.34, 0);
+    this.adamchikGroup.add(adHead);
+
+    const adEyeGeo = new THREE.SphereGeometry(0.028, 8, 8);
+    for (const ex of [-0.055, 0.055]) {
+      const eye = new THREE.Mesh(adEyeGeo, aiGoldMat);
+      eye.position.set(ex, 0.36, 0.135);
+      this.adamchikGroup.add(eye);
+    }
+
+    const adArmGeo = new THREE.CapsuleGeometry(0.04, 0.16, 6, 8);
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(adArmGeo, aiBodyMat);
+      arm.position.set(side * 0.21, 0.08, 0.04);
+      arm.rotation.z = side * -0.55;
+      this.adamchikGroup.add(arm);
+    }
+
+    const adHaloGeo = new THREE.TorusGeometry(0.24, 0.018, 8, 24);
+    this.adamchikHalo = new THREE.Mesh(adHaloGeo, aiCyanMat);
+    this.adamchikHalo.position.set(0, 0.56, 0);
+    this.adamchikHalo.rotation.x = Math.PI / 2;
+    this.adamchikGroup.add(this.adamchikHalo);
+
+    this.serbosGroup.add(this.adamchikGroup);
+    this.serbosObstacles.push({ x: ax, z: az, halfW: 0.9, halfD: 0.9, height: 2.1 });
+    this.disposables.push(pedGeo, pedRingGeo, adTorsoGeo, adCoreGeo, adHeadGeo, adEyeGeo, adArmGeo, adHaloGeo);
+
+    this.serbosSeats.push({
+      id: 'serbos_table',
+      label: 'Присесть за стол к Сербосу',
+      playerPos: new THREE.Vector3(tx, 1.15, tz + 0.88),
+      playerLookYaw: 0, // faces Serbos & lakeside window
+      companionPos: new THREE.Vector3(tx + 1.12, 0, tz + 0.35),
+      companionYaw: 0.55,
+      tableIndex: 0,
+    });
+  }
+
   public setMode(mode: InteriorMode): void {
     this.group.visible = mode !== 'none';
     this.cafeGroup.visible = mode === 'cafe';
     this.hotelGroup.visible = mode === 'hotel';
     this.observatoryGroup.visible = mode === 'observatory';
+    this.serbosGroup.visible = mode === 'serbos';
     if (mode !== 'cafe') {
       for (const cg of this.cafeCoffeeGroups) {
         cg.visible = false;
       }
     }
+    if (mode !== 'serbos') {
+      this.serbosCoffeeGroup.visible = false;
+    }
   }
 
   public animate(elapsed: number): void {
-    if (!this.observatoryGroup.visible) return;
-    for (const op of this.orreryPlanets) {
-      op.pivot.rotation.y = elapsed * op.speed;
+    if (this.observatoryGroup.visible) {
+      for (const op of this.orreryPlanets) {
+        op.pivot.rotation.y = elapsed * op.speed;
+      }
+    }
+    if (this.serbosGroup.visible) {
+      this.adamchikGroup.position.y = 1.12 + Math.sin(elapsed * 2.4) * 0.06;
+      this.adamchikGroup.rotation.y = Math.sin(elapsed * 0.8) * 0.38 - 0.35;
+      if (this.adamchikHalo) {
+        this.adamchikHalo.rotation.z = elapsed * 1.6;
+        this.adamchikHalo.rotation.x = Math.PI / 2 + Math.sin(elapsed * 1.3) * 0.16;
+      }
     }
   }
 
@@ -523,6 +769,18 @@ export class InteriorScene {
     if (tableIdx >= 0 && tableIdx < this.cafeCoffeeGroups.length) {
       this.cafeCoffeeGroups[tableIdx].visible = served;
     }
+  }
+
+  public setSerbosCoffeeServed(served: boolean): void {
+    this.serbosCoffeeGroup.visible = served;
+  }
+
+  public isNearAdamchik(x: number, z: number): boolean {
+    return Math.hypot(x - 2.8, z - -2.5) < 3.1;
+  }
+
+  public isNearSerbosTable(x: number, z: number): boolean {
+    return Math.hypot(x - -0.6, z - -1.3) < 3.2;
   }
 
   public updateAtmosphere(
@@ -541,6 +799,10 @@ export class InteriorScene {
       this.interiorKeyLight.color.set('#ffe4bc');
       this.interiorKeyLight.intensity = 3.2;
       this.interiorFillLight.intensity = 1.4;
+    } else if (mode === 'serbos') {
+      this.interiorKeyLight.color.set('#ffe0b5');
+      this.interiorKeyLight.intensity = 3.35;
+      this.interiorFillLight.intensity = 1.5;
     } else if (mode === 'observatory') {
       this.interiorKeyLight.color.set('#bae6fd');
       this.interiorKeyLight.intensity = 2.4;
@@ -555,7 +817,14 @@ export class InteriorScene {
   }
 
   public clampPlayerPosition(mode: InteriorMode, pos: THREE.Vector3): void {
-    const b = mode === 'cafe' ? CAFE_BOUNDS : mode === 'observatory' ? OBS_BOUNDS : HOTEL_BOUNDS;
+    const b =
+      mode === 'cafe'
+        ? CAFE_BOUNDS
+        : mode === 'observatory'
+          ? OBS_BOUNDS
+          : mode === 'serbos'
+            ? SERBOS_BOUNDS
+            : HOTEL_BOUNDS;
     pos.x = THREE.MathUtils.clamp(pos.x, b.minX, b.maxX);
     pos.z = THREE.MathUtils.clamp(pos.z, b.minZ, b.maxZ);
   }
@@ -563,12 +832,19 @@ export class InteriorScene {
   public getObstacles(mode: InteriorMode): BuildingFootprint[] {
     if (mode === 'cafe') return this.cafeObstacles;
     if (mode === 'observatory') return this.obsObstacles;
+    if (mode === 'serbos') return this.serbosObstacles;
     return this.hotelObstacles;
   }
 
   public getNearestSeat(mode: InteriorMode, x: number, z: number): InteriorSeatAnchor | null {
     const list =
-      mode === 'cafe' ? this.cafeSeats : mode === 'observatory' ? this.obsSeats : this.hotelSeats;
+      mode === 'cafe'
+        ? this.cafeSeats
+        : mode === 'observatory'
+          ? this.obsSeats
+          : mode === 'serbos'
+            ? this.serbosSeats
+            : this.hotelSeats;
     let best: InteriorSeatAnchor | null = null;
     let bestDist = 2.55;
     for (const s of list) {
@@ -598,6 +874,13 @@ export class InteriorScene {
         heading: 0,
       };
     }
+    if (mode === 'serbos') {
+      return {
+        playerPos: new THREE.Vector3(0, 0, 3.8),
+        companionPos: new THREE.Vector3(0.9, 0, 4.05),
+        heading: 0,
+      };
+    }
     if (mode === 'observatory') {
       return {
         playerPos: new THREE.Vector3(0, 0, 4.2),
@@ -613,7 +896,7 @@ export class InteriorScene {
   }
 
   public isNearExitDoor(mode: InteriorMode, x: number, z: number): boolean {
-    const exitZ = mode === 'cafe' ? 5.1 : mode === 'observatory' ? 5.2 : 4.7;
+    const exitZ = mode === 'cafe' ? 5.1 : mode === 'observatory' ? 5.2 : mode === 'serbos' ? 4.9 : 4.7;
     return Math.abs(x) < 1.5 && z > exitZ - 0.85;
   }
 

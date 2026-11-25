@@ -472,44 +472,55 @@ export class BlondePassengerRig {
     speedKmh: number,
     visible: boolean,
     driverLookingAtMe: boolean,
+    seatsReclined = false,
+    monitorOpen = false,
   ): void {
     this.group.visible = visible;
     if (!visible) return;
 
     const breath = Math.sin(elapsed * 1.85);
-    this.torsoPivot.position.y = 0.5 + breath * 0.0035;
-    this.torsoPivot.rotation.x = 0.16 - breath * 0.008;
+    const targetTorsoY = (seatsReclined ? 0.455 : 0.5) + breath * 0.0035;
+    const targetTorsoRotX = (seatsReclined ? 1.04 : 0.16) - breath * 0.008;
+    this.torsoPivot.position.y = THREE.MathUtils.damp(this.torsoPivot.position.y, targetTorsoY, 5.5, delta);
+    this.torsoPivot.rotation.x = THREE.MathUtils.damp(this.torsoPivot.rotation.x, targetTorsoRotX, 5.5, delta);
 
-    const leanZ = THREE.MathUtils.clamp(
-      steerAngle * 0.065 * Math.min(1, speedKmh / 45),
-      -0.07,
-      0.07,
-    );
+    const leanZ = seatsReclined
+      ? 0.02
+      : THREE.MathUtils.clamp(steerAngle * 0.065 * Math.min(1, speedKmh / 45), -0.07, 0.07);
     this.torsoPivot.rotation.z = THREE.MathUtils.damp(this.torsoPivot.rotation.z, leanZ, 6, delta);
 
     let targetHeadYaw = Math.sin(elapsed * 0.42) * 0.07;
-    let targetHeadPitch = -0.14 + Math.sin(elapsed * 0.55) * 0.025;
+    let targetHeadPitch = (seatsReclined ? (monitorOpen ? -0.42 : -0.32) : -0.14) + Math.sin(elapsed * 0.55) * 0.025;
     let targetHeadRoll = Math.sin(elapsed * 0.35) * 0.03;
 
+    if (seatsReclined && monitorOpen && !driverLookingAtMe) {
+      // Watch center drop-down movie monitor, occasionally glancing warmly toward the player
+      targetHeadYaw = 0.24 + Math.sin(elapsed * 0.55) * 0.04;
+      targetHeadPitch = -0.36 + Math.sin(elapsed * 0.9) * 0.02;
+    }
+
     if (driverLookingAtMe) {
-      targetHeadYaw = 1.42;
-      targetHeadPitch = -0.04;
+      targetHeadYaw = seatsReclined ? 1.24 : 1.42;
+      targetHeadPitch = seatsReclined ? -0.12 : -0.04;
       targetHeadRoll = 0.05;
     } else {
       if (elapsed >= this.nextGlanceTime) {
         if (this.glanceDuration <= 0) {
-          this.glanceDuration = 2.2 + Math.sin(elapsed * 1.3) * 0.5;
-          this.glanceTarget = 0.48;
+          this.glanceDuration = 2.4 + Math.sin(elapsed * 1.3) * 0.5;
+          this.glanceTarget = seatsReclined ? 1.16 : 0.48;
         }
         this.glanceDuration -= delta;
         if (this.glanceDuration <= 0) {
           this.glanceTarget = 0;
-          this.nextGlanceTime = elapsed + 7 + (Math.sin(elapsed * 2.7) + 1) * 3.5;
+          this.nextGlanceTime = elapsed + (seatsReclined ? 5.2 : 7) + (Math.sin(elapsed * 2.7) + 1) * 3.0;
         }
       }
       if (this.glanceTarget > 0) {
         targetHeadYaw = this.glanceTarget;
-        targetHeadRoll = 0.05;
+        targetHeadRoll = 0.06;
+        if (seatsReclined) {
+          targetHeadPitch = -0.14;
+        }
       }
     }
 

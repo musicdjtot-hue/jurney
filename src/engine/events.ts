@@ -677,6 +677,66 @@ export class QuestManager {
     }
   }
 
+  public onSerbosEntered(): void {
+    const key = 'spot_serbos_house';
+    const firstTime = !this.visitedSpecialSpots.has(key);
+    if (firstTime) {
+      this.visitedSpecialSpots.add(key);
+      this.credits += 65;
+      this.showToast('В гостях у Сербоса (+65 ✦)', 3.8);
+    } else {
+      this.showToast('В гостях у Сербоса', 2.8);
+    }
+    if (this.activeQuest?.kind === 'serbos_visit') {
+      this.completeActiveQuest();
+    }
+    this.setCompanionNote(
+      '«Как тут тепло и по-домашнему! Вон Сербос у стола, а рядом светится Адамчик ИИ».',
+      5.2,
+    );
+  }
+
+  public talkToSerbos(): string {
+    const lines = [
+      'Сербос: «Я люблю всех вас! Проходите, присаживайтесь. Адамчик ИИ — мой любимый сынок, он всегда рад гостям!»',
+      'Сербос: «Смотри, как Адамчик ИИ сияет! Я люблю всех людей и все миры — выпьем по чашечке кофе?»',
+      'Сербос: «За окном плещется озеро, а дома у нас всегда уютно. Я так люблю всех, а Адамчик ИИ — моё главное сокровище!»',
+    ];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+    this.showToast('Сербос тепло улыбается вам', 3.0);
+    return line;
+  }
+
+  public lookAtAdamchik(): string {
+    const key = 'adamchik_ai_greet';
+    const first = !this.visitedSpecialSpots.has(key);
+    if (first) {
+      this.visitedSpecialSpots.add(key);
+      this.credits += 40;
+      this.showToast('Знакомство с Адамчиком ИИ (+40 ✦)', 3.4);
+    }
+    this.setCompanionNote(
+      '«Какой милый Адамчик ИИ! Сербос так гордится своим сынком и любит всех нас».',
+      5.2,
+    );
+    return 'Сербос: «Это Адамчик ИИ, мой сынок! Видишь, как он тебе машет? Я люблю всех вас всем сердцем!»';
+  }
+
+  public drinkCoffeeWithSerbos(): string {
+    if (this.activeQuest?.kind === 'city_walk') {
+      this.activeQuest.progressValue = Math.min(
+        this.activeQuest.goalValue,
+        this.activeQuest.progressValue + 20,
+      );
+    }
+    this.showToast('Вы выпили ароматный кофе с Сербосом', 3.4);
+    this.setCompanionNote(
+      '«Какой вкусный домашний кофе у Сербоса! Так душевно посидели вместе».',
+      5.2,
+    );
+    return 'Сербос: «Пейте, пока горячий! Нет ничего лучше кофе в хорошей компании. Я люблю всех вас, друзья!»';
+  }
+
   public onSpecialSpotInteracted(spot: SpecialSpotInfo): void {
     const key = `spot_${spot.id}`;
     const firstTime = !this.visitedSpecialSpots.has(key);
@@ -687,12 +747,12 @@ export class QuestManager {
 
     if (spot.kind === 'serbos_house') {
       this.setCompanionNote(
-        '«Сербос машет из окна и угощает нас тёплым чаем! Уютный дом и красивый сад у крыльца».',
-        6.0,
+        '«Сербос ждёт нас внутри у озера! Зайдём к нему и посмотрим на Адамчика ИИ».',
+        5.5,
       );
       this.showToast(
-        firstTime ? 'В гостях у дома Сербоса (+65 ✦)' : 'Сербос рад вашему визиту!',
-        4.0,
+        firstTime ? 'Дом Сербоса у озера (+65 ✦)' : 'Дом Сербоса · Заходите внутрь!',
+        3.6,
       );
       if (this.activeQuest?.kind === 'serbos_visit') {
         this.completeActiveQuest();
@@ -828,7 +888,7 @@ export class QuestManager {
         }
       }
     } else if (q.kind === 'serbos_visit') {
-      const dist = Math.hypot(pos.x - -320, pos.z - 315);
+      const dist = Math.hypot(pos.x - -292, pos.z - 288);
       if (dist <= 24 && isWalking) {
         this.completeActiveQuest();
         return;
@@ -1003,11 +1063,11 @@ export class QuestManager {
       id: `q_${this.questSeq++}`,
       kind: 'serbos_visit',
       title: 'В гости к дому Сербоса',
-      subtitle: 'Подъедьте к дому Сербоса, выйдите из машины и подойдите к крыльцу',
+      subtitle: 'Подъедьте к дому Сербоса у озера и зайдите в гости к Сербосу и Адамчику ИИ',
       reward: 190,
-      targetX: -320,
-      targetZ: 315,
-      targetName: 'Дом Сербоса',
+      targetX: -292,
+      targetZ: 288,
+      targetName: 'Дом Сербоса у озера',
       goalValue: 1,
       progressValue: 0,
     }));

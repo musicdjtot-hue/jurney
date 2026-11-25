@@ -49,6 +49,7 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   nearbyCafeName: null,
   nearbyHotelName: null,
   nearbyObservatoryName: null,
+  nearbySerbosName: null,
   nearbySpecialSpot: null,
   nearbyVehiclePickup: null,
   insideHangarName: null,
@@ -58,6 +59,8 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   canSitNearby: false,
   canLieNearby: false,
   canExitInterior: false,
+  serbosCoffeeServed: false,
+  serbosDialogLine: null,
   holdHands: false,
   sleepFade: 0,
   companionNote: null,
@@ -67,6 +70,17 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   vehicleName: 'Кибер-Спидер',
   availableVehicles: [],
   pedestriansHitCount: 0,
+  autopilotActive: false,
+  canToggleAutopilot: true,
+  cabinTempC: 22,
+  cabinTintDark: false,
+  cabinRoofLight: false,
+  cabinSeatsReclined: false,
+  cabinMonitorOpen: false,
+  lookingAtDoorSide: null,
+  leftWindowOpen: false,
+  rightWindowOpen: false,
+  canOpenWindow: false,
   toastMessage: null,
   saveMeta: {
     hasSave: false,
@@ -419,6 +433,59 @@ export default function App() {
     engineRef.current?.enterNearbyObservatory();
   }, []);
 
+  const handleEnterSerbos = useCallback(() => {
+    hapticTap(14);
+    setSettingsOpen(false);
+    setJournalOpen(false);
+    setCafeOpen(false);
+    engineRef.current?.enterNearbySerbos();
+  }, []);
+
+  const handleTalkSerbos = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.talkToSerbos();
+  }, []);
+
+  const handleLookAdamchik = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.lookAtAdamchik();
+  }, []);
+
+  const handleDrinkSerbosCoffee = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.drinkCoffeeWithSerbos();
+  }, []);
+
+  const handleToggleAutopilot = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.toggleAutopilot();
+  }, []);
+
+  const handleToggleCabinTint = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleCabinTint();
+  }, []);
+
+  const handleToggleCabinRoofLight = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleCabinRoofLight();
+  }, []);
+
+  const handleToggleCabinSeatsRecline = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.toggleCabinSeatsRecline();
+  }, []);
+
+  const handleToggleCabinMonitor = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.toggleCabinMonitor();
+  }, []);
+
+  const handleToggleDoorWindow = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.toggleDoorWindow();
+  }, []);
+
   const handleExitInterior = useCallback(() => {
     hapticTap(14);
     setCafeOpen(false);
@@ -652,6 +719,10 @@ export default function App() {
         onEnterCafe={handleEnterCafe}
         onEnterHotel={handleEnterHotel}
         onEnterObservatory={handleEnterObservatory}
+        onEnterSerbos={handleEnterSerbos}
+        onTalkSerbos={handleTalkSerbos}
+        onLookAdamchik={handleLookAdamchik}
+        onDrinkSerbosCoffee={handleDrinkSerbosCoffee}
         onExitInterior={handleExitInterior}
         onSitInterior={handleSitInterior}
         onLieBed={handleLieBed}
@@ -663,6 +734,12 @@ export default function App() {
         onSelectQuest={handleSelectQuest}
         onSkipQuest={handleSkipQuest}
         onSelectCabinTheme={handleSelectCabinTheme}
+        onToggleAutopilot={handleToggleAutopilot}
+        onToggleCabinTint={handleToggleCabinTint}
+        onToggleCabinRoofLight={handleToggleCabinRoofLight}
+        onToggleCabinSeatsRecline={handleToggleCabinSeatsRecline}
+        onToggleCabinMonitor={handleToggleCabinMonitor}
+        onToggleDoorWindow={handleToggleDoorWindow}
         onTriggerBoost={handleTriggerBoost}
         onToggleFlight={handleToggleFlight}
         onEnterOrbit={handleEnterOrbit}

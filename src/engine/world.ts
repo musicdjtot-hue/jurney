@@ -314,7 +314,7 @@ function hash2(ix: number, iz: number, salt = 0): number {
   return ((n ^ (n >> 16)) >>> 0) / 4294967295;
 }
 
-function getChunkRoadArms(
+export function getChunkRoadArms(
   cx: number,
   cz: number,
   worldSeed: number,
@@ -1367,57 +1367,106 @@ export class CoruscantWorld {
       gumGlowMat,
     );
 
-    // 2) Dom Serbosa at (-320, 0, 320) — cozy 2-story house with porch & warm yard
-    this.serbosGroup.position.set(-320, 0, 320);
+    // 2) Dom Serbosa at (-282, 0, 280) — ALWAYS off the road, beside the avenue and a scenic lake
+    this.serbosGroup.position.set(-282, 0, 280);
     this.serbosGroup.visible = false;
 
-    const yardGeo = new THREE.BoxGeometry(28, 0.08, 30);
+    const yardGeo = new THREE.BoxGeometry(28, 0.08, 26);
     const yardMat = new THREE.MeshStandardMaterial({ color: 0x3f6b34, roughness: 0.92 });
     const yard = new THREE.Mesh(yardGeo, yardMat);
-    yard.position.set(0, -0.02, -4);
+    yard.position.set(0, -0.02, 2);
     this.serbosGroup.add(yard);
 
-    const pathGeo = new THREE.BoxGeometry(4.2, 0.1, 16);
+    // Scenic lakeside shore & reflective lake right next to Serbos's house
+    const lakeRimGeo = new THREE.CylinderGeometry(17.4, 18.2, 0.07, 28);
+    const lakeRimMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.9 });
+    const lakeRim = new THREE.Mesh(lakeRimGeo, lakeRimMat);
+    lakeRim.position.set(25, 0.0, -2);
+    this.serbosGroup.add(lakeRim);
+
+    const lakeWaterGeo = new THREE.CylinderGeometry(16.2, 16.2, 0.09, 28);
+    const lakeWaterMat = new THREE.MeshStandardMaterial({
+      color: 0x1d4ed8,
+      emissive: 0x0c4a6e,
+      emissiveIntensity: 0.22,
+      roughness: 0.08,
+      metalness: 0.78,
+      envMapIntensity: 1.5,
+    });
+    const lakeWater = new THREE.Mesh(lakeWaterGeo, lakeWaterMat);
+    lakeWater.position.set(25, 0.02, -2);
+    this.serbosGroup.add(lakeWater);
+
+    // Wooden dock jutting into the lake + warm pier lantern
+    const dockGeo = new THREE.BoxGeometry(6.8, 0.18, 2.4);
+    const dockMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.78 });
+    const dock = new THREE.Mesh(dockGeo, dockMat);
+    dock.position.set(11.6, 0.24, -1.5);
+    this.serbosGroup.add(dock);
+
+    // Stone path leading directly from roadside (-15, 11) to front porch (0, 0)
+    const pathMainGeo = new THREE.BoxGeometry(3.8, 0.1, 14);
     const pathMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8 });
-    const path = new THREE.Mesh(pathGeo, pathMat);
-    path.position.set(0, 0.02, 2);
-    this.serbosGroup.add(path);
+    const pathMain = new THREE.Mesh(pathMainGeo, pathMat);
+    pathMain.position.set(-2, 0.02, 6);
+    this.serbosGroup.add(pathMain);
+
+    const pathSideGeo = new THREE.BoxGeometry(13, 0.1, 3.6);
+    const pathSide = new THREE.Mesh(pathSideGeo, pathMat);
+    pathSide.position.set(-8.5, 0.02, 10.5);
+    this.serbosGroup.add(pathSide);
 
     const houseGeo = new THREE.BoxGeometry(14, 7.6, 11);
     const houseMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.72 });
     const house = new THREE.Mesh(houseGeo, houseMat);
-    house.position.set(0, 3.8, -11);
+    house.position.set(0, 3.8, -6);
     this.serbosGroup.add(house);
 
     const roofGeo = new THREE.ConeGeometry(10.8, 5.2, 4);
     roofGeo.rotateY(Math.PI / 4);
     const roofMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.65 });
     const roof = new THREE.Mesh(roofGeo, roofMat);
-    roof.position.set(0, 10.2, -11);
+    roof.position.set(0, 10.2, -6);
     this.serbosGroup.add(roof);
 
     const doorGeo = new THREE.BoxGeometry(2.2, 3.4, 0.35);
     const doorMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.6 });
     const door = new THREE.Mesh(doorGeo, doorMat);
-    door.position.set(0, 1.7, -5.4);
+    door.position.set(0, 1.7, -0.4);
     this.serbosGroup.add(door);
 
     const winGeo = new THREE.BoxGeometry(11.4, 2.0, 0.3);
     const winMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
     const win1 = new THREE.Mesh(winGeo, winMat);
-    win1.position.set(0, 5.2, -5.4);
+    win1.position.set(0, 5.2, -0.4);
     this.serbosGroup.add(win1);
+
+    const sideWinGeo = new THREE.BoxGeometry(0.3, 2.2, 6.4);
+    const sideWin = new THREE.Mesh(sideWinGeo, winMat);
+    sideWin.position.set(7.05, 3.2, -6);
+    this.serbosGroup.add(sideWin);
 
     const lanternGeo = new THREE.SphereGeometry(0.45, 8, 8);
     const lantern = new THREE.Mesh(lanternGeo, winMat);
-    lantern.position.set(1.8, 3.6, -4.9);
+    lantern.position.set(1.8, 3.6, 0.1);
     this.serbosGroup.add(lantern);
+
+    const pierLantern = new THREE.Mesh(lanternGeo, winMat);
+    pierLantern.position.set(14.5, 1.35, -2.4);
+    this.serbosGroup.add(pierLantern);
 
     this.group.add(this.serbosGroup);
     this.disposables.push(
       yardGeo,
       yardMat,
-      pathGeo,
+      lakeRimGeo,
+      lakeRimMat,
+      lakeWaterGeo,
+      lakeWaterMat,
+      dockGeo,
+      dockMat,
+      pathMainGeo,
+      pathSideGeo,
       pathMat,
       houseGeo,
       houseMat,
@@ -1426,6 +1475,7 @@ export class CoruscantWorld {
       doorGeo,
       doorMat,
       winGeo,
+      sideWinGeo,
       winMat,
       lanternGeo,
     );
@@ -1818,6 +1868,20 @@ export class CoruscantWorld {
       }
     }
     return best ? { spot: best, distance: bestDist } : null;
+  }
+
+  public getWorldSeed(): number {
+    return this.worldSeed;
+  }
+
+  public getNearestSerbosHouse(x: number, z: number): { name: string; distance: number } | null {
+    if (!this.serbosGroup.visible) return null;
+    const dDoor = Math.hypot(-282 - x, 285 - z);
+    const dRoad = Math.hypot(-296 - x, 290 - z);
+    return {
+      name: 'Дом Сербоса',
+      distance: Math.min(dDoor, dRoad),
+    };
   }
 
   public getNearestCafe(x: number, z: number): { landmark: WorldLandmark; distance: number } | null {
@@ -2297,17 +2361,17 @@ export class CoruscantWorld {
           this.specialSpots.push({
             id: 'serbos_house',
             kind: 'serbos_house',
-            name: 'Дом Сербоса',
-            actionLabel: 'Постучать к Сербосу',
-            x: -320,
-            z: 315,
+            name: 'Дом Сербоса у озера',
+            actionLabel: 'Зайти к Сербосу',
+            x: -292,
+            z: 288,
           });
           if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
             this.activeBuildings.push({
-              x: -320,
-              z: 309,
-              halfW: 7.2,
-              halfD: 5.8,
+              x: -282,
+              z: 274,
+              halfW: 7.4,
+              halfD: 6.0,
               height: 11,
             });
           }
@@ -2378,12 +2442,18 @@ export class CoruscantWorld {
         const quadOffsets =
           isRedSquareChunk || isReptiloidChunk
             ? []
-            : [
-                [-92, -92],
-                [92, -92],
-                [-92, 92],
-                [92, 92],
-              ];
+            : isSerbosChunk
+              ? [
+                  [-92, -92],
+                  [-92, 92],
+                  [92, 92],
+                ]
+              : [
+                  [-92, -92],
+                  [92, -92],
+                  [-92, 92],
+                  [92, 92],
+                ];
 
         for (let q = 0; q < quadOffsets.length; q++) {
           const [qx, qz] = quadOffsets[q];
@@ -3175,7 +3245,7 @@ export class CoruscantWorld {
         let streakDx = isSnowWeather ? driftX * 0.04 : vehicleVel.x * 0.04;
         let streakDz = isSnowWeather ? driftZ * 0.04 : vehicleVel.z * 0.04;
 
-        // Strictly exclude the entire vehicle cabin + hull envelope so NO water or snow ever enters inside!
+        // Strictly exclude the entire vehicle cabin + hull envelope (including wide UFO disc & long Truck) so NO water or snow ever enters inside!
         if (!isWalking) {
           let lx = ox * cosH - oz * sinH;
           const lz = ox * sinH + oz * cosH;
@@ -3184,11 +3254,11 @@ export class CoruscantWorld {
           const endLx = endOx * cosH - endOz * sinH;
           const endLz = endOx * sinH + endOz * cosH;
 
-          const startInside = Math.abs(lx) < 2.8 && lz > -3.8 && lz < 2.9 && oy > -1.4 && oy < 3.4;
-          const endInside = Math.abs(endLx) < 2.8 && endLz > -3.8 && endLz < 2.9 && oy + precipLen > -1.4 && oy < 3.4;
+          const startInside = Math.abs(lx) < 3.25 && lz > -4.2 && lz < 3.85 && oy > -1.4 && oy < 3.5;
+          const endInside = Math.abs(endLx) < 3.25 && endLz > -4.2 && endLz < 3.85 && oy + precipLen > -1.4 && oy < 3.5;
 
           if (startInside || endInside) {
-            lx = lx >= 0 ? 3.6 : -3.6;
+            lx = lx >= 0 ? 4.0 : -4.0;
             ox = lx * cosH + lz * sinH;
             oz = -lx * sinH + lz * cosH;
             streakDx = 0;

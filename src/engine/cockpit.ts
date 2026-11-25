@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BlondePassengerRig } from './companion';
-import { DashboardDisplay } from './textures';
+import { DashboardDisplay, MovieScreenDisplay } from './textures';
 import type {
   CabinThemeId,
   VehicleFlightState,
@@ -166,12 +166,24 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
   });
 }
 
+export interface CockpitCabinOptions {
+  cabinTintDark?: boolean;
+  cabinRoofLight?: boolean;
+  cabinSeatsReclined?: boolean;
+  cabinMonitorOpen?: boolean;
+  leftWindowOpen?: boolean;
+  rightWindowOpen?: boolean;
+}
+
 export class CockpitRig {
   public readonly group = new THREE.Group();
   public readonly companion: BlondePassengerRig;
   private steeringWheelGroup = new THREE.Group();
+  private steeringColumnMesh!: THREE.Mesh;
+  private truckWheelRim!: THREE.Mesh;
   private drivePrism: THREE.Mesh;
   private display: DashboardDisplay;
+  private movieDisplay: MovieScreenDisplay;
   private accentMaterials: THREE.MeshStandardMaterial[] = [];
   private accentColorRoad = new THREE.Color('#f59e0b');
   private accentColorAir = new THREE.Color('#38bdf8');
@@ -184,6 +196,21 @@ export class CockpitRig {
   private rainLevel = 0;
   private snowLevel = 0;
   private interiorLight: THREE.PointLight;
+  private roofDomeLight!: THREE.PointLight;
+  private roofDomeLampMat!: THREE.MeshStandardMaterial;
+  private cabinGlassMat!: THREE.MeshStandardMaterial;
+  private glassClearColor = new THREE.Color('#dbeafe');
+  private glassTintColor = new THREE.Color('#04070d');
+  private leftDoorWindowMesh!: THREE.Mesh;
+  private rightDoorWindowMesh!: THREE.Mesh;
+  private seatBackPivots: THREE.Group[] = [];
+  private movieMonitorPivot = new THREE.Group();
+  private movieScreenLight!: THREE.PointLight;
+  private ufoOrbMesh!: THREE.Mesh;
+  private ufoHoloRingMesh!: THREE.Mesh;
+  private ufoInteriorGroup = new THREE.Group();
+  private truckInteriorGroup = new THREE.Group();
+  private interceptorInteriorGroup = new THREE.Group();
   private coupeGroup = new THREE.Group();
   private truckGroup = new THREE.Group();
   private ufoGroup = new THREE.Group();
@@ -193,8 +220,9 @@ export class CockpitRig {
 
   constructor(maxAnisotropy: number, isSoftwareGl: boolean) {
     this.display = new DashboardDisplay(maxAnisotropy);
+    this.movieDisplay = new MovieScreenDisplay(maxAnisotropy);
     this.companion = new BlondePassengerRig(maxAnisotropy);
-    this.disposables.push(this.display, this.companion);
+    this.disposables.push(this.display, this.movieDisplay, this.companion);
 
     const carbonMat = new THREE.MeshStandardMaterial({
       color: 0x0e131b,
@@ -234,7 +262,7 @@ export class CockpitRig {
       roughness: 0.7,
       metalness: 0.22,
     });
-    const glassMat = new THREE.MeshStandardMaterial({
+    this.cabinGlassMat = new THREE.MeshStandardMaterial({
       color: 0xdbeafe,
       roughness: 0.08,
       metalness: 0.14,
@@ -243,6 +271,7 @@ export class CockpitRig {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
+    const glassMat = this.cabinGlassMat;
     const holoGlassMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
       transparent: true,
@@ -287,7 +316,18 @@ export class CockpitRig {
     this.truckGroup.visible = false;
     this.ufoGroup.visible = false;
     this.interceptorGroup.visible = false;
-    this.group.add(this.coupeGroup, this.truckGroup, this.ufoGroup, this.interceptorGroup);
+    this.ufoInteriorGroup.visible = false;
+    this.truckInteriorGroup.visible = false;
+    this.interceptorInteriorGroup.visible = false;
+    this.group.add(
+      this.coupeGroup,
+      this.truckGroup,
+      this.ufoGroup,
+      this.interceptorGroup,
+      this.ufoInteriorGroup,
+      this.truckInteriorGroup,
+      this.interceptorInteriorGroup,
+    );
 
     const hoodShape = new THREE.Shape();
     hoodShape.moveTo(-0.92, 0);
@@ -448,6 +488,12 @@ export class CockpitRig {
     yokeLower.rotation.z = Math.PI * 0.925;
     this.steeringWheelGroup.add(yokeLower);
 
+    // Heavy full rim ring visible only in heavy cargo truck cabin
+    const truckRimGeo = new THREE.TorusGeometry(0.175, 0.019, 10, 32);
+    this.truckWheelRim = new THREE.Mesh(truckRimGeo, leatherGripMat);
+    this.truckWheelRim.visible = false;
+    this.steeringWheelGroup.add(this.truckWheelRim);
+
     const gripGeo = new THREE.CapsuleGeometry(0.021, 0.11, 8, 12);
     for (const side of [-1, 1]) {
       const grip = new THREE.Mesh(gripGeo, leatherGripMat);
@@ -475,13 +521,94 @@ export class CockpitRig {
 
     const colGeo = new THREE.CylinderGeometry(0.034, 0.04, 0.28, 12);
     colGeo.rotateX(Math.PI / 2);
-    const colMesh = new THREE.Mesh(colGeo, carbonMat);
-    colMesh.position.set(DRIVER_X, 0.77, -0.46);
-    colMesh.rotation.x = -0.24;
-    this.group.add(colMesh);
+    this.steeringColumnMesh = new THREE.Mesh(colGeo, carbonMat);
+    this.steeringColumnMesh.position.set(DRIVER_X, 0.77, -0.46);
+    this.steeringColumnMesh.rotation.x = -0.24;
+    this.group.add(this.steeringColumnMesh);
 
     this.group.add(this.steeringWheelGroup);
-    this.disposables.push(yokeLowerGeo, gripGeo, hubGeo, hubCoreGeo, colGeo);
+    this.disposables.push(yokeLowerGeo, truckRimGeo, gripGeo, hubGeo, hubCoreGeo, colGeo);
+
+    // 3b. Vehicle-specific interior cabins (UFO alien console without wheel, Truck armored cab, Interceptor fighter HUD)
+    const ufoBioMat = new THREE.MeshPhysicalMaterial({
+      color: 0x0b1c1c,
+      roughness: 0.28,
+      metalness: 0.65,
+      clearcoat: 0.8,
+    });
+    const ufoPlasmaMat = new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      toneMapped: false,
+    });
+    const ufoDashRimGeo = new THREE.TorusGeometry(0.72, 0.045, 10, 32, Math.PI * 0.78);
+    ufoDashRimGeo.rotateX(Math.PI / 2);
+    const ufoDashRim = new THREE.Mesh(ufoDashRimGeo, ufoBioMat);
+    ufoDashRim.rotation.y = Math.PI * 0.11;
+    ufoDashRim.position.set(0, 0.81, -0.14);
+    this.ufoInteriorGroup.add(ufoDashRim);
+
+    const ufoOrbGeo = new THREE.IcosahedronGeometry(0.068, 1);
+    this.ufoOrbMesh = new THREE.Mesh(ufoOrbGeo, ufoPlasmaMat);
+    this.ufoOrbMesh.position.set(DRIVER_X, 0.87, -0.34);
+    this.ufoInteriorGroup.add(this.ufoOrbMesh);
+
+    const ufoHoloRingGeo = new THREE.TorusGeometry(0.125, 0.008, 8, 28);
+    ufoHoloRingGeo.rotateX(Math.PI / 2);
+    this.ufoHoloRingMesh = new THREE.Mesh(ufoHoloRingGeo, ufoPlasmaMat);
+    this.ufoHoloRingMesh.position.set(DRIVER_X, 0.85, -0.34);
+    this.ufoInteriorGroup.add(this.ufoHoloRingMesh);
+
+    const ufoRoofHaloGeo = new THREE.TorusGeometry(0.56, 0.016, 8, 36);
+    ufoRoofHaloGeo.rotateX(Math.PI / 2);
+    const ufoRoofHalo = new THREE.Mesh(ufoRoofHaloGeo, ufoPlasmaMat);
+    ufoRoofHalo.position.set(0, 1.49, 0.22);
+    this.ufoInteriorGroup.add(ufoRoofHalo);
+
+    // Heavy Truck interior bolsters, grab handles & overhead toggle strip
+    const truckBolsterGeo = new THREE.BoxGeometry(1.78, 0.09, 0.34);
+    const truckBolster = new THREE.Mesh(truckBolsterGeo, seatBolsterMat);
+    truckBolster.position.set(0, 0.825, -0.66);
+    this.truckInteriorGroup.add(truckBolster);
+
+    const truckHandleGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.34, 10);
+    for (const side of [-1, 1]) {
+      const handle = new THREE.Mesh(truckHandleGeo, titaniumMat);
+      handle.position.set(side * 0.77, 1.18, -0.45);
+      handle.rotation.x = 0.72;
+      handle.rotation.z = side * -0.14;
+      this.truckInteriorGroup.add(handle);
+    }
+    const truckOverheadGeo = new THREE.BoxGeometry(0.68, 0.055, 0.16);
+    const truckOverhead = new THREE.Mesh(truckOverheadGeo, carbonMat);
+    truckOverhead.position.set(0, 1.485, -0.02);
+    this.truckInteriorGroup.add(truckOverhead);
+
+    // Hyper-Interceptor aero gauge wings & dual fighter HUD sidebars
+    const intWingGeoDash = new THREE.BoxGeometry(0.76, 0.028, 0.18);
+    const intWingDash = new THREE.Mesh(intWingGeoDash, titaniumMat);
+    intWingDash.position.set(DRIVER_X, 0.96, -0.56);
+    this.interceptorInteriorGroup.add(intWingDash);
+    const intSideHudGeo = new THREE.PlaneGeometry(0.08, 0.16);
+    for (const side of [-1, 1]) {
+      const sh = new THREE.Mesh(intSideHudGeo, holoGlassMat);
+      sh.position.set(DRIVER_X + side * 0.24, 0.99, -0.52);
+      sh.rotation.y = side * -0.35;
+      this.interceptorInteriorGroup.add(sh);
+    }
+
+    this.disposables.push(
+      ufoBioMat,
+      ufoPlasmaMat,
+      ufoDashRimGeo,
+      ufoOrbGeo,
+      ufoHoloRingGeo,
+      ufoRoofHaloGeo,
+      truckBolsterGeo,
+      truckHandleGeo,
+      truckOverheadGeo,
+      intWingGeoDash,
+      intSideHudGeo,
+    );
 
     // 4. Sculpted Futuristic Cyber-Sport Bucket Seats (Driver & Passenger)
     const seatCushionGeo = new THREE.BoxGeometry(0.46, 0.12, 0.48);
@@ -531,6 +658,7 @@ export class CockpitRig {
       backPivot.add(headrest);
 
       seatGroup.add(backPivot);
+      this.seatBackPivots.push(backPivot);
       this.group.add(seatGroup);
     }
     this.disposables.push(
@@ -618,13 +746,21 @@ export class CockpitRig {
       this.group.add(doorGlow);
     }
 
-    // Flush-fitted left & right door windows + rear quarter glass (strictly in window openings)
+    // Flush-fitted sliding left & right door windows + rear quarter glass (strictly in window openings)
     const leftDoorGlassGeo = createQuadGeometry(bBL, wsBL, wsTL, bTL);
     const rightDoorGlassGeo = createQuadGeometry(wsBR, bBR, bTR, wsTR);
     const leftQuarterGlassGeo = createQuadGeometry(rBL, bBL, bTL, rTL);
     const rightQuarterGlassGeo = createQuadGeometry(bBR, rBR, rTR, bTR);
 
-    for (const g of [leftDoorGlassGeo, rightDoorGlassGeo, leftQuarterGlassGeo, rightQuarterGlassGeo]) {
+    this.leftDoorWindowMesh = new THREE.Mesh(leftDoorGlassGeo, glassMat);
+    this.leftDoorWindowMesh.renderOrder = 4;
+    this.group.add(this.leftDoorWindowMesh);
+
+    this.rightDoorWindowMesh = new THREE.Mesh(rightDoorGlassGeo, glassMat);
+    this.rightDoorWindowMesh.renderOrder = 4;
+    this.group.add(this.rightDoorWindowMesh);
+
+    for (const g of [leftQuarterGlassGeo, rightQuarterGlassGeo]) {
       const pane = new THREE.Mesh(g, glassMat);
       pane.renderOrder = 4;
       this.group.add(pane);
@@ -1014,6 +1150,51 @@ export class CockpitRig {
     this.interiorLight = new THREE.PointLight(0xf59e0b, 0.72, 3.8, 2);
     this.interiorLight.position.set(0, 1.32, -0.05);
     this.group.add(this.interiorLight);
+
+    // 9. Roof Cabin Dome Light + Retractable Overhead Movie Monitor
+    this.roofDomeLampMat = new THREE.MeshStandardMaterial({
+      color: 0xfef3c7,
+      emissive: 0xfde68a,
+      emissiveIntensity: 0.05,
+      roughness: 0.25,
+    });
+    const domeGeo = new THREE.BoxGeometry(0.22, 0.022, 0.12);
+    const domeLamp = new THREE.Mesh(domeGeo, this.roofDomeLampMat);
+    domeLamp.position.set(0, 1.495, 0.18);
+    this.group.add(domeLamp);
+
+    this.roofDomeLight = new THREE.PointLight(0xfffbeb, 0, 4.2, 1.6);
+    this.roofDomeLight.position.set(0, 1.42, 0.16);
+    this.group.add(this.roofDomeLight);
+
+    this.movieMonitorPivot.position.set(0, 1.485, -0.11);
+    this.movieMonitorPivot.rotation.x = -Math.PI * 0.48;
+    const monitorFrameGeo = new THREE.BoxGeometry(0.56, 0.32, 0.022);
+    const monitorFrame = new THREE.Mesh(monitorFrameGeo, carbonMat);
+    monitorFrame.position.set(0, -0.17, 0);
+    this.movieMonitorPivot.add(monitorFrame);
+
+    const monitorScreenGeo = new THREE.PlaneGeometry(0.52, 0.29);
+    const monitorScreenMat = new THREE.MeshBasicMaterial({
+      map: this.movieDisplay.texture,
+      toneMapped: false,
+    });
+    const monitorScreen = new THREE.Mesh(monitorScreenGeo, monitorScreenMat);
+    monitorScreen.position.set(0, -0.17, 0.013);
+    this.movieMonitorPivot.add(monitorScreen);
+
+    this.movieScreenLight = new THREE.PointLight(0x7dd3fc, 0, 2.4, 2);
+    this.movieScreenLight.position.set(0, -0.18, 0.16);
+    this.movieMonitorPivot.add(this.movieScreenLight);
+
+    this.group.add(this.movieMonitorPivot);
+    this.disposables.push(
+      this.roofDomeLampMat,
+      domeGeo,
+      monitorFrameGeo,
+      monitorScreenGeo,
+      monitorScreenMat,
+    );
   }
 
   public setVehicleModel(id: VehicleTypeId): void {
@@ -1022,6 +1203,15 @@ export class CockpitRig {
     this.truckGroup.visible = id === 'truck';
     this.ufoGroup.visible = id === 'ufo';
     this.interceptorGroup.visible = id === 'interceptor';
+
+    // Distinct interior cockpits per vehicle: wheelless UFO replaces wheel with floating plasma orb console
+    const hasWheel = id !== 'ufo';
+    this.steeringWheelGroup.visible = hasWheel;
+    this.steeringColumnMesh.visible = hasWheel;
+    this.truckWheelRim.visible = id === 'truck';
+    this.ufoInteriorGroup.visible = id === 'ufo';
+    this.truckInteriorGroup.visible = id === 'truck';
+    this.interceptorInteriorGroup.visible = id === 'interceptor';
   }
 
   public getVehicleModel(): VehicleTypeId {
@@ -1048,7 +1238,15 @@ export class CockpitRig {
     cabinTheme: CabinThemeId = 'auto',
     boostActive = false,
     sheltered = false,
+    cabinOpts?: CockpitCabinOptions,
   ): void {
+    const tintDark = Boolean(cabinOpts?.cabinTintDark);
+    const roofLightOn = Boolean(cabinOpts?.cabinRoofLight);
+    const seatsReclined = Boolean(cabinOpts?.cabinSeatsReclined);
+    const monitorOpen = Boolean(cabinOpts?.cabinMonitorOpen);
+    const leftWinOpen = Boolean(cabinOpts?.leftWindowOpen);
+    const rightWinOpen = Boolean(cabinOpts?.rightWindowOpen);
+
     const targetWheelAngle = steerInput * 0.72;
     this.steeringWheelGroup.rotation.z = THREE.MathUtils.damp(
       this.steeringWheelGroup.rotation.z,
@@ -1059,6 +1257,71 @@ export class CockpitRig {
 
     this.drivePrism.rotation.y = elapsed * (boostActive ? 4.2 : 1.4);
     this.drivePrism.rotation.x = Math.sin(elapsed * 0.9) * 0.25;
+
+    if (this.ufoInteriorGroup.visible) {
+      this.ufoOrbMesh.rotation.y = elapsed * 1.6;
+      this.ufoOrbMesh.rotation.x = Math.sin(elapsed * 1.1) * 0.35;
+      this.ufoOrbMesh.position.y = 0.87 + Math.sin(elapsed * 2.3) * 0.014;
+      this.ufoHoloRingMesh.rotation.z = steerInput * 0.55;
+      this.ufoHoloRingMesh.rotation.y = elapsed * 0.9;
+    }
+
+    // Hermetic cabin window tint (sleep privacy), sliding door panes, dome light, reclined seats & retractable movie monitor
+    this.cabinGlassMat.color.lerp(
+      tintDark ? this.glassTintColor : this.glassClearColor,
+      1 - Math.exp(-5.5 * delta),
+    );
+    this.cabinGlassMat.opacity = THREE.MathUtils.damp(
+      this.cabinGlassMat.opacity,
+      tintDark ? 0.94 : 0.09,
+      6.5,
+      delta,
+    );
+
+    this.leftDoorWindowMesh.position.y = THREE.MathUtils.damp(
+      this.leftDoorWindowMesh.position.y,
+      leftWinOpen ? -0.58 : 0,
+      8.5,
+      delta,
+    );
+    this.rightDoorWindowMesh.position.y = THREE.MathUtils.damp(
+      this.rightDoorWindowMesh.position.y,
+      rightWinOpen ? -0.58 : 0,
+      8.5,
+      delta,
+    );
+
+    const targetBackAngle = seatsReclined ? 1.12 : 0.22;
+    for (const bp of this.seatBackPivots) {
+      bp.rotation.x = THREE.MathUtils.damp(bp.rotation.x, targetBackAngle, 6, delta);
+    }
+
+    this.roofDomeLight.intensity = THREE.MathUtils.damp(
+      this.roofDomeLight.intensity,
+      roofLightOn ? 2.15 : 0,
+      7,
+      delta,
+    );
+    this.roofDomeLampMat.emissiveIntensity = THREE.MathUtils.damp(
+      this.roofDomeLampMat.emissiveIntensity,
+      roofLightOn ? 1.9 : 0.05,
+      7,
+      delta,
+    );
+
+    this.movieMonitorPivot.rotation.x = THREE.MathUtils.damp(
+      this.movieMonitorPivot.rotation.x,
+      monitorOpen ? 0.18 : -Math.PI * 0.48,
+      7,
+      delta,
+    );
+    this.movieScreenLight.intensity = THREE.MathUtils.damp(
+      this.movieScreenLight.intensity,
+      monitorOpen ? 0.72 : 0,
+      6,
+      delta,
+    );
+    this.movieDisplay.update(elapsed, monitorOpen);
 
     const isOrbitState = flightState === 'orbit' || flightState === 'launching_orbit';
     const isSpaceMode = inSpace || flightState === 'launching' || flightState === 'entering';
@@ -1123,6 +1386,8 @@ export class CockpitRig {
       speedKmh,
       showSeatedCompanion,
       driverLookingAtCompanion,
+      seatsReclined,
+      monitorOpen,
     );
 
     this.display.update(

@@ -680,4 +680,122 @@ export function createFieldGroundTexture(maxAnisotropy: number): THREE.CanvasTex
   return tex;
 }
 
+export class MovieScreenDisplay {
+  public readonly texture: THREE.CanvasTexture;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private lastDraw = -1;
 
+  constructor(maxAnisotropy: number) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = 480;
+    this.canvas.height = 270;
+    this.ctx = this.canvas.getContext('2d')!;
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.texture.colorSpace = THREE.SRGBColorSpace;
+    this.texture.anisotropy = maxAnisotropy;
+    this.drawFrame(0, false);
+  }
+
+  public update(elapsed: number, active: boolean): void {
+    if (!active) return;
+    if (this.lastDraw >= 0 && elapsed - this.lastDraw < 1 / 20) return;
+    this.lastDraw = elapsed;
+    this.drawFrame(elapsed, true);
+  }
+
+  private drawFrame(elapsed: number, active: boolean): void {
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.68);
+    skyGrad.addColorStop(0, '#070b1a');
+    skyGrad.addColorStop(0.55, '#1d1138');
+    skyGrad.addColorStop(1, '#7c2d6e');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Twinkling starfield
+    for (let i = 0; i < 36; i++) {
+      const sx = ((i * 97 + elapsed * (4 + (i % 3) * 3)) % (w + 16)) - 8;
+      const sy = (i * 43) % (h * 0.56);
+      const alpha = 0.35 + 0.55 * Math.abs(Math.sin(elapsed * 2.1 + i));
+      ctx.fillStyle = `rgba(224,242,254,${alpha.toFixed(2)})`;
+      ctx.fillRect(sx, sy, i % 4 === 0 ? 2.5 : 1.5, i % 4 === 0 ? 2.5 : 1.5);
+    }
+
+    // Twin neon sunset & planet ring
+    const sunY = h * 0.48 + Math.sin(elapsed * 0.45) * 6;
+    const sunGrad = ctx.createLinearGradient(0, sunY - 46, 0, sunY + 46);
+    sunGrad.addColorStop(0, '#fde047');
+    sunGrad.addColorStop(0.5, '#fb7185');
+    sunGrad.addColorStop(1, '#c026d3');
+    ctx.fillStyle = sunGrad;
+    ctx.beginPath();
+    ctx.arc(w * 0.5, sunY, 46, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Horizon grid ground
+    const horizonY = h * 0.62;
+    ctx.fillStyle = '#090d1a';
+    ctx.fillRect(0, horizonY, w, h - horizonY);
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.58)';
+    ctx.lineWidth = 1.4;
+    for (let i = -7; i <= 7; i++) {
+      ctx.beginPath();
+      ctx.moveTo(w * 0.5 + i * 18, horizonY);
+      ctx.lineTo(w * 0.5 + i * 74, h);
+      ctx.stroke();
+    }
+    const scroll = (elapsed * 0.7) % 1;
+    for (let r = 0; r < 6; r++) {
+      const f = Math.pow((r + scroll) / 6, 1.85);
+      const gy = horizonY + f * (h - horizonY);
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    // Flying hero starship silhouette across frame
+    const shipX = w * 0.5 + Math.sin(elapsed * 0.9) * 110;
+    const shipY = h * 0.44 + Math.cos(elapsed * 1.4) * 14;
+    ctx.save();
+    ctx.translate(shipX, shipY);
+    ctx.rotate(Math.sin(elapsed * 0.9) * 0.12);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(28, 7);
+    ctx.lineTo(8, 10);
+    ctx.lineTo(-8, 10);
+    ctx.lineTo(-28, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(-7, 8, 5, 4);
+    ctx.fillRect(2, 8, 5, 4);
+    ctx.restore();
+
+    // Film overlay & playback progress bar
+    ctx.fillStyle = 'rgba(6, 10, 18, 0.68)';
+    ctx.fillRect(0, h - 36, w, 36);
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '600 13px "Exo 2", sans-serif';
+    ctx.fillText(active ? '▶ ФИЛЬМ · ЗВЁЗДНЫЙ ГОРИЗОНТ' : '❚❚ ЗВЁЗДНЫЙ ГОРИЗОНТ', 14, h - 14);
+
+    const progress = ((elapsed * 0.04) % 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(265, h - 21, 196, 6);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(265, h - 21, 196 * progress, 6);
+
+    this.texture.needsUpdate = true;
+  }
+
+  public dispose(): void {
+    this.texture.dispose();
+  }
+}

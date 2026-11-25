@@ -69,6 +69,10 @@ export interface GameSaveData {
   credits: number;
   cabinTheme: CabinThemeId;
   unlockedThemes: CabinThemeId[];
+  cabinTintDark?: boolean;
+  cabinRoofLight?: boolean;
+  cabinSeatsReclined?: boolean;
+  cabinMonitorOpen?: boolean;
   visitedPlanets: PlanetId[];
   visitedSpecialSpots: string[];
   discoveredCloudLayer: boolean;
