@@ -62,7 +62,16 @@ export type VehicleTypeId = 'coupe';
 
 export type RvPose = 'stand' | 'lie';
 
-export type RvStationKind = 'bed' | 'tv' | 'coffee' | 'shower' | 'toilet' | 'cab' | 'exit';
+export type RvStationKind =
+  | 'bed'
+  | 'tv'
+  | 'coffee'
+  | 'shower'
+  | 'toilet'
+  | 'fridge'
+  | 'sunroof'
+  | 'cab'
+  | 'exit';
 
 export type CompanionLocation = 'cab' | 'rv';
 
@@ -192,11 +201,13 @@ export interface SimulationSnapshot {
   serbosDialogLine: string | null;
   autopilotActive: boolean;
   canToggleAutopilot: boolean;
+  autopilotStatusText: string | null;
   cabinTempC: number;
   cabinTintDark: boolean;
   cabinRoofLight: boolean;
   cabinSeatsReclined: boolean;
   cabinMonitorOpen: boolean;
+  cabinAudioOn: boolean;
   lookingAtDoorSide: 'left' | 'right' | null;
   leftWindowOpen: boolean;
   rightWindowOpen: boolean;
@@ -205,6 +216,7 @@ export interface SimulationSnapshot {
   cabinThemes: CabinThemeOption[];
   vehicleId: VehicleTypeId;
   vehicleName: string;
+  canEnterRvCabin: boolean;
   isInRvCabin: boolean;
   rvPose: RvPose;
   rvNearbyStation: RvStationKind | null;
@@ -213,6 +225,8 @@ export interface SimulationSnapshot {
   rvShowerOn: boolean;
   rvCoffeeBrewed: boolean;
   rvWindowTinted: boolean;
+  rvFridgeOpen: boolean;
+  rvSunroofOpen: boolean;
   companionLocation: CompanionLocation;
   companionRvActivity: string | null;
   pedestriansHitCount: number;

@@ -1762,6 +1762,35 @@ export class CoruscantWorld {
     return this.getNearestLandmarkOfType(x, z, 'observatory');
   }
 
+  public getRoadGates(): RoadGateAnchor[] {
+    return this.roadGates;
+  }
+
+  public getNearestFieldCenter(x: number, z: number): { x: number; z: number } | null {
+    const biome = BIOMES[this.biomeId];
+    const baseCx = Math.round(x / CHUNK_SIZE);
+    const baseCz = Math.round(z / CHUNK_SIZE);
+    let bestX = 0;
+    let bestZ = 0;
+    let bestDistSq = Infinity;
+    for (let dx = -6; dx <= 6; dx++) {
+      for (let dz = -6; dz <= 6; dz++) {
+        const cx = baseCx + dx;
+        const cz = baseCz + dz;
+        if (getChunkZone(cx, cz, biome.openThreshold, this.worldSeed) !== 'fields') continue;
+        const px = cx * CHUNK_SIZE;
+        const pz = cz * CHUNK_SIZE;
+        const dSq = (px - x) * (px - x) + (pz - z) * (pz - z);
+        if (dSq < bestDistSq) {
+          bestDistSq = dSq;
+          bestX = px;
+          bestZ = pz;
+        }
+      }
+    }
+    return bestDistSq < Infinity ? { x: bestX, z: bestZ } : null;
+  }
+
   public getHangarAt(x: number, y: number, z: number): { id: string; name: string } | null {
     for (let i = 0; i < this.hangars.length; i++) {
       const h = this.hangars[i];

@@ -78,6 +78,7 @@ export interface GameSaveData {
   rvShowerOn?: boolean;
   rvCoffeeBrewed?: boolean;
   rvWindowTinted?: boolean;
+  rvSunroofOpen?: boolean;
   companionLocation?: CompanionLocation;
   visitedPlanets: PlanetId[];
   visitedSpecialSpots: string[];

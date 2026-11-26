@@ -32,6 +32,8 @@ import {
   MessageCircle,
   Minimize2,
   Moon,
+  Music,
+  Navigation,
   Orbit,
   Package,
   Palette,
@@ -106,10 +108,12 @@ interface TouchControlsProps {
   onSkipQuest: () => void;
   onSelectCabinTheme: (id: CabinThemeId) => void;
   onToggleAutopilot: () => void;
+  onStartQuestAutopilot: (questId?: string) => void;
   onToggleCabinTint: () => void;
   onToggleCabinRoofLight: () => void;
   onToggleCabinSeatsRecline: () => void;
   onToggleCabinMonitor: () => void;
+  onToggleCabinAudio: () => void;
   onToggleDoorWindow: () => void;
   onTriggerBoost: () => void;
   onToggleFlight: () => void;
@@ -128,6 +132,9 @@ interface TouchControlsProps {
   onUseRvToilet: () => void;
   onToggleRvBedPose: () => void;
   onToggleRvWindowTint: () => void;
+  onToggleRvSunroof: () => void;
+  onUseRvFridge: () => void;
+  onServeRvCoffee: () => void;
   onCallCompanionToCab: () => void;
   onSendCompanionToRv: () => void;
   onSaveGame: () => void;
@@ -228,10 +235,12 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onSkipQuest,
   onSelectCabinTheme,
   onToggleAutopilot,
+  onStartQuestAutopilot,
   onToggleCabinTint,
   onToggleCabinRoofLight,
   onToggleCabinSeatsRecline,
   onToggleCabinMonitor,
+  onToggleCabinAudio,
   onToggleDoorWindow,
   onTriggerBoost,
   onToggleFlight,
@@ -250,6 +259,9 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onUseRvToilet,
   onToggleRvBedPose,
   onToggleRvWindowTint,
+  onToggleRvSunroof,
+  onUseRvFridge,
+  onServeRvCoffee,
   onCallCompanionToCab,
   onSendCompanionToRv,
   onSaveGame,
@@ -286,7 +298,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const inOrbitMode = snapshot.inOrbitMode && !isWalking;
   const inDeepSpace = snapshot.inSpace && !isWalking;
   const inAnySpace = inDeepSpace || inOrbitMode;
-  const showVerticalArrows = isAir || inAnySpace;
+  const showVerticalArrows = (isAir || inAnySpace) && !inRvCabin && !insideInterior;
   const boostActive = snapshot.boostRemainingSec > 0;
   const boostPct = Math.min(100, Math.max(0, (snapshot.boostRemainingSec / 4) * 100));
   const cafeMenu = getCafeMenu(snapshot.biomeId);
@@ -728,7 +740,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             <span>За руль</span>
           </button>
 
-          {!snapshot.autopilotActive && snapshot.speedKmh < 18 && (
+          {snapshot.flightState === 'road' && !snapshot.autopilotActive && snapshot.speedKmh < 18 && (
             <button
               type="button"
               onClick={onExitVehicle}
@@ -798,6 +810,32 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             <span>{snapshot.rvCoffeeBrewed ? 'Кофе ✓' : compact ? 'Кофе' : 'Кофеварка'}</span>
           </button>
 
+          {snapshot.hasCompanion && snapshot.rvCoffeeBrewed && (
+            <button
+              type="button"
+              onClick={onServeRvCoffee}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-rose-500/30 border-rose-300 text-rose-50`}
+            >
+              <Heart className={`${iconCls} text-rose-200`} />
+              <span>{compact ? 'Угостить' : 'Угостить кофе'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onUseRvFridge}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvFridgeOpen
+                ? 'bg-cyan-500/35 border-cyan-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-cyan-100'
+            } ${snapshot.rvNearbyStation === 'fridge' ? nearRing : ''}`}
+          >
+            <Snowflake className={`${iconCls} text-cyan-300`} />
+            <span>{snapshot.rvFridgeOpen ? 'Бар ✓' : compact ? 'Бар' : 'Мини-бар'}</span>
+          </button>
+
           <button
             type="button"
             onClick={onToggleRvShower}
@@ -826,6 +864,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
           <button
             type="button"
+            onClick={onToggleRvSunroof}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvSunroofOpen
+                ? 'bg-amber-500/30 border-amber-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-amber-100'
+            } ${snapshot.rvNearbyStation === 'sunroof' ? nearRing : ''}`}
+          >
+            <Sun className={`${iconCls} text-amber-300`} />
+            <span>{snapshot.rvSunroofOpen ? 'Люк ✓' : 'Люк'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={onToggleRvWindowTint}
             onPointerDown={(e) => e.stopPropagation()}
             className={`${btnCls} ${
@@ -836,6 +888,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           >
             <Moon className={`${iconCls} text-indigo-300`} />
             <span>{snapshot.rvWindowTinted ? 'Окна ✓' : 'Тонировка'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleCabinAudio}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.cabinAudioOn
+                ? 'bg-emerald-500/30 border-emerald-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-emerald-100'
+            }`}
+          >
+            <Music className={`${iconCls} text-emerald-300`} />
+            <span>{snapshot.cabinAudioOn ? 'Радио ✓' : 'Радио'}</span>
           </button>
 
           {snapshot.hasCompanion && (
@@ -888,7 +954,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.flightState === 'road' && !isWalking && !inAnySpace && (
+        {snapshot.canEnterRvCabin && (
           <button
             type="button"
             onClick={onEnterRvCabin}
@@ -948,7 +1014,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
-        {snapshot.canToggleAutopilot && !inAnySpace && (
+        {snapshot.canToggleAutopilot && (
           <button
             type="button"
             onClick={onToggleAutopilot}
@@ -1108,7 +1174,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   return (
     <div className="fixed inset-0 z-20 pointer-events-none safe-area-hud box-border flex flex-col justify-between overflow-hidden">
       {/* Subtle Space Planet Markers */}
-      {inDeepSpace && !hudHidden && (
+      {inDeepSpace && !inRvCabin && !hudHidden && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {snapshot.planetMarkers.map((m) => {
             const leftPct = 50 + m.screenX * 44;
@@ -1137,7 +1203,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       )}
 
       {/* Orbital 3D Landing Site Pins */}
-      {inOrbitMode && !hudHidden && !settingsOpen && !journalOpen && (
+      {inOrbitMode && !inRvCabin && !hudHidden && !settingsOpen && !journalOpen && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           {snapshot.landingSites.map((site) => {
             if (!site.inFront) return null;
@@ -1178,7 +1244,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       )}
 
       {/* Subtle Quest Waypoint Marker */}
-      {!inAnySpace && !insideInterior && !hudHidden && snapshot.activeQuest?.hasMarker && (
+      {!inAnySpace && !inRvCabin && !insideInterior && !hudHidden && snapshot.activeQuest?.hasMarker && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-0.5 transition-opacity"
@@ -1223,9 +1289,16 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         <div className="pointer-events-none fixed top-20 sm:top-16 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] w-fit">
           <div className="px-3.5 py-1.5 rounded-2xl bg-[#090d14]/88 border border-emerald-400/35 text-xs text-slate-100 shadow-xl flex flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5">
             <span className="font-semibold text-emerald-200">Мини-дом · +{snapshot.cabinTempC}°C</span>
+            {inDeepSpace ? (
+              <span className="text-violet-200 font-mono-tabular">В космосе</span>
+            ) : inOrbitMode ? (
+              <span className="text-cyan-200 font-mono-tabular">На орбите</span>
+            ) : isAir ? (
+              <span className="text-sky-200 font-mono-tabular">В небе · {snapshot.altitudeM} м</span>
+            ) : null}
             {snapshot.autopilotActive && (
               <span className="text-cyan-200 font-mono-tabular">
-                Автопилот · {snapshot.speedKmh} км/ч
+                {snapshot.autopilotStatusText ?? `Автопилот · ${snapshot.speedKmh} км/ч`}
               </span>
             )}
             {snapshot.hasCompanion && snapshot.companionLocation === 'rv' && snapshot.companionRvActivity && (
@@ -1234,6 +1307,21 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </div>
         </div>
       )}
+
+      {/* Cockpit Autopilot Live Guidance Banner */}
+      {!hudHidden &&
+        !inRvCabin &&
+        !insideInterior &&
+        snapshot.autopilotActive &&
+        snapshot.autopilotStatusText &&
+        !snapshot.toastMessage && (
+          <div className="pointer-events-none fixed top-20 sm:top-16 left-1/2 -translate-x-1/2 z-20 max-w-[90vw] w-fit">
+            <div className="px-3 py-1 rounded-xl bg-[#090d14]/88 border border-cyan-400/40 text-[11px] sm:text-xs font-medium text-cyan-100 shadow-lg flex items-center gap-1.5 truncate">
+              <Bot className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+              <span className="truncate">{snapshot.autopilotStatusText}</span>
+            </div>
+          </div>
+        )}
 
       {/* Cozy Companion Note Speech Bubble */}
       {!hudHidden && snapshot.companionNote && snapshot.hasCompanion && (
@@ -1365,7 +1453,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 snapshot.cabinTintDark ||
                 snapshot.cabinRoofLight ||
                 snapshot.cabinSeatsReclined ||
-                snapshot.cabinMonitorOpen
+                snapshot.cabinMonitorOpen ||
+                snapshot.cabinAudioOn
                   ? 'bg-sky-500/25 border-sky-400/55 text-sky-100'
                   : 'bg-[#090d14]/88 border-white/15 text-slate-100 hover:bg-[#111824]'
               }`}
@@ -1541,6 +1630,24 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 </div>
               </div>
             </button>
+
+            <button
+              type="button"
+              onClick={onToggleCabinAudio}
+              className={`sm:col-span-2 min-h-[48px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.cabinAudioOn
+                  ? 'bg-emerald-500/25 border-emerald-300 text-white'
+                  : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Music className="w-4 h-4 text-emerald-300 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Музыкальная атмосфера салона</div>
+                <div className="text-[10px] text-slate-400">
+                  {snapshot.cabinAudioOn ? 'Играет мягкий голо-синт волны' : 'Нажмите, чтобы включить фон'}
+                </div>
+              </div>
+            </button>
           </div>
 
           <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-[11px] text-slate-300 flex items-center justify-between gap-2">
@@ -1550,7 +1657,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             </span>
           </div>
 
-          {snapshot.flightState === 'road' && (
+          {snapshot.canEnterRvCabin && (
             <button
               type="button"
               onClick={() => {
@@ -1840,7 +1947,15 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => onStartQuestAutopilot()}
+                  className="min-h-[38px] px-3 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/35 border border-cyan-400/50 text-xs font-semibold text-cyan-100 inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Navigation className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>Автопилот к цели</span>
+                </button>
                 <button
                   type="button"
                   onClick={onSkipQuest}
@@ -2429,7 +2544,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       {!hudHidden && (
         <div className="relative z-10 w-full flex flex-col gap-2 min-w-0">
           {/* Orbital City & Landing Site Selector Strip */}
-          {inOrbitMode && snapshot.landingSites.length > 0 && !settingsOpen && !journalOpen && (
+          {inOrbitMode && !inRvCabin && snapshot.landingSites.length > 0 && !settingsOpen && !journalOpen && (
             <div
               className="pointer-events-auto self-center w-full max-w-[680px] rounded-2xl bg-[#090d14]/88 border border-cyan-400/35 shadow-2xl p-2 flex flex-col gap-2"
               onPointerDown={(e) => e.stopPropagation()}

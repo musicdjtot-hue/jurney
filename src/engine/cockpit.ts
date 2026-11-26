@@ -186,6 +186,8 @@ export interface CockpitCabinOptions {
   rvShowerOn?: boolean;
   rvCoffeeBrewed?: boolean;
   rvWindowTinted?: boolean;
+  rvFridgeOpen?: boolean;
+  rvSunroofOpen?: boolean;
   isInRvCabin?: boolean;
 }
 
@@ -244,6 +246,8 @@ export class CockpitRig {
   private rvShowerDrops: ShowerDropMeta[] = [];
   private rvToiletFlushMat!: THREE.MeshStandardMaterial;
   private toiletFlushTimer = 0;
+  private rvFridgeDoorPivot = new THREE.Group();
+  private rvSunroofShutter!: THREE.Mesh;
 
   private vehicleModel: VehicleTypeId = 'coupe';
   private disposables: { dispose: () => void }[] = [];
@@ -777,21 +781,64 @@ export class CockpitRig {
       this.group.add(gus);
     }
 
-    // RV Roof Cap (z = 0.72 .. 4.86, y = 2.09) + Interior Cream Ceiling Liner
-    const rvRoofGeo = new THREE.BoxGeometry(2.14, 0.1, 4.22);
-    const rvRoof = new THREE.Mesh(rvRoofGeo, hullPaintMat);
-    rvRoof.position.set(0, 2.09, 2.79);
-    this.group.add(rvRoof);
-
+    // RV Roof Cap (z = 0.72 .. 4.86, y = 2.09) with real Panoramic Skylight Opening (x ∈ [-0.54, 0.54], z ∈ [2.35, 3.65])
     const rvCeilingMat = new THREE.MeshStandardMaterial({
       color: 0xd8dee9,
       roughness: 0.76,
       metalness: 0.08,
     });
-    const rvCeilingGeo = new THREE.BoxGeometry(1.98, 0.03, 4.08);
-    const rvCeiling = new THREE.Mesh(rvCeilingGeo, rvCeilingMat);
-    rvCeiling.position.set(0, 2.035, 2.78);
-    this.group.add(rvCeiling);
+    const rvRoofFrontGeo = new THREE.BoxGeometry(2.14, 0.1, 1.67);
+    const rvRoofFront = new THREE.Mesh(rvRoofFrontGeo, hullPaintMat);
+    rvRoofFront.position.set(0, 2.09, 1.515);
+    this.group.add(rvRoofFront);
+
+    const rvRoofRearGeo = new THREE.BoxGeometry(2.14, 0.1, 1.25);
+    const rvRoofRear = new THREE.Mesh(rvRoofRearGeo, hullPaintMat);
+    rvRoofRear.position.set(0, 2.09, 4.275);
+    this.group.add(rvRoofRear);
+
+    const rvRoofSideGeo = new THREE.BoxGeometry(0.53, 0.1, 1.3);
+    for (const side of [-1, 1]) {
+      const rs = new THREE.Mesh(rvRoofSideGeo, hullPaintMat);
+      rs.position.set(side * 0.805, 2.09, 3.0);
+      this.group.add(rs);
+    }
+
+    const rvCeilFrontGeo = new THREE.BoxGeometry(1.98, 0.03, 1.61);
+    const rvCeilFront = new THREE.Mesh(rvCeilFrontGeo, rvCeilingMat);
+    rvCeilFront.position.set(0, 2.035, 1.545);
+    this.group.add(rvCeilFront);
+
+    const rvCeilRearGeo = new THREE.BoxGeometry(1.98, 0.03, 1.17);
+    const rvCeilRear = new THREE.Mesh(rvCeilRearGeo, rvCeilingMat);
+    rvCeilRear.position.set(0, 2.035, 4.235);
+    this.group.add(rvCeilRear);
+
+    const rvCeilSideGeo = new THREE.BoxGeometry(0.45, 0.03, 1.3);
+    for (const side of [-1, 1]) {
+      const cs = new THREE.Mesh(rvCeilSideGeo, rvCeilingMat);
+      cs.position.set(side * 0.765, 2.035, 3.0);
+      this.group.add(cs);
+    }
+
+    // Skylight Trim Frame + Glass Pane + Sliding Motorized Shutter
+    const skylightFrameGeo = new THREE.BoxGeometry(1.12, 0.06, 0.04);
+    for (const fz of [2.35, 3.65]) {
+      const bar = new THREE.Mesh(skylightFrameGeo, carbonMat);
+      bar.position.set(0, 2.06, fz);
+      this.group.add(bar);
+    }
+    const skylightPaneGeo = new THREE.PlaneGeometry(1.08, 1.3);
+    skylightPaneGeo.rotateX(Math.PI / 2);
+    const skylightPane = new THREE.Mesh(skylightPaneGeo, this.rvGlassMat);
+    skylightPane.position.set(0, 2.11, 3.0);
+    skylightPane.renderOrder = 4;
+    this.group.add(skylightPane);
+
+    const shutterGeo = new THREE.BoxGeometry(1.06, 0.028, 1.28);
+    this.rvSunroofShutter = new THREE.Mesh(shutterGeo, rvCeilingMat);
+    this.rvSunroofShutter.position.set(0, 2.036, 3.0);
+    this.group.add(this.rvSunroofShutter);
 
     // RV Sidewalls with real panoramic window openings (z = 0.46 .. 4.84)
     const rvWallPanelMat = new THREE.MeshStandardMaterial({
@@ -921,9 +968,16 @@ export class CockpitRig {
       sideIntakeGlowGeo,
       fairingGeo,
       gussetGeo,
-      rvRoofGeo,
+      rvRoofFrontGeo,
+      rvRoofRearGeo,
+      rvRoofSideGeo,
       rvCeilingMat,
-      rvCeilingGeo,
+      rvCeilFrontGeo,
+      rvCeilRearGeo,
+      rvCeilSideGeo,
+      skylightFrameGeo,
+      skylightPaneGeo,
+      shutterGeo,
       rvWallPanelMat,
       rvLowerWallGeo,
       rvUpperWallGeo,
@@ -1126,6 +1180,42 @@ export class CockpitRig {
     this.rvCoffeeCupsGroup.visible = false;
     this.group.add(this.rvCoffeeCupsGroup);
 
+    // 1b) Compact RV Mini-Fridge beside Kitchenette (x = -0.70, z = 0.66)
+    const fridgeBodyGeo = new THREE.BoxGeometry(0.52, 0.74, 0.36);
+    const fridgeBody = new THREE.Mesh(fridgeBodyGeo, cabinetMat);
+    fridgeBody.position.set(-0.7, 0.57, 0.66);
+    this.group.add(fridgeBody);
+
+    const fridgeCoolGlowMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.85,
+      roughness: 0.25,
+    });
+    const fridgeRecessGeo = new THREE.PlaneGeometry(0.32, 0.62);
+    fridgeRecessGeo.rotateY(Math.PI / 2);
+    const fridgeRecess = new THREE.Mesh(fridgeRecessGeo, fridgeCoolGlowMat);
+    fridgeRecess.position.set(-0.438, 0.57, 0.66);
+    this.group.add(fridgeRecess);
+
+    const bottleGeo = new THREE.CylinderGeometry(0.028, 0.03, 0.16, 8);
+    for (const bz of [0.58, 0.73]) {
+      const bottle = new THREE.Mesh(bottleGeo, showerGlassMat);
+      bottle.position.set(-0.5, 0.56, bz);
+      this.group.add(bottle);
+    }
+
+    this.rvFridgeDoorPivot.position.set(-0.43, 0.57, 0.49);
+    const fridgeDoorGeo = new THREE.BoxGeometry(0.032, 0.72, 0.35);
+    const fridgeDoor = new THREE.Mesh(fridgeDoorGeo, titaniumMat);
+    fridgeDoor.position.set(0, 0, 0.175);
+    this.rvFridgeDoorPivot.add(fridgeDoor);
+    const fridgeHandleGeo = new THREE.BoxGeometry(0.025, 0.2, 0.025);
+    const fridgeHandle = new THREE.Mesh(fridgeHandleGeo, accentMat);
+    fridgeHandle.position.set(0.022, 0.12, 0.3);
+    this.rvFridgeDoorPivot.add(fridgeHandle);
+    this.group.add(this.rvFridgeDoorPivot);
+
     // 2) Wall-Mounted TV on Right RV Wall (x = +0.94, y = 1.38, z = 1.52 facing -X)
     const tvBezelGeo = new THREE.BoxGeometry(0.04, 0.5, 0.86);
     const tvBezel = new THREE.Mesh(tvBezelGeo, carbonMat);
@@ -1264,7 +1354,7 @@ export class CockpitRig {
       roughness: 0.24,
     });
     const rvLampGeo = new THREE.BoxGeometry(0.56, 0.025, 0.28);
-    for (const lz of [1.65, 3.45]) {
+    for (const lz of [1.65, 4.18]) {
       const panel = new THREE.Mesh(rvLampGeo, this.rvCeilingLampMat);
       panel.position.set(0, 2.015, lz);
       this.group.add(panel);
@@ -1294,6 +1384,12 @@ export class CockpitRig {
       coffeeLedGeo,
       mugGeo,
       steamGeo,
+      fridgeBodyGeo,
+      fridgeCoolGlowMat,
+      fridgeRecessGeo,
+      bottleGeo,
+      fridgeDoorGeo,
+      fridgeHandleGeo,
       tvBezelGeo,
       tvScreenGeo,
       tvScreenMat,
@@ -1348,8 +1444,8 @@ export class CockpitRig {
       }
     }
 
-    // Left Kitchenette counter (x < -0.32, z ∈ [0.80, 1.98])
-    if (localPos.x < -0.3 && localPos.z > 0.78 && localPos.z < 1.98) {
+    // Left Kitchenette counter + Mini-fridge (x < -0.30, z ∈ [0.46, 1.98])
+    if (localPos.x < -0.3 && localPos.z > 0.46 && localPos.z < 1.98) {
       localPos.x = -0.3;
     }
 
@@ -1377,20 +1473,24 @@ export class CockpitRig {
 
   public getNearestRvStation(localPos: THREE.Vector3): RvStationKind | null {
     if (localPos.z < 0.56) return 'cab';
+    const dFridge = Math.hypot(localPos.x - -0.25, localPos.z - 0.68);
     const dCoffee = Math.hypot(localPos.x - -0.32, localPos.z - 1.42);
     const dTv = Math.hypot(localPos.x - 0.36, localPos.z - 1.52);
     const dShower = Math.hypot(localPos.x - -0.25, localPos.z - 2.46);
+    const dSunroof = Math.hypot(localPos.x - 0.06, localPos.z - 2.9);
     const dToilet = Math.hypot(localPos.x - -0.28, localPos.z - 3.34);
     const dBed = Math.hypot(localPos.x - -0.04, localPos.z - 3.65);
 
     let best: RvStationKind | null = null;
-    let bestDist = 0.92;
+    let bestDist = 0.88;
     const checks: [RvStationKind, number][] = [
+      ['fridge', dFridge],
       ['coffee', dCoffee],
       ['tv', dTv],
       ['shower', dShower],
       ['toilet', dToilet],
       ['bed', dBed],
+      ['sunroof', dSunroof + 0.16],
     ];
     for (const [kind, d] of checks) {
       if (d < bestDist) {
@@ -1442,6 +1542,8 @@ export class CockpitRig {
     const rvShowerOn = Boolean(cabinOpts?.rvShowerOn);
     const rvCoffeeBrewed = Boolean(cabinOpts?.rvCoffeeBrewed);
     const rvWindowTinted = Boolean(cabinOpts?.rvWindowTinted);
+    const rvFridgeOpen = Boolean(cabinOpts?.rvFridgeOpen);
+    const rvSunroofOpen = Boolean(cabinOpts?.rvSunroofOpen);
 
     const targetWheelAngle = steerInput * 0.72;
     this.steeringWheelGroup.rotation.z = THREE.MathUtils.damp(
@@ -1573,6 +1675,19 @@ export class CockpitRig {
     } else {
       this.rvToiletFlushMat.emissiveIntensity = 0.32;
     }
+
+    this.rvFridgeDoorPivot.rotation.y = THREE.MathUtils.damp(
+      this.rvFridgeDoorPivot.rotation.y,
+      rvFridgeOpen ? 1.32 : 0,
+      7.5,
+      delta,
+    );
+    this.rvSunroofShutter.position.z = THREE.MathUtils.damp(
+      this.rvSunroofShutter.position.z,
+      rvSunroofOpen ? 1.72 : 3.0,
+      6.5,
+      delta,
+    );
 
     const isOrbitState = flightState === 'orbit' || flightState === 'launching_orbit';
     const isSpaceMode = inSpace || flightState === 'launching' || flightState === 'entering';

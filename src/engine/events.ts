@@ -26,6 +26,17 @@ export interface WorldLandmark {
   z: number;
 }
 
+export interface QuestGuidanceTarget {
+  questId: string;
+  kind: QuestKind;
+  targetPlanet?: PlanetId;
+  targetX?: number;
+  targetZ?: number;
+  targetName: string;
+  preferredSiteId?: string;
+  requiresWalk?: boolean;
+}
+
 interface InternalQuest {
   id: string;
   kind: QuestKind;
@@ -587,9 +598,6 @@ export class QuestManager {
       this.credits += 95;
       this.showToast(`Открыта новая планета: ${cfg.name} (+95 ✦)`, 4.5);
     }
-    if (this.activeQuest?.kind === 'planet_visit' && this.activeQuest.targetPlanet === planetId) {
-      this.completeActiveQuest();
-    }
   }
 
   public onOrbitEntered(): void {
@@ -598,11 +606,8 @@ export class QuestManager {
     }
   }
 
-  public onOrbitLandingCompleted(planetId: PlanetId, siteName: string): void {
+  public onOrbitLandingCompleted(_planetId: PlanetId, _siteName: string): void {
     if (this.activeQuest?.kind === 'orbit_landing') {
-      this.completeActiveQuest();
-    }
-    if (planetId === 'earth' && this.activeQuest?.kind === 'earth_moscow' && siteName.includes('Красная')) {
       this.completeActiveQuest();
     }
   }
@@ -838,11 +843,116 @@ export class QuestManager {
           return;
         }
       }
+    } else if (q.kind === 'planet_visit') {
+      if (q.targetPlanet && planetId === q.targetPlanet && flightState === 'road') {
+        this.completeActiveQuest();
+        return;
+      }
     } else if (q.kind === 'orbit_landing') {
       if (flightState === 'orbit') {
         q.progressValue = Math.max(q.progressValue, 0.5);
       }
     }
+  }
+
+  public getActiveQuestId(): string | null {
+    return this.activeQuest?.id ?? null;
+  }
+
+  public hasPassedRoadGate(id: string): boolean {
+    return this.passedRoadGates.has(id);
+  }
+
+  public getActiveQuestGuidance(
+    planetId: PlanetId,
+    pos: THREE.Vector3,
+    landmarks: WorldLandmark[],
+  ): QuestGuidanceTarget | null {
+    const q = this.activeQuest;
+    if (!q) return null;
+
+    if (q.kind === 'earth_moscow') {
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: 'earth',
+        targetX: 0,
+        targetZ: -10,
+        targetName: 'Красная площадь',
+        preferredSiteId: 'earth_moscow_square',
+      };
+    }
+
+    if (q.kind === 'earth_reptiloids') {
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: 'earth',
+        targetX: 0,
+        targetZ: -1280,
+        targetName: 'Город рептилоидов',
+        preferredSiteId: 'earth_reptiloids',
+      };
+    }
+
+    if (q.kind === 'serbos_visit') {
+      const targetPlanet = planetId === 'earth' || planetId === 'coruscant' ? planetId : 'coruscant';
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet,
+        targetX: -292,
+        targetZ: 288,
+        targetName: 'Дом Сербоса у озера',
+        requiresWalk: true,
+      };
+    }
+
+    if (q.kind === 'planet_visit') {
+      const tp = q.targetPlanet ?? 'kryos';
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetName: getPlanetConfig(tp).name,
+      };
+    }
+
+    if (q.kind === 'delivery' || q.kind === 'cafe_visit' || q.kind === 'hotel_visit') {
+      let tx = q.targetX;
+      let tz = q.targetZ;
+      if (tx === undefined || tz === undefined) {
+        const wantType = q.kind === 'cafe_visit' ? 'cafe' : q.kind === 'hotel_visit' ? 'hotel' : null;
+        let bestDist = Infinity;
+        for (let i = 0; i < landmarks.length; i++) {
+          const lm = landmarks[i];
+          if (wantType && lm.type !== wantType) continue;
+          const d = Math.hypot(lm.x - pos.x, lm.z - pos.z);
+          if (d < bestDist) {
+            bestDist = d;
+            tx = lm.x;
+            tz = lm.z;
+          }
+        }
+      }
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: planetId,
+        targetX: tx ?? pos.x + 220,
+        targetZ: tz ?? pos.z - 220,
+        targetName: q.targetName ?? q.title,
+      };
+    }
+
+    return {
+      questId: q.id,
+      kind: q.kind,
+      targetPlanet: planetId,
+      targetX: q.targetX,
+      targetZ: q.targetZ,
+      targetName: q.targetName ?? q.title,
+    };
   }
 
   private completeActiveQuest(): void {

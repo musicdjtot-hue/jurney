@@ -1040,12 +1040,12 @@ export class SpaceSystem {
       metalness: 0.15,
       fog: false,
     });
-    const flatDomeMat = new THREE.MeshPhysicalMaterial({
+    const flatDomeMat = new THREE.MeshStandardMaterial({
       color: 0x93c5fd,
       emissive: 0x1d4ed8,
-      emissiveIntensity: 0.18,
-      roughness: 0.08,
-      metalness: 0.1,
+      emissiveIntensity: 0.22,
+      roughness: 0.12,
+      metalness: 0.14,
       transparent: true,
       opacity: 0.22,
       depthWrite: false,

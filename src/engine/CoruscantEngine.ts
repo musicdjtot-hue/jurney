@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { AmbientCabinAudio } from './ambientAudio';
 import { CockpitRig } from './cockpit';
 import { BlondeWalkerRig, type CompanionPose } from './companion';
 import { QuestManager } from './events';
 import { InteriorScene, type InteriorSeatAnchor } from './interior';
-import { VehiclePhysics } from './physics';
+import { VehiclePhysics, type BuildingFootprint } from './physics';
 import {
   STARTER_PLANETS,
   SpaceSystem,
@@ -51,6 +52,7 @@ const _projVec = new THREE.Vector3();
 const _camForward = new THREE.Vector3();
 const _toTarget = new THREE.Vector3();
 const _beaconWorldPos = new THREE.Vector3();
+const _apSpaceVec = new THREE.Vector3();
 
 const SEASON_CYCLE: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
 const SEASON_LABELS: Record<SeasonId, string> = {
@@ -97,6 +99,7 @@ export class CoruscantEngine {
   private space: SpaceSystem;
   private physics = new VehiclePhysics();
   private quests = new QuestManager();
+  private audio = new AmbientCabinAudio();
   private headlight: THREE.SpotLight;
 
   private clock = new THREE.Clock();
@@ -168,9 +171,27 @@ export class CoruscantEngine {
   private prevBoostInput = false;
 
   private autopilotActive = false;
+  private autopilotQuestId: string | null = null;
+  private autopilotArrivingStop = false;
+  private autopilotStatusText: string | null = null;
+  private autopilotStuckTimer = 0;
+  private autopilotLastPosX = 0;
+  private autopilotLastPosZ = 0;
+  private autopilotAvoidDir = 0;
+  private autopilotAvoidTimer = 0;
   private autopilotDirIndex = 0;
   private autopilotLastIntersectionKey = '';
   private autopilotInputs: ControlInputs = {
+    throttle: false,
+    brake: false,
+    steerLeft: false,
+    steerRight: false,
+    steerAxis: 0,
+    climb: false,
+    descend: false,
+    boost: false,
+  };
+  private readonly rvIdleInputs: ControlInputs = {
     throttle: false,
     brake: false,
     steerLeft: false,
@@ -202,6 +223,8 @@ export class CoruscantEngine {
   private rvShowerOn = false;
   private rvCoffeeBrewed = false;
   private rvWindowTinted = false;
+  private rvFridgeOpen = false;
+  private rvSunroofOpen = false;
   private companionLocation: CompanionLocation = 'cab';
   private rvCompLocalPos = new THREE.Vector3(0.22, 0.195, 1.85);
   private rvCompHeading = 0;
@@ -399,17 +422,40 @@ export class CoruscantEngine {
     }
   }
 
+  public startQuestAutopilot(questId?: string): void {
+    if (questId) {
+      this.selectQuest(questId);
+    }
+    if (!this.autopilotActive) {
+      this.toggleAutopilot();
+      return;
+    }
+    this.autopilotArrivingStop = false;
+    this.autopilotQuestId = this.quests.getActiveQuestId();
+    this.autopilotStuckTimer = 0;
+    this.autopilotAvoidTimer = 0;
+    const g = this.quests.getActiveQuestGuidance(
+      this.physics.activePlanetId,
+      this.physics.position,
+      this.world.getLandmarks(),
+    );
+    this.quests.showToast(
+      g ? `Автопилот перенаправлен: ${g.targetName}` : 'Автопилот обновлён',
+      3.0,
+    );
+  }
+
   public toggleAutopilot(): void {
-    if (
-      this.interiorMode !== 'none' ||
-      this.physics.isWalking ||
-      this.physics.flightState !== 'road'
-    ) {
+    if (this.interiorMode !== 'none' || this.physics.isWalking) {
       this.autopilotActive = false;
+      this.autopilotArrivingStop = false;
+      this.autopilotStatusText = null;
       return;
     }
     if (this.autopilotActive) {
       this.autopilotActive = false;
+      this.autopilotArrivingStop = false;
+      this.autopilotStatusText = null;
       this.quests.showToast('Автопилот отключён', 2.2);
       return;
     }
@@ -438,7 +484,24 @@ export class CoruscantEngine {
     this.autopilotDirIndex = bestIdx;
     this.autopilotLastIntersectionKey = '';
     this.autopilotActive = true;
-    this.quests.showToast('Автопилот включён · Смотрите по сторонам', 3.2);
+    this.autopilotArrivingStop = false;
+    this.autopilotQuestId = this.quests.getActiveQuestId();
+    this.autopilotStuckTimer = 0;
+    this.autopilotAvoidTimer = 0;
+    this.autopilotLastPosX = pos.x;
+    this.autopilotLastPosZ = pos.z;
+
+    const guidance = this.quests.getActiveQuestGuidance(
+      this.physics.activePlanetId,
+      pos,
+      this.world.getLandmarks(),
+    );
+    this.quests.showToast(
+      guidance
+        ? `Автопилот: ведём к метке «${guidance.targetName}»`
+        : 'Автопилот включён · Смотрите по сторонам',
+      3.4,
+    );
   }
 
   public toggleCabinTint(): void {
@@ -501,12 +564,30 @@ export class CoruscantEngine {
   }
 
   public enterRvCabin(): boolean {
+    const allowedState =
+      this.physics.flightState === 'road' ||
+      this.physics.flightState === 'ascending' ||
+      this.physics.flightState === 'flight' ||
+      this.physics.flightState === 'orbit' ||
+      this.physics.flightState === 'space';
     if (
       this.interiorMode !== 'none' ||
       this.physics.isWalking ||
-      this.physics.flightState !== 'road'
+      this.isInRvCabin ||
+      !allowedState
     ) {
+      if (
+        this.physics.flightState === 'entering' ||
+        this.physics.flightState === 'descending' ||
+        this.physics.flightState === 'launching' ||
+        this.physics.flightState === 'launching_orbit'
+      ) {
+        this.quests.showToast('Дождитесь завершения манёвра, чтобы пройти в мини-дом', 2.4);
+      }
       return false;
+    }
+    if (this.physics.flightState === 'ascending') {
+      this.physics.targetFlightAltitude = Math.max(76, this.physics.position.y);
     }
     this.isInRvCabin = true;
     this.rvPose = 'stand';
@@ -517,12 +598,17 @@ export class CoruscantEngine {
     this.camera.position.set(0, 1.66, 1.05);
     this.camera.rotation.set(0, Math.PI, 0);
     this.vehicleGroup.add(this.camera);
-    this.quests.showToast(
-      this.autopilotActive
-        ? 'Мини-дом · Автодом едет на автопилоте'
-        : 'Вы вошли в мини-дом в задней части авто',
-      3.0,
-    );
+
+    const enterToast = this.autopilotActive
+      ? 'Мини-дом · Автопилот ведёт автодом к цели'
+      : this.physics.flightState === 'orbit'
+        ? 'Мини-дом на орбите планеты'
+        : this.physics.flightState === 'space'
+          ? 'Мини-дом в открытом космосе'
+          : this.physics.flightState === 'flight' || this.physics.flightState === 'ascending'
+            ? 'Мини-дом · Автодом парит над облаками'
+            : 'Вы вошли в мини-дом в задней части авто';
+    this.quests.showToast(enterToast, 3.0);
     return true;
   }
 
@@ -615,6 +701,57 @@ export class CoruscantEngine {
       2.4,
     );
     this.saveGame(false);
+  }
+
+  public toggleRvSunroof(): void {
+    this.rvSunroofOpen = !this.rvSunroofOpen;
+    this.audio.playChime('hatch');
+    this.quests.showToast(
+      this.rvSunroofOpen
+        ? 'Панорамный люк открыт · Посмотрите вверх на небо'
+        : 'Шторка панорамного люка закрыта',
+      2.6,
+    );
+    this.saveGame(false);
+  }
+
+  public useRvFridge(): void {
+    this.rvFridgeOpen = !this.rvFridgeOpen;
+    this.audio.playChime('fridge');
+    if (this.rvFridgeOpen) {
+      this.quests.showToast('Мини-бар открыт · Прохладный галактический нектар', 2.8);
+      if (this.hasCompanion) {
+        this.quests.setCompanionNote(
+          '«О, там как раз охлаждённые напитки! Идеально освежиться в полёте».',
+          4.5,
+        );
+      }
+    } else {
+      this.quests.showToast('Дверца мини-холодильника закрыта', 2.0);
+    }
+  }
+
+  public serveRvCoffeeToCompanion(): void {
+    if (!this.hasCompanion) return;
+    if (!this.rvCoffeeBrewed) {
+      this.rvCoffeeBrewed = true;
+    }
+    this.audio.playChime('coffee');
+    this.quests.credits += 10;
+    this.quests.setCompanionNote(
+      '«Спасибо за горячий кофе! С тобой даже среди далёких звёзд чувствуешь себя дома».',
+      5.2,
+    );
+    this.quests.showToast('Угостили спутницу горячим кофе (+10 ✦)', 3.0);
+    this.saveGame(false);
+  }
+
+  public toggleCabinAudio(): void {
+    const on = this.audio.toggle();
+    this.quests.showToast(
+      on ? 'Радио салона: тёплый синтезатор включён' : 'Радио салона выключено',
+      2.4,
+    );
   }
 
   public callCompanionToCab(): void {
@@ -781,6 +918,7 @@ export class CoruscantEngine {
       rvShowerOn: this.rvShowerOn,
       rvCoffeeBrewed: this.rvCoffeeBrewed,
       rvWindowTinted: this.rvWindowTinted,
+      rvSunroofOpen: this.rvSunroofOpen,
       companionLocation: this.companionLocation,
     };
     const ok = writeGameSave(data);
@@ -819,6 +957,8 @@ export class CoruscantEngine {
     this.quests = new QuestManager();
     this.hasCompanion = true;
     this.autopilotActive = false;
+    this.autopilotArrivingStop = false;
+    this.autopilotStatusText = null;
     this.isInRvCabin = false;
     this.rvPose = 'stand';
     this.rvLightsOn = true;
@@ -826,6 +966,8 @@ export class CoruscantEngine {
     this.rvShowerOn = false;
     this.rvCoffeeBrewed = false;
     this.rvWindowTinted = false;
+    this.rvFridgeOpen = false;
+    this.rvSunroofOpen = false;
     this.companionLocation = 'cab';
     this.rvCompActivity = null;
     this.cabinTintDark = false;
@@ -888,6 +1030,8 @@ export class CoruscantEngine {
       this.activeSeat = null;
     }
     this.autopilotActive = false;
+    this.autopilotArrivingStop = false;
+    this.autopilotStatusText = null;
     this.isInRvCabin = false;
     this.rvPose = 'stand';
     this.leftWindowOpen = false;
@@ -904,6 +1048,8 @@ export class CoruscantEngine {
     this.rvShowerOn = Boolean(save.rvShowerOn);
     this.rvCoffeeBrewed = Boolean(save.rvCoffeeBrewed);
     this.rvWindowTinted = Boolean(save.rvWindowTinted);
+    this.rvFridgeOpen = false;
+    this.rvSunroofOpen = Boolean(save.rvSunroofOpen);
     this.companionLocation = save.companionLocation ?? 'cab';
     this.hasCompanion = save.hasCompanion ?? true;
     this.timePreset = save.timePreset ?? 'auto';
@@ -1703,8 +1849,8 @@ export class CoruscantEngine {
       ? this.interior.getObstacles(this.interiorMode)
       : this.world.getNearbyBuildings();
 
-    // Cancel autopilot if manual controls are used in driver seat or vehicle leaves ground road
-    // NOTE: Walking around inside the rear RV mini-home NEVER cancels autopilot!
+    // Cancel autopilot ONLY on manual driver controls, walking outside, or entering interior
+    // NOTE: Flying, entering orbit/space, and walking around the rear RV mini-home NEVER cancel autopilot!
     if (this.autopilotActive) {
       const manualDriverInput =
         !this.isInRvCabin &&
@@ -1713,84 +1859,22 @@ export class CoruscantEngine {
           this.inputs.steerLeft ||
           this.inputs.steerRight ||
           Math.abs(this.inputs.steerAxis) > 0.16);
-      if (
-        manualDriverInput ||
-        insideInterior ||
-        this.physics.isWalking ||
-        this.physics.flightState !== 'road'
-      ) {
+      if (manualDriverInput || insideInterior || this.physics.isWalking) {
         this.autopilotActive = false;
+        this.autopilotArrivingStop = false;
+        this.autopilotStatusText = null;
         if (manualDriverInput) {
           this.quests.showToast('Автопилот передал управление вам', 2.0);
         }
       }
     }
 
-    let driveInputs: ControlInputs = this.isInRvCabin
-      ? {
-          throttle: false,
-          brake: false,
-          steerLeft: false,
-          steerRight: false,
-          steerAxis: 0,
-          climb: false,
-          descend: false,
-          boost: false,
-        }
-      : this.inputs;
+    let driveInputs: ControlInputs = this.isInRvCabin ? this.rvIdleInputs : this.inputs;
     if (this.autopilotActive) {
-      const pos = this.physics.position;
-      const cx = Math.round(pos.x / 320);
-      const cz = Math.round(pos.z / 320);
-      const centerDist = Math.hypot(pos.x - cx * 320, pos.z - cz * 320);
-      const arms = getChunkRoadArms(cx, cz, this.world.getWorldSeed());
-      const dirs = [
-        { idx: 0, ok: arms.n, fx: 0, fz: -1, heading: 0 },
-        { idx: 1, ok: arms.e, fx: 1, fz: 0, heading: -Math.PI / 2 },
-        { idx: 2, ok: arms.s, fx: 0, fz: 1, heading: Math.PI },
-        { idx: 3, ok: arms.w, fx: -1, fz: 0, heading: Math.PI / 2 },
-      ];
-      const interKey = `${cx},${cz}`;
-      if (centerDist < 22 && this.autopilotLastIntersectionKey !== interKey) {
-        this.autopilotLastIntersectionKey = interKey;
-        const opposite = (this.autopilotDirIndex + 2) % 4;
-        const forwardOk = dirs[this.autopilotDirIndex].ok;
-        const turns = dirs.filter(
-          (d) => d.ok && d.idx !== opposite && d.idx !== this.autopilotDirIndex,
-        );
-        if (!forwardOk || (turns.length > 0 && Math.abs(cx * 7 + cz * 13) % 5 === 0)) {
-          const pick =
-            turns[Math.abs(cx + cz) % Math.max(1, turns.length)] ??
-            dirs.find((d) => d.ok) ??
-            dirs[0];
-          this.autopilotDirIndex = pick.idx;
-        }
-      } else if (centerDist > 42) {
-        this.autopilotLastIntersectionKey = '';
-      }
-
-      const activeDir = dirs[this.autopilotDirIndex];
-      const rx = -activeDir.fz;
-      const rz = activeDir.fx;
-      const laneRefX = cx * 320 + rx * 8.5;
-      const laneRefZ = cz * 320 + rz * 8.5;
-      const crossTrackErr = (pos.x - laneRefX) * rx + (pos.z - laneRefZ) * rz;
-      const desiredHeading =
-        activeDir.heading + THREE.MathUtils.clamp(crossTrackErr * 0.085, -0.45, 0.45);
-      let headingErr = desiredHeading - this.physics.heading;
-      while (headingErr > Math.PI) headingErr -= Math.PI * 2;
-      while (headingErr < -Math.PI) headingErr += Math.PI * 2;
-
-      const speedNowKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
-      this.autopilotInputs.throttle = speedNowKmh < 68;
-      this.autopilotInputs.brake = speedNowKmh > 78;
-      this.autopilotInputs.steerLeft = false;
-      this.autopilotInputs.steerRight = false;
-      this.autopilotInputs.steerAxis = THREE.MathUtils.clamp(headingErr * 2.1, -1, 1);
-      this.autopilotInputs.climb = false;
-      this.autopilotInputs.descend = false;
-      this.autopilotInputs.boost = false;
+      this.updateAutopilot(delta, activeCfg, walkObstacles);
       driveInputs = this.autopilotInputs;
+    } else {
+      this.autopilotStatusText = null;
     }
 
     this.physics.update(
@@ -2264,10 +2348,24 @@ export class CoruscantEngine {
           rvShowerOn: this.rvShowerOn,
           rvCoffeeBrewed: this.rvCoffeeBrewed,
           rvWindowTinted: this.rvWindowTinted,
+          rvFridgeOpen: this.rvFridgeOpen,
+          rvSunroofOpen: this.rvSunroofOpen,
           isInRvCabin: this.isInRvCabin,
         },
       );
     }
+
+    this.audio.update(
+      this.isInRvCabin
+        ? 'rv'
+        : inSpace
+          ? 'space'
+          : inOrbitMode
+            ? 'orbit'
+            : this.physics.flightState !== 'road'
+              ? 'flight'
+              : 'road',
+    );
 
     this.renderer.render(this.scene, this.camera);
 
@@ -2326,8 +2424,16 @@ export class CoruscantEngine {
           : null;
 
       const lookingAtDoorSide = this.getLookingAtDoorSide();
-      const canToggleAutopilot =
-        !insideInterior && !isWalking && this.physics.flightState === 'road';
+      const canEnterRvCabin =
+        !insideInterior &&
+        !isWalking &&
+        !this.isInRvCabin &&
+        (this.physics.flightState === 'road' ||
+          this.physics.flightState === 'ascending' ||
+          this.physics.flightState === 'flight' ||
+          this.physics.flightState === 'orbit' ||
+          this.physics.flightState === 'space');
+      const canToggleAutopilot = !insideInterior && !isWalking;
       const canOpenWindow =
         !insideInterior &&
         !isWalking &&
@@ -2476,6 +2582,7 @@ export class CoruscantEngine {
         cabinThemes: this.quests.getCabinThemeOptions(),
         vehicleId: this.physics.vehicleId,
         vehicleName: this.quests.getCurrentVehicleName(),
+        canEnterRvCabin,
         isInRvCabin: this.isInRvCabin,
         rvPose: this.rvPose,
         rvNearbyStation,
@@ -2484,16 +2591,20 @@ export class CoruscantEngine {
         rvShowerOn: this.rvShowerOn,
         rvCoffeeBrewed: this.rvCoffeeBrewed,
         rvWindowTinted: this.rvWindowTinted,
+        rvFridgeOpen: this.rvFridgeOpen,
+        rvSunroofOpen: this.rvSunroofOpen,
         companionLocation: this.companionLocation,
         companionRvActivity: this.companionLocation === 'rv' ? this.rvCompActivity : null,
         pedestriansHitCount: this.quests.pedestriansHitCount,
         autopilotActive: this.autopilotActive,
         canToggleAutopilot,
+        autopilotStatusText: this.autopilotStatusText,
         cabinTempC: 22,
         cabinTintDark: this.cabinTintDark,
         cabinRoofLight: this.cabinRoofLight,
         cabinSeatsReclined: this.cabinSeatsReclined,
         cabinMonitorOpen: this.cabinMonitorOpen,
+        cabinAudioOn: this.audio.isEnabled(),
         lookingAtDoorSide,
         leftWindowOpen: this.leftWindowOpen,
         rightWindowOpen: this.rightWindowOpen,
@@ -2510,10 +2621,456 @@ export class CoruscantEngine {
     }
   };
 
+  private pickAutopilotSite(
+    sites: LandingSite[],
+    preferredSiteId?: string,
+    tx?: number,
+    tz?: number,
+  ): LandingSite | null {
+    if (sites.length === 0) return null;
+    if (preferredSiteId) {
+      const exact = sites.find((s) => s.id === preferredSiteId);
+      if (exact) return exact;
+    }
+    if (tx !== undefined && tz !== undefined) {
+      let best = sites[0];
+      let bestDist = Infinity;
+      for (let i = 0; i < sites.length; i++) {
+        const s = sites[i];
+        const sx = s.approachX ?? s.x;
+        const sz = s.approachZ ?? s.z;
+        const d = Math.hypot(sx - tx, sz - tz);
+        if (d < bestDist) {
+          bestDist = d;
+          best = s;
+        }
+      }
+      return best;
+    }
+    return sites[0];
+  }
+
+  private runRoadCruiseFallback(): void {
+    const pos = this.physics.position;
+    const cx = Math.round(pos.x / 320);
+    const cz = Math.round(pos.z / 320);
+    const centerDist = Math.hypot(pos.x - cx * 320, pos.z - cz * 320);
+    const arms = getChunkRoadArms(cx, cz, this.world.getWorldSeed());
+    const dirs = [
+      { idx: 0, ok: arms.n, fx: 0, fz: -1, heading: 0 },
+      { idx: 1, ok: arms.e, fx: 1, fz: 0, heading: -Math.PI / 2 },
+      { idx: 2, ok: arms.s, fx: 0, fz: 1, heading: Math.PI },
+      { idx: 3, ok: arms.w, fx: -1, fz: 0, heading: Math.PI / 2 },
+    ];
+    const interKey = `${cx},${cz}`;
+    if (centerDist < 22 && this.autopilotLastIntersectionKey !== interKey) {
+      this.autopilotLastIntersectionKey = interKey;
+      const opposite = (this.autopilotDirIndex + 2) % 4;
+      const forwardOk = dirs[this.autopilotDirIndex].ok;
+      const turns = dirs.filter(
+        (d) => d.ok && d.idx !== opposite && d.idx !== this.autopilotDirIndex,
+      );
+      if (!forwardOk || (turns.length > 0 && Math.abs(cx * 7 + cz * 13) % 5 === 0)) {
+        const pick =
+          turns[Math.abs(cx + cz) % Math.max(1, turns.length)] ??
+          dirs.find((d) => d.ok) ??
+          dirs[0];
+        this.autopilotDirIndex = pick.idx;
+      }
+    } else if (centerDist > 42) {
+      this.autopilotLastIntersectionKey = '';
+    }
+
+    const activeDir = dirs[this.autopilotDirIndex];
+    const rx = -activeDir.fz;
+    const rz = activeDir.fx;
+    const laneRefX = cx * 320 + rx * 8.5;
+    const laneRefZ = cz * 320 + rz * 8.5;
+    const crossTrackErr = (pos.x - laneRefX) * rx + (pos.z - laneRefZ) * rz;
+    const desiredHeading =
+      activeDir.heading + THREE.MathUtils.clamp(crossTrackErr * 0.085, -0.45, 0.45);
+    let headingErr = desiredHeading - this.physics.heading;
+    while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+    while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+
+    const speedNowKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+    this.autopilotInputs.throttle = speedNowKmh < 64;
+    this.autopilotInputs.brake = speedNowKmh > 74;
+    this.autopilotInputs.steerAxis = THREE.MathUtils.clamp(headingErr * 2.1, -1, 1);
+    this.autopilotStatusText = 'Автопилот · Круиз по проспекту';
+  }
+
+  private updateAutopilot(
+    delta: number,
+    activeCfg: PlanetConfig,
+    walkObstacles: BuildingFootprint[],
+  ): void {
+    const inp = this.autopilotInputs;
+    inp.throttle = false;
+    inp.brake = false;
+    inp.steerLeft = false;
+    inp.steerRight = false;
+    inp.steerAxis = 0;
+    inp.climb = false;
+    inp.descend = false;
+    inp.boost = false;
+
+    const fs = this.physics.flightState;
+    const curQId = this.quests.getActiveQuestId();
+    if (this.autopilotQuestId && curQId !== this.autopilotQuestId) {
+      this.autopilotArrivingStop = true;
+    }
+
+    if (this.autopilotArrivingStop) {
+      this.autopilotStatusText = 'Прибыли к метке · Остановка';
+      if (fs === 'space') {
+        if (Math.abs(this.physics.spaceSpeed) > 3) {
+          inp.brake = this.physics.spaceSpeed > 0;
+          inp.throttle = this.physics.spaceSpeed < 0;
+        } else {
+          this.physics.spaceSpeed = 0;
+          this.physics.forwardSpeed = 0;
+          this.autopilotActive = false;
+          this.autopilotArrivingStop = false;
+          this.autopilotStatusText = null;
+          this.audio.playChime('arrived');
+          this.quests.showToast('Автопилот: прибыли к точке назначения', 3.2);
+        }
+        return;
+      }
+      if (fs === 'flight' || fs === 'ascending') {
+        if (this.physics.forwardSpeed > 2.2) {
+          inp.brake = true;
+        } else {
+          this.physics.forwardSpeed = 0;
+          this.autopilotActive = false;
+          this.autopilotArrivingStop = false;
+          this.autopilotStatusText = null;
+          this.audio.playChime('arrived');
+          this.quests.showToast('Автопилот: прибыли к точке и зависли', 3.4);
+        }
+        return;
+      }
+      if (fs === 'road') {
+        if (this.physics.forwardSpeed > 0.45) {
+          inp.brake = true;
+        } else {
+          this.physics.forwardSpeed = 0;
+          this.autopilotActive = false;
+          this.autopilotArrivingStop = false;
+          this.autopilotStatusText = null;
+          this.audio.playChime('arrived');
+          this.quests.showToast('Автопилот: прибыли к метке квеста и остановились', 3.6);
+        }
+      }
+      return;
+    }
+
+    const pos = this.physics.position;
+    const guidance = this.quests.getActiveQuestGuidance(
+      this.physics.activePlanetId,
+      pos,
+      this.world.getLandmarks(),
+    );
+    if (!guidance) {
+      if (fs === 'road') {
+        this.runRoadCruiseFallback();
+      } else {
+        this.autopilotStatusText = 'Автопилот · Стабилизация курса';
+      }
+      return;
+    }
+
+    let tx = guidance.targetX;
+    let tz = guidance.targetZ;
+    let targetLabel = guidance.targetName;
+
+    if (guidance.kind === 'road_rings') {
+      const gates = this.world.getRoadGates();
+      let bestDist = Infinity;
+      for (let i = 0; i < gates.length; i++) {
+        const g = gates[i];
+        if (this.quests.hasPassedRoadGate(g.id)) continue;
+        const d = Math.hypot(g.x - pos.x, g.z - pos.z);
+        if (d < bestDist) {
+          bestDist = d;
+          tx = g.x;
+          tz = g.z;
+          targetLabel = 'Энерго-врата трассы';
+        }
+      }
+    } else if (guidance.kind === 'countryside') {
+      const fc = this.world.getNearestFieldCenter(pos.x, pos.z);
+      if (fc) {
+        tx = fc.x;
+        tz = fc.z;
+        targetLabel = 'Поля и луга';
+      }
+    } else if (guidance.kind === 'city_walk' && tx === undefined) {
+      const cafe = this.world.getNearestCafe(pos.x, pos.z);
+      if (cafe) {
+        tx = cafe.landmark.x;
+        tz = cafe.landmark.z;
+        targetLabel = cafe.landmark.name;
+      }
+    }
+
+    const needPlanetId = guidance.targetPlanet ?? this.physics.activePlanetId;
+    const onTargetPlanet = this.physics.activePlanetId === needPlanetId;
+    const targetPlanetCfg = getPlanetConfig(needPlanetId);
+
+    // Phase 1: Interplanetary Transfer (need another planet or currently in deep space / orbit)
+    if (!onTargetPlanet || fs === 'space' || fs === 'orbit' || fs === 'launching' || fs === 'launching_orbit') {
+      if (!onTargetPlanet) {
+        if (fs === 'road' || fs === 'descending') {
+          this.autopilotStatusText = `Взлёт к ${targetPlanetCfg.name}`;
+          if (this.physics.forwardSpeed < 18) {
+            inp.throttle = true;
+          } else {
+            this.physics.toggleFlight();
+          }
+          return;
+        }
+        if (fs === 'ascending' || fs === 'flight') {
+          this.autopilotStatusText = `Подъём в космос · курс ${targetPlanetCfg.name}`;
+          inp.throttle = true;
+          inp.boost = true;
+          if (pos.y >= 72) {
+            this.physics.launchToSpace();
+          }
+          return;
+        }
+        if (fs === 'orbit') {
+          this.autopilotStatusText = `Отстыковка от ${activeCfg.name}…`;
+          this.physics.launchFromOrbitToSpace();
+          return;
+        }
+        if (fs === 'launching' || fs === 'launching_orbit' || fs === 'entering') {
+          this.autopilotStatusText = `Выход на гипертрассу к ${targetPlanetCfg.name}…`;
+          inp.throttle = true;
+          inp.boost = true;
+          return;
+        }
+      }
+
+      if (fs === 'space') {
+        _apSpaceVec.subVectors(targetPlanetCfg.spacePos, this.physics.spacePos);
+        const distToPlanet = _apSpaceVec.length();
+        const horiz = Math.max(0.001, Math.hypot(_apSpaceVec.x, _apSpaceVec.z));
+        const desiredHeading = Math.atan2(-_apSpaceVec.x, -_apSpaceVec.z);
+        const desiredPitch = THREE.MathUtils.clamp(
+          Math.atan2(_apSpaceVec.y, horiz),
+          -1.0,
+          1.0,
+        );
+        let headingErr = desiredHeading - this.physics.heading;
+        while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+        while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+        const pitchErr = desiredPitch - this.physics.spacePitch;
+
+        inp.steerAxis = THREE.MathUtils.clamp(headingErr * 2.35, -1, 1);
+        inp.climb = pitchErr > 0.04;
+        inp.descend = pitchErr < -0.04;
+
+        const aligned = Math.abs(headingErr) < 0.72 && Math.abs(pitchErr) < 0.72;
+        if (aligned || this.physics.spaceSpeed < 10) {
+          inp.throttle = true;
+          inp.boost = aligned && distToPlanet > targetPlanetCfg.orbitRange * 2.1;
+        }
+
+        const kmLeft = Math.max(0, Math.round((distToPlanet - targetPlanetCfg.radius) * 0.12));
+        this.autopilotStatusText = `Перелёт к ${targetPlanetCfg.name} · ${kmLeft} км`;
+
+        if (distToPlanet <= targetPlanetCfg.orbitRange * 1.25) {
+          const sites = getPlanetLandingSites(targetPlanetCfg.id);
+          const bestSite = this.pickAutopilotSite(sites, guidance.preferredSiteId, tx, tz);
+          this.physics.enterPlanetOrbit(targetPlanetCfg, bestSite?.id ?? null);
+          this.quests.onOrbitEntered();
+          this.quests.showToast(`Орбита · ${targetPlanetCfg.name} — автопосадка`, 3.0);
+        }
+        return;
+      }
+
+      if (fs === 'orbit') {
+        const sites = getPlanetLandingSites(activeCfg.id);
+        const site = this.pickAutopilotSite(sites, guidance.preferredSiteId, tx, tz);
+        if (site) {
+          const spawnX = site.approachX ?? site.x;
+          const spawnZ = site.approachZ ?? site.z;
+          const lookX = site.lookAtX ?? site.x;
+          const lookZ = site.lookAtZ ?? site.z;
+          this.physics.selectedLandingSiteId = site.id;
+          this.physics.descendToSite(spawnX, spawnZ, lookX, lookZ);
+          this.quests.onOrbitLandingCompleted(this.physics.activePlanetId, site.name);
+          this.autopilotStatusText = `Посадка: ${site.name}`;
+          this.quests.showToast(`Автопилот: вход в атмосферу · ${site.name}`, 3.2);
+        }
+        return;
+      }
+    }
+
+    // Phase 2: Entering atmosphere from orbit
+    if (fs === 'entering') {
+      this.autopilotStatusText = `Спуск в атмосферу · ${targetLabel}`;
+      if (tx !== undefined && tz !== undefined) {
+        const dx = tx - pos.x;
+        const dz = tz - pos.z;
+        const desiredHeading = Math.atan2(-dx, -dz);
+        let headingErr = desiredHeading - this.physics.heading;
+        while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+        while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+        inp.steerAxis = THREE.MathUtils.clamp(headingErr * 1.6, -1, 1);
+      }
+      inp.throttle = this.physics.forwardSpeed < 28;
+      return;
+    }
+
+    // Phase 3: Cloud Glide Quest
+    if (guidance.kind === 'cloud_glide') {
+      if (fs === 'road' || fs === 'descending') {
+        if (this.physics.forwardSpeed < 16) {
+          inp.throttle = true;
+        } else {
+          this.physics.toggleFlight();
+        }
+        this.autopilotStatusText = 'Взлёт в облачный слой…';
+        return;
+      }
+      this.autopilotStatusText = 'Полёт над облаками (квест)';
+      inp.throttle = this.physics.forwardSpeed < 44;
+      inp.steerAxis = 0.24;
+      return;
+    }
+
+    // Phase 4: Planet Visit (just land gently on the road and stop)
+    if (tx === undefined || tz === undefined) {
+      if (fs === 'flight' || fs === 'ascending') {
+        this.autopilotStatusText = `Снижение на поверхность ${activeCfg.name}`;
+        this.physics.toggleFlight();
+        inp.throttle = this.physics.forwardSpeed < 18;
+      } else if (fs === 'descending') {
+        this.autopilotStatusText = `Мягкая посадка на ${activeCfg.name}`;
+        inp.brake = this.physics.forwardSpeed > 18;
+      } else {
+        this.autopilotArrivingStop = true;
+      }
+      return;
+    }
+
+    // Phase 5: Surface / Low-Altitude Hop to Target (tx, tz)
+    const dx = tx - pos.x;
+    const dz = tz - pos.z;
+    const dist = Math.hypot(dx, dz);
+    const desiredHeading = Math.atan2(-dx, -dz);
+    let headingErr = desiredHeading - this.physics.heading;
+    while (headingErr > Math.PI) headingErr -= Math.PI * 2;
+    while (headingErr < -Math.PI) headingErr += Math.PI * 2;
+
+    if (fs === 'road' && dist > 380 && guidance.kind !== 'road_rings') {
+      this.autopilotStatusText = `Перелёт по воздуху · ${Math.round(dist)} м`;
+      if (this.physics.forwardSpeed < 16) {
+        inp.throttle = true;
+        inp.steerAxis = THREE.MathUtils.clamp(headingErr * 1.8, -1, 1);
+      } else {
+        this.physics.toggleFlight();
+      }
+      return;
+    }
+
+    if (fs === 'ascending' || fs === 'flight') {
+      this.autopilotStatusText = `Курс в небе: ${targetLabel} · ${Math.round(dist)} м`;
+      inp.steerAxis = THREE.MathUtils.clamp(headingErr * 2.0, -1, 1);
+      const speedNow = this.physics.forwardSpeed;
+      const wantSpeed = dist > 260 ? 78 : 34;
+      inp.throttle = speedNow < wantSpeed;
+      inp.brake = speedNow > wantSpeed + 12;
+      inp.boost = dist > 480 && Math.abs(headingErr) < 0.35;
+      if (dist < 165) {
+        this.physics.toggleFlight();
+      }
+      return;
+    }
+
+    if (fs === 'descending') {
+      this.autopilotStatusText = `Заход на посадку: ${targetLabel} · ${Math.round(dist)} м`;
+      inp.steerAxis = THREE.MathUtils.clamp(headingErr * 1.8, -1, 1);
+      const wantSpeed = THREE.MathUtils.clamp(dist * 0.3, 8, 28);
+      inp.throttle = this.physics.forwardSpeed < wantSpeed;
+      inp.brake = this.physics.forwardSpeed > wantSpeed + 6;
+      return;
+    }
+
+    // On road: Drive toward (tx, tz) with obstacle lookahead & clean stop at marker
+    this.autopilotStatusText = `К метке «${targetLabel}» · ${Math.round(dist)} м`;
+    if (dist <= 11.5) {
+      this.autopilotArrivingStop = true;
+      if (guidance.requiresWalk) {
+        this.quests.showToast(
+          `Автопилот: прибыли к «${targetLabel}» — можно выйти из авто`,
+          3.8,
+        );
+      }
+      return;
+    }
+
+    // Obstacle avoidance lookahead
+    if (this.autopilotAvoidTimer > 0) {
+      this.autopilotAvoidTimer = Math.max(0, this.autopilotAvoidTimer - delta);
+    } else {
+      const fwdX = -Math.sin(this.physics.heading);
+      const fwdZ = -Math.cos(this.physics.heading);
+      const rightX = Math.cos(this.physics.heading);
+      const rightZ = -Math.sin(this.physics.heading);
+      for (let i = 0; i < walkObstacles.length; i++) {
+        const b = walkObstacles[i];
+        const bdx = b.x - pos.x;
+        const bdz = b.z - pos.z;
+        const ahead = bdx * fwdX + bdz * fwdZ;
+        const lateral = bdx * rightX + bdz * rightZ;
+        const clearW = b.halfW + 6.5;
+        const clearL = b.halfD + 17.5;
+        if (ahead > 0 && ahead < clearL && Math.abs(lateral) < clearW) {
+          this.autopilotAvoidDir = lateral >= 0 ? 1 : -1;
+          this.autopilotAvoidTimer = 0.85;
+          break;
+        }
+      }
+    }
+
+    // Stuck recovery: hop cleanly over obstacle if blocked for >1.4s
+    const movedSince = Math.hypot(pos.x - this.autopilotLastPosX, pos.z - this.autopilotLastPosZ);
+    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+    if (movedSince < 0.45 && speedKmh < 8 && dist > 20) {
+      this.autopilotStuckTimer += delta;
+      if (this.autopilotStuckTimer > 1.4) {
+        this.autopilotStuckTimer = 0;
+        this.physics.forwardSpeed = Math.max(this.physics.forwardSpeed, 17);
+        this.physics.toggleFlight();
+        return;
+      }
+    } else {
+      this.autopilotStuckTimer = 0;
+      this.autopilotLastPosX = pos.x;
+      this.autopilotLastPosZ = pos.z;
+    }
+
+    let steerCmd = THREE.MathUtils.clamp(headingErr * 2.15, -1, 1);
+    if (this.autopilotAvoidTimer > 0) {
+      steerCmd = this.autopilotAvoidDir * 0.85;
+    }
+    inp.steerAxis = steerCmd;
+
+    const targetKmh =
+      dist > 140 ? 64 : dist > 60 ? 44 : dist > 26 ? 24 : 13;
+    inp.throttle = speedKmh < targetKmh - 1.5;
+    inp.brake = speedKmh > targetKmh + 5;
+  }
+
   public dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.rafId);
     clearTimeout(this.timerId);
+    this.audio.dispose();
 
     window.removeEventListener('resize', this.handleResize);
     window.removeEventListener('pointermove', this.handlePointerMove);

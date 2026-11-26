@@ -66,6 +66,7 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   cabinThemes: [],
   vehicleId: 'coupe',
   vehicleName: 'Автодом «Горизонт»',
+  canEnterRvCabin: true,
   isInRvCabin: false,
   rvPose: 'stand',
   rvNearbyStation: null,
@@ -74,16 +75,20 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   rvShowerOn: false,
   rvCoffeeBrewed: false,
   rvWindowTinted: false,
+  rvFridgeOpen: false,
+  rvSunroofOpen: false,
   companionLocation: 'cab',
   companionRvActivity: null,
   pedestriansHitCount: 0,
   autopilotActive: false,
   canToggleAutopilot: true,
+  autopilotStatusText: null,
   cabinTempC: 22,
   cabinTintDark: false,
   cabinRoofLight: false,
   cabinSeatsReclined: false,
   cabinMonitorOpen: false,
+  cabinAudioOn: false,
   lookingAtDoorSide: null,
   leftWindowOpen: false,
   rightWindowOpen: false,
@@ -422,6 +427,26 @@ export default function App() {
     engineRef.current?.toggleRvWindowTint();
   }, []);
 
+  const handleToggleRvSunroof = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleRvSunroof();
+  }, []);
+
+  const handleUseRvFridge = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.useRvFridge();
+  }, []);
+
+  const handleServeRvCoffee = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.serveRvCoffeeToCompanion();
+  }, []);
+
+  const handleToggleCabinAudio = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleCabinAudio();
+  }, []);
+
   const handleCallCompanionToCab = useCallback(() => {
     hapticTap(12);
     engineRef.current?.callCompanionToCab();
@@ -516,6 +541,14 @@ export default function App() {
   const handleToggleAutopilot = useCallback(() => {
     hapticTap(14);
     engineRef.current?.toggleAutopilot();
+  }, []);
+
+  const handleStartQuestAutopilot = useCallback((questId?: string) => {
+    hapticTap(14);
+    setJournalOpen(false);
+    setSettingsOpen(false);
+    setCafeOpen(false);
+    engineRef.current?.startQuestAutopilot(questId);
   }, []);
 
   const handleToggleCabinTint = useCallback(() => {
@@ -792,10 +825,12 @@ export default function App() {
         onSkipQuest={handleSkipQuest}
         onSelectCabinTheme={handleSelectCabinTheme}
         onToggleAutopilot={handleToggleAutopilot}
+        onStartQuestAutopilot={handleStartQuestAutopilot}
         onToggleCabinTint={handleToggleCabinTint}
         onToggleCabinRoofLight={handleToggleCabinRoofLight}
         onToggleCabinSeatsRecline={handleToggleCabinSeatsRecline}
         onToggleCabinMonitor={handleToggleCabinMonitor}
+        onToggleCabinAudio={handleToggleCabinAudio}
         onToggleDoorWindow={handleToggleDoorWindow}
         onTriggerBoost={handleTriggerBoost}
         onToggleFlight={handleToggleFlight}
@@ -814,6 +849,9 @@ export default function App() {
         onUseRvToilet={handleUseRvToilet}
         onToggleRvBedPose={handleToggleRvBedPose}
         onToggleRvWindowTint={handleToggleRvWindowTint}
+        onToggleRvSunroof={handleToggleRvSunroof}
+        onUseRvFridge={handleUseRvFridge}
+        onServeRvCoffee={handleServeRvCoffee}
         onCallCompanionToCab={handleCallCompanionToCab}
         onSendCompanionToRv={handleSendCompanionToRv}
         onSaveGame={handleSaveGame}
