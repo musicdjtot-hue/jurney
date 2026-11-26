@@ -25,13 +25,15 @@ import { SkyAtmosphere } from './sky';
 import { CoruscantWorld, getChunkRoadArms } from './world';
 import type {
   CabinThemeId,
+  CompanionLocation,
   ControlInputs,
   InteriorMode,
   InteriorPose,
   LandingSite,
-  NearbyVehiclePickup,
   PlanetId,
   PlanetMarker,
+  RvPose,
+  RvStationKind,
   SaveMetaSnapshot,
   SeasonId,
   SeasonSetting,
@@ -39,7 +41,6 @@ import type {
   SpecialSpotInfo,
   TimePreset,
   VehicleFlightState,
-  VehicleTypeId,
   WeatherMode,
   WeatherSetting,
 } from '../types/simulation';
@@ -181,6 +182,25 @@ export class CoruscantEngine {
   private serbosDialogLine: string | null = null;
   private serbosDialogTimer = 0;
 
+  // RV Mini-Home state & Companion RV autonomy
+  private isInRvCabin = false;
+  private rvPose: RvPose = 'stand';
+  private rvPlayerLocalPos = new THREE.Vector3(0, 0.195, 1.15);
+  private rvLookYaw = Math.PI;
+  private rvLookPitch = 0;
+  private rvWalkBob = 0;
+  private rvLightsOn = true;
+  private rvTvOn = false;
+  private rvShowerOn = false;
+  private rvCoffeeBrewed = false;
+  private rvWindowTinted = false;
+  private companionLocation: CompanionLocation = 'cab';
+  private rvCompLocalPos = new THREE.Vector3(0.22, 0.195, 1.85);
+  private rvCompHeading = 0;
+  private rvCompTargetIdx = 0;
+  private rvCompPauseTimer = 1.5;
+  private rvCompActivity: string | null = null;
+
   constructor(
     container: HTMLElement,
     onSnapshot: (snap: SimulationSnapshot) => void,
@@ -275,7 +295,7 @@ export class CoruscantEngine {
     });
 
     this.vehicleGroup.add(this.cockpit.group);
-    this.camera.position.set(-0.36, 1.13, 0.08);
+    this.camera.position.set(-0.42, 1.13, 0.08);
     this.vehicleGroup.add(this.camera);
 
     this.headlight = new THREE.SpotLight(0xe0f2fe, 4.5, 160, Math.PI / 5, 0.45, 1.3);
@@ -327,19 +347,19 @@ export class CoruscantEngine {
   }
 
   public toggleFlight(): void {
-    if (this.interiorMode !== 'none') return;
+    if (this.interiorMode !== 'none' || this.isInRvCabin) return;
     this.autopilotActive = false;
     this.physics.toggleFlight();
   }
 
   public enterOrbitFromFlight(): void {
-    if (this.interiorMode !== 'none') return;
+    if (this.interiorMode !== 'none' || this.isInRvCabin) return;
     this.autopilotActive = false;
     this.physics.launchToOrbit();
   }
 
   public launchToSpace(): void {
-    if (this.interiorMode !== 'none') return;
+    if (this.interiorMode !== 'none' || this.isInRvCabin) return;
     this.autopilotActive = false;
     if (this.physics.flightState === 'orbit') {
       this.physics.launchFromOrbitToSpace();
@@ -443,10 +463,149 @@ export class CoruscantEngine {
   }
 
   private getLookingAtDoorSide(): 'left' | 'right' | null {
-    if (this.interiorMode !== 'none' || this.physics.isWalking) return null;
+    if (this.interiorMode !== 'none' || this.physics.isWalking || this.isInRvCabin) return null;
     if (this.lookYaw > 0.46) return 'left';
     if (this.lookYaw < -0.58) return 'right';
     return null;
+  }
+
+  public enterRvCabin(): boolean {
+    if (
+      this.interiorMode !== 'none' ||
+      this.physics.isWalking ||
+      this.physics.flightState !== 'road'
+    ) {
+      return false;
+    }
+    this.isInRvCabin = true;
+    this.rvPose = 'stand';
+    this.rvPlayerLocalPos.set(0, 0.195, 1.05);
+    this.rvLookYaw = Math.PI;
+    this.rvLookPitch = 0;
+    this.rvWalkBob = 0;
+    this.camera.position.set(0, 1.66, 1.05);
+    this.camera.rotation.set(0, Math.PI, 0);
+    this.vehicleGroup.add(this.camera);
+    this.quests.showToast(
+      this.autopilotActive
+        ? 'Мини-дом · Автодом едет на автопилоте'
+        : 'Вы вошли в мини-дом в задней части авто',
+      3.0,
+    );
+    return true;
+  }
+
+  public returnToDriverSeat(): void {
+    if (!this.isInRvCabin) return;
+    this.isInRvCabin = false;
+    this.rvPose = 'stand';
+    this.lookYaw = 0;
+    this.lookPitch = 0;
+    this.targetLookYaw = 0;
+    this.targetLookPitch = 0;
+    this.camera.position.set(
+      -0.42,
+      this.cabinSeatsReclined ? 0.87 : 1.13,
+      this.cabinSeatsReclined ? 0.28 : 0.08,
+    );
+    this.camera.rotation.set(0, 0, 0);
+    this.vehicleGroup.add(this.camera);
+    this.quests.showToast('Вы вернулись за руль кабины', 2.2);
+  }
+
+  public toggleRvLights(): void {
+    this.rvLightsOn = !this.rvLightsOn;
+    this.quests.showToast(
+      this.rvLightsOn ? 'Освещение мини-дома включено' : 'Освещение мини-дома выключено',
+      2.2,
+    );
+    this.saveGame(false);
+  }
+
+  public toggleRvTv(): void {
+    this.rvTvOn = !this.rvTvOn;
+    this.quests.showToast(
+      this.rvTvOn ? 'Телевизор в мини-доме включён' : 'Телевизор выключен',
+      2.4,
+    );
+    this.saveGame(false);
+  }
+
+  public brewRvCoffee(): void {
+    this.rvCoffeeBrewed = !this.rvCoffeeBrewed;
+    if (this.rvCoffeeBrewed) {
+      this.quests.showToast('Кофеварка: свежесваренный кофе готов!', 2.8);
+      if (this.hasCompanion) {
+        this.quests.setCompanionNote(
+          '«Ммм, какой аромат кофе по всему мини-дому! Идеальный перерыв в пути».',
+          4.6,
+        );
+      }
+    } else {
+      this.quests.showToast('Чашки убраны со стойки', 2.0);
+    }
+    this.saveGame(false);
+  }
+
+  public toggleRvShower(): void {
+    this.rvShowerOn = !this.rvShowerOn;
+    this.quests.showToast(
+      this.rvShowerOn ? 'Тёплый душ включён' : 'Душ выключен',
+      2.4,
+    );
+    this.saveGame(false);
+  }
+
+  public useRvToilet(): void {
+    this.cockpit.triggerToiletFlush();
+    this.quests.showToast('Санузел: вода смыта · Полный комфорт', 2.4);
+  }
+
+  public toggleRvBedPose(): void {
+    if (!this.isInRvCabin) return;
+    if (this.rvPose === 'lie') {
+      this.rvPose = 'stand';
+      this.rvPlayerLocalPos.set(-0.18, 0.195, 3.65);
+      this.rvLookYaw = Math.PI * 0.5;
+      this.rvLookPitch = 0;
+      this.quests.showToast('Вы встали с кровати', 2.0);
+    } else {
+      this.rvPose = 'lie';
+      this.rvLookYaw = 0.22;
+      this.rvLookPitch = 0.08;
+      this.quests.showToast('Вы легли на кровать в мини-доме', 2.6);
+    }
+  }
+
+  public toggleRvWindowTint(): void {
+    this.rvWindowTinted = !this.rvWindowTinted;
+    this.quests.showToast(
+      this.rvWindowTinted ? 'Окна мини-дома затонированы' : 'Окна мини-дома снова прозрачные',
+      2.4,
+    );
+    this.saveGame(false);
+  }
+
+  public callCompanionToCab(): void {
+    if (!this.hasCompanion || this.companionLocation === 'cab') return;
+    this.companionLocation = 'cab';
+    this.rvCompActivity = null;
+    this.quests.setCompanionNote('«Уже иду обратно в кабину! Люблю сидеть рядом с тобой в дороге».', 4.8);
+    this.quests.showToast('Спутница вернулась в кабину', 2.6);
+    this.saveGame(false);
+  }
+
+  public sendCompanionToRv(): void {
+    if (!this.hasCompanion || this.companionLocation === 'rv') return;
+    this.companionLocation = 'rv';
+    this.rvCompLocalPos.set(0.18, 0.195, 1.35);
+    this.rvCompHeading = Math.PI;
+    this.rvCompTargetIdx = 0;
+    this.rvCompPauseTimer = 0.6;
+    this.rvCompActivity = 'Готовит кофе на кухне';
+    this.quests.setCompanionNote('«Пойду пройдусь в мини-дом — заглядывай ко мне на автопилоте!»', 4.8);
+    this.quests.showToast('Спутница ушла в мини-дом', 2.6);
+    this.saveGame(false);
   }
 
   public toggleDoorWindow(): void {
@@ -503,8 +662,13 @@ export class CoruscantEngine {
     const site = sites.find((s) => s.id === targetId) ?? sites[0];
     if (!site) return;
 
+    const spawnX = site.approachX ?? site.x;
+    const spawnZ = site.approachZ ?? site.z;
+    const lookX = site.lookAtX ?? site.x;
+    const lookZ = site.lookAtZ ?? site.z;
+
     this.physics.selectedLandingSiteId = site.id;
-    this.physics.descendToSite(site.x, site.z);
+    this.physics.descendToSite(spawnX, spawnZ, lookX, lookZ);
     this.quests.onOrbitLandingCompleted(this.physics.activePlanetId, site.name);
     this.quests.showToast(`Вход в атмосферу · ${site.name}`, 3.5);
     this.saveGame(false);
@@ -530,40 +694,6 @@ export class CoruscantEngine {
     return true;
   }
 
-  public swapToNearbyVehicle(): boolean {
-    if (
-      this.interiorMode !== 'none' ||
-      this.physics.flightState === 'space' ||
-      this.physics.flightState === 'orbit' ||
-      this.physics.position.y >= 8
-    ) {
-      return false;
-    }
-    const refPos = this.physics.isWalking ? this.physics.walkerPos : this.physics.position;
-    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
-    if (!this.physics.isWalking && speedKmh >= 38) return false;
-    const pickup = this.world.getNearestParkedVehicle(refPos.x, refPos.z, this.physics.vehicleId);
-    if (!pickup) return false;
-
-    if (this.physics.isWalking) {
-      this.physics.position.set(pickup.x, 0, pickup.z);
-      this.enterVehicle();
-    }
-    this.physics.vehicleId = pickup.vehicleId;
-    this.cockpit.setVehicleModel(pickup.vehicleId);
-    this.quests.unlockAndSelectVehicle(pickup.vehicleId, true);
-    this.saveGame(false);
-    return true;
-  }
-
-  public selectVehicle(id: VehicleTypeId): boolean {
-    if (!this.quests.unlockAndSelectVehicle(id, false)) return false;
-    this.physics.vehicleId = id;
-    this.cockpit.setVehicleModel(id);
-    this.saveGame(false);
-    return true;
-  }
-
   public saveGame(manual = true): boolean {
     const cfg = getPlanetConfig(this.physics.activePlanetId);
     const pState = this.physics.exportSaveState();
@@ -576,7 +706,6 @@ export class CoruscantEngine {
       planetName: cfg.name,
       flightState: pState.flightState,
       vehicleId: pState.vehicleId,
-      unlockedVehicles: qState.unlockedVehicles,
       pedestriansHitCount: qState.pedestriansHitCount,
       position: pState.position,
       heading: pState.heading,
@@ -616,6 +745,12 @@ export class CoruscantEngine {
       cabinRoofLight: this.cabinRoofLight,
       cabinSeatsReclined: this.cabinSeatsReclined,
       cabinMonitorOpen: this.cabinMonitorOpen,
+      rvLightsOn: this.rvLightsOn,
+      rvTvOn: this.rvTvOn,
+      rvShowerOn: this.rvShowerOn,
+      rvCoffeeBrewed: this.rvCoffeeBrewed,
+      rvWindowTinted: this.rvWindowTinted,
+      companionLocation: this.companionLocation,
     };
     const ok = writeGameSave(data);
     if (ok) {
@@ -653,6 +788,15 @@ export class CoruscantEngine {
     this.quests = new QuestManager();
     this.hasCompanion = true;
     this.autopilotActive = false;
+    this.isInRvCabin = false;
+    this.rvPose = 'stand';
+    this.rvLightsOn = true;
+    this.rvTvOn = false;
+    this.rvShowerOn = false;
+    this.rvCoffeeBrewed = false;
+    this.rvWindowTinted = false;
+    this.companionLocation = 'cab';
+    this.rvCompActivity = null;
     this.cabinTintDark = false;
     this.cabinRoofLight = false;
     this.cabinSeatsReclined = false;
@@ -694,7 +838,7 @@ export class CoruscantEngine {
       companionHeading: 0,
     });
     this.cockpit.setVehicleModel('coupe');
-    this.camera.position.set(-0.36, 1.13, 0.08);
+    this.camera.position.set(-0.42, 1.13, 0.08);
     this.camera.rotation.set(0, 0, 0);
     this.vehicleGroup.add(this.camera);
     this.lookYaw = 0;
@@ -713,6 +857,8 @@ export class CoruscantEngine {
       this.activeSeat = null;
     }
     this.autopilotActive = false;
+    this.isInRvCabin = false;
+    this.rvPose = 'stand';
     this.leftWindowOpen = false;
     this.rightWindowOpen = false;
     this.serbosCoffeeServed = false;
@@ -722,6 +868,12 @@ export class CoruscantEngine {
     this.cabinRoofLight = Boolean(save.cabinRoofLight);
     this.cabinSeatsReclined = Boolean(save.cabinSeatsReclined);
     this.cabinMonitorOpen = Boolean(save.cabinMonitorOpen);
+    this.rvLightsOn = save.rvLightsOn ?? true;
+    this.rvTvOn = Boolean(save.rvTvOn);
+    this.rvShowerOn = Boolean(save.rvShowerOn);
+    this.rvCoffeeBrewed = Boolean(save.rvCoffeeBrewed);
+    this.rvWindowTinted = Boolean(save.rvWindowTinted);
+    this.companionLocation = save.companionLocation ?? 'cab';
     this.hasCompanion = save.hasCompanion ?? true;
     this.timePreset = save.timePreset ?? 'auto';
     this.timeOfDay = typeof save.timeOfDay === 'number' ? save.timeOfDay : 0.69;
@@ -731,7 +883,7 @@ export class CoruscantEngine {
     this.activeSeason = save.activeSeason ?? 'summer';
     this.quests.importSaveState(save);
     this.physics.applySaveState(save);
-    this.cockpit.setVehicleModel(this.physics.vehicleId);
+    this.cockpit.setVehicleModel('coupe');
     this.prevFlightState = this.physics.flightState;
 
     const cfg = getPlanetConfig(this.physics.activePlanetId);
@@ -747,7 +899,7 @@ export class CoruscantEngine {
       this.walkerGroup.add(this.camera);
     } else {
       this.camera.position.set(
-        -0.36,
+        -0.42,
         this.cabinSeatsReclined ? 0.87 : 1.13,
         this.cabinSeatsReclined ? 0.28 : 0.08,
       );
@@ -811,7 +963,13 @@ export class CoruscantEngine {
 
   public exitVehicle(): void {
     if (this.interiorMode !== 'none') return;
+    if (this.isInRvCabin && (this.autopilotActive || Math.abs(this.physics.forwardSpeed) * 3.6 >= 18)) {
+      this.quests.showToast('Остановите автодом перед выходом на улицу', 2.8);
+      return;
+    }
     this.autopilotActive = false;
+    this.isInRvCabin = false;
+    this.rvPose = 'stand';
     if (!this.physics.exitVehicle()) return;
     this.walkerGroup.position.copy(this.physics.walkerPos);
     this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
@@ -827,9 +985,11 @@ export class CoruscantEngine {
   public enterVehicle(): void {
     if (this.interiorMode !== 'none') return;
     if (!this.physics.enterVehicle()) return;
+    this.isInRvCabin = false;
+    this.rvPose = 'stand';
     this.quests.holdHands = false;
     this.camera.position.set(
-      -0.36,
+      -0.42,
       this.cabinSeatsReclined ? 0.87 : 1.13,
       this.cabinSeatsReclined ? 0.28 : 0.08,
     );
@@ -1311,6 +1471,12 @@ export class CoruscantEngine {
       return;
     }
 
+    if (this.isInRvCabin) {
+      this.rvLookYaw -= dx * 0.0042;
+      this.rvLookPitch = THREE.MathUtils.clamp(this.rvLookPitch - dy * 0.0036, -0.95, 0.95);
+      return;
+    }
+
     const isAirOrSpace = this.physics.flightState !== 'road';
     const maxYaw = isAirOrSpace ? 1.85 : 1.35;
     const minPitch = isAirOrSpace ? -0.42 : -0.35;
@@ -1470,14 +1636,16 @@ export class CoruscantEngine {
       ? this.interior.getObstacles(this.interiorMode)
       : this.world.getNearbyBuildings();
 
-    // Cancel autopilot if manual controls are used or vehicle leaves ground road
+    // Cancel autopilot if manual controls are used in driver seat or vehicle leaves ground road
+    // NOTE: Walking around inside the rear RV mini-home NEVER cancels autopilot!
     if (this.autopilotActive) {
       const manualDriverInput =
-        this.inputs.throttle ||
-        this.inputs.brake ||
-        this.inputs.steerLeft ||
-        this.inputs.steerRight ||
-        Math.abs(this.inputs.steerAxis) > 0.16;
+        !this.isInRvCabin &&
+        (this.inputs.throttle ||
+          this.inputs.brake ||
+          this.inputs.steerLeft ||
+          this.inputs.steerRight ||
+          Math.abs(this.inputs.steerAxis) > 0.16);
       if (
         manualDriverInput ||
         insideInterior ||
@@ -1491,7 +1659,18 @@ export class CoruscantEngine {
       }
     }
 
-    let driveInputs = this.inputs;
+    let driveInputs: ControlInputs = this.isInRvCabin
+      ? {
+          throttle: false,
+          brake: false,
+          steerLeft: false,
+          steerRight: false,
+          steerAxis: 0,
+          climb: false,
+          descend: false,
+          boost: false,
+        }
+      : this.inputs;
     if (this.autopilotActive) {
       const pos = this.physics.position;
       const cx = Math.round(pos.x / 320);
@@ -1634,15 +1813,15 @@ export class CoruscantEngine {
     this.vehicleGroup.rotation.x = this.physics.pitch;
     this.vehicleGroup.rotation.z = this.physics.roll;
 
-    if (this.inputs.boost && !this.prevBoostInput && !insideInterior) {
+    if (this.inputs.boost && !this.prevBoostInput && !insideInterior && !this.isInRvCabin) {
       this.physics.triggerBoost();
     }
     this.prevBoostInput = this.inputs.boost;
 
     const speedDelta = Math.abs(this.physics.forwardSpeed) - Math.abs(this.prevForwardSpeed);
     this.prevForwardSpeed = this.physics.forwardSpeed;
-    const boostActive = !insideInterior && (this.physics.boostTimer > 0 || this.inputs.boost);
-    const throttleOrBoost = this.inputs.throttle || boostActive;
+    const boostActive = !insideInterior && (this.physics.boostTimer > 0 || (this.inputs.boost && !this.isInRvCabin));
+    const throttleOrBoost = (!this.isInRvCabin && this.inputs.throttle) || boostActive;
     const throttleJustPressed = throttleOrBoost && !this.prevThrottleOrBoost;
     this.prevThrottleOrBoost = throttleOrBoost;
 
@@ -1677,6 +1856,43 @@ export class CoruscantEngine {
         this.camera.rotation.y = 0;
         this.camera.rotation.x = this.physics.walkerPitch;
       }
+    } else if (this.isInRvCabin) {
+      if (this.rvPose === 'lie') {
+        const anchor = this.cockpit.getRvBedCameraAnchor();
+        this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, anchor.pos.x, 8, delta);
+        this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, anchor.pos.y, 8, delta);
+        this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, anchor.pos.z, 8, delta);
+        this.camera.rotation.order = 'YXZ';
+        this.camera.rotation.y = this.rvLookYaw;
+        this.camera.rotation.x = this.rvLookPitch;
+      } else {
+        const digitalTurn = (this.inputs.steerLeft ? 1 : 0) - (this.inputs.steerRight ? 1 : 0);
+        const turnInput = THREE.MathUtils.clamp(digitalTurn + this.inputs.steerAxis, -1, 1);
+        this.rvLookYaw += turnInput * 2.0 * delta;
+
+        const moveInput = (this.inputs.throttle ? 1 : 0) - (this.inputs.brake ? 0.72 : 0);
+        const stepSpeed = moveInput * 2.15;
+        if (Math.abs(stepSpeed) > 0.01) {
+          this.rvPlayerLocalPos.x -= Math.sin(this.rvLookYaw) * stepSpeed * delta;
+          this.rvPlayerLocalPos.z -= Math.cos(this.rvLookYaw) * stepSpeed * delta;
+          this.cockpit.clampRvPlayerPos(this.rvPlayerLocalPos);
+          this.rvWalkBob = THREE.MathUtils.damp(
+            this.rvWalkBob,
+            Math.sin(elapsed * 8.6) * 0.025,
+            14,
+            delta,
+          );
+        } else {
+          this.rvWalkBob = THREE.MathUtils.damp(this.rvWalkBob, 0, 10, delta);
+        }
+
+        this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, this.rvPlayerLocalPos.x, 12, delta);
+        this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, 1.66 + this.rvWalkBob, 12, delta);
+        this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, this.rvPlayerLocalPos.z, 12, delta);
+        this.camera.rotation.order = 'YXZ';
+        this.camera.rotation.y = this.rvLookYaw;
+        this.camera.rotation.x = this.rvLookPitch;
+      }
     } else {
       const shouldAutoCenter =
         !this.autopilotActive &&
@@ -1696,7 +1912,7 @@ export class CoruscantEngine {
 
       const camTargetY = this.cabinSeatsReclined ? 0.87 : 1.13;
       const camTargetZ = this.cabinSeatsReclined ? 0.28 : 0.08;
-      this.camera.position.x = -0.36;
+      this.camera.position.x = -0.42;
       this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, camTargetY, 6, delta);
       this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, camTargetZ, 6, delta);
 
@@ -1831,7 +2047,6 @@ export class CoruscantEngine {
       insideInterior,
       isWalking,
       Boolean(hangarHit),
-      this.physics.vehicleId,
     );
     if (knockedPeds > 0) {
       this.quests.onPedestrianHit(knockedPeds);
@@ -1889,10 +2104,6 @@ export class CoruscantEngine {
       this.physics.flightState === 'road';
 
     const zoneType = this.world.getZoneTypeAt(activePos.x, activePos.z);
-    const nextVehiclePos = this.world.getNextUndiscoveredVehiclePos(
-      this.quests.unlockedVehicles,
-      this.physics.vehicleId,
-    );
     this.quests.update(
       delta,
       this.physics.activePlanetId,
@@ -1903,10 +2114,53 @@ export class CoruscantEngine {
       isWalking && !insideInterior ? this.physics.forwardSpeed : 0,
       zoneType,
       this.world.getLandmarks(),
-      nextVehiclePos,
     );
 
-    const driverLookingAtCompanion = !isWalking && this.lookYaw < -0.36;
+    const driverLookingAtCompanion = !isWalking && !this.isInRvCabin && this.lookYaw < -0.36;
+
+    // Companion inside RV mini-home autonomy
+    const showRvCompanion = this.hasCompanion && !isWalking && !insideInterior && this.companionLocation === 'rv';
+    if (showRvCompanion) {
+      const rvWaypoints: { x: number; z: number; heading: number; pose: CompanionPose; label: string }[] = [
+        { x: -0.18, z: 1.42, heading: Math.PI / 2, pose: 'walk', label: 'Готовит кофе в мини-доме' },
+        { x: 0.34, z: 1.52, heading: -Math.PI / 2, pose: 'sit', label: 'Смотрит телевизор' },
+        { x: 0.25, z: 2.55, heading: -Math.PI / 2, pose: 'walk', label: 'Любуется видом из окна' },
+        { x: 0.42, z: 3.65, heading: 0, pose: 'sit', label: 'Отдыхает на кровати' },
+      ];
+      const wp = rvWaypoints[this.rvCompTargetIdx % rvWaypoints.length];
+      const dx = wp.x - this.rvCompLocalPos.x;
+      const dz = wp.z - this.rvCompLocalPos.z;
+      const dist = Math.hypot(dx, dz);
+      let rvCompSpeed = 0;
+      let rvCompPose: CompanionPose = 'walk';
+      if (dist > 0.08) {
+        const moveDist = Math.min(dist, 0.85 * delta);
+        this.rvCompLocalPos.x += (dx / dist) * moveDist;
+        this.rvCompLocalPos.z += (dz / dist) * moveDist;
+        const desiredH = Math.atan2(-dx, -dz);
+        let diff = ((desiredH - this.rvCompHeading + Math.PI) % (Math.PI * 2)) - Math.PI;
+        if (diff < -Math.PI) diff += Math.PI * 2;
+        this.rvCompHeading += diff * Math.min(1, delta * 6);
+        rvCompSpeed = 1.6;
+        this.rvCompActivity = 'Идёт по мини-дому';
+      } else {
+        let diff = ((wp.heading - this.rvCompHeading + Math.PI) % (Math.PI * 2)) - Math.PI;
+        if (diff < -Math.PI) diff += Math.PI * 2;
+        this.rvCompHeading += diff * Math.min(1, delta * 4.5);
+        rvCompPose = wp.pose;
+        this.rvCompActivity = wp.label;
+        this.rvCompPauseTimer -= delta;
+        if (this.rvCompPauseTimer <= 0) {
+          this.rvCompTargetIdx = (this.rvCompTargetIdx + 1) % rvWaypoints.length;
+          this.rvCompPauseTimer = 4.5 + (this.rvCompTargetIdx % 3) * 1.6;
+        }
+      }
+      this.cockpit.rvCompanion.group.position.copy(this.rvCompLocalPos);
+      this.cockpit.rvCompanion.group.rotation.y = this.rvCompHeading;
+      this.cockpit.rvCompanion.update(elapsed, delta, rvCompSpeed, true, rvCompPose);
+    } else {
+      this.cockpit.rvCompanion.update(elapsed, delta, 0, false, 'walk');
+    }
 
     if (!insideInterior) {
       this.cockpit.update(
@@ -1924,7 +2178,7 @@ export class CoruscantEngine {
         inSpace ? this.nearestPlanet.name : activePlanetCfg.name,
         this.physics.spaceFactor,
         this.sky.horizonColor,
-        this.hasCompanion && !isWalking,
+        this.hasCompanion && !isWalking && this.companionLocation === 'cab',
         driverLookingAtCompanion,
         this.quests.cabinTheme,
         boostActive,
@@ -1936,6 +2190,11 @@ export class CoruscantEngine {
           cabinMonitorOpen: this.cabinMonitorOpen,
           leftWindowOpen: this.leftWindowOpen,
           rightWindowOpen: this.rightWindowOpen,
+          rvLightsOn: this.rvLightsOn,
+          rvTvOn: this.rvTvOn,
+          rvShowerOn: this.rvShowerOn,
+          rvCoffeeBrewed: this.rvCoffeeBrewed,
+          rvWindowTinted: this.rvWindowTinted,
         },
       );
     }
@@ -2002,13 +2261,14 @@ export class CoruscantEngine {
       const canOpenWindow =
         !insideInterior &&
         !isWalking &&
+        !this.isInRvCabin &&
         !inSpaceView &&
         this.physics.spaceFactor <= 0.25 &&
         lookingAtDoorSide !== null;
 
-      const nearbyVehiclePickup: NearbyVehiclePickup | null =
-        !insideInterior && !inSpaceView && this.physics.position.y < 8 && (isWalking || speedKmh < 38)
-          ? this.world.getNearestParkedVehicle(activePos.x, activePos.z, this.physics.vehicleId)
+      const rvNearbyStation: RvStationKind | null =
+        this.isInRvCabin && !insideInterior && !isWalking
+          ? this.cockpit.getNearestRvStation(this.rvPlayerLocalPos)
           : null;
 
       const canSitNearby =
@@ -2111,9 +2371,11 @@ export class CoruscantEngine {
               : 'Бесконечный космос'
             : insideInterior
               ? `${activePlanetCfg.name} · ${this.interiorLabel ?? 'Интерьер'}`
-              : isWalking
-                ? `${activePlanetCfg.name} · Пешая прогулка`
-                : this.world.getZoneLabel(this.physics.position),
+              : this.isInRvCabin
+                ? `${activePlanetCfg.name} · Мини-дом на колёсах`
+                : isWalking
+                  ? `${activePlanetCfg.name} · Пешая прогулка`
+                  : this.world.getZoneLabel(this.physics.position),
         headingDeg: Math.round(deg),
         isWalking,
         canExitVehicle,
@@ -2128,7 +2390,6 @@ export class CoruscantEngine {
         nearbyObservatoryName,
         nearbySerbosName,
         nearbySpecialSpot,
-        nearbyVehiclePickup,
         insideHangarName: hangarHit ? hangarHit.name : null,
         interiorMode: this.interiorMode,
         interiorPose: this.interiorPose,
@@ -2145,7 +2406,16 @@ export class CoruscantEngine {
         cabinThemes: this.quests.getCabinThemeOptions(),
         vehicleId: this.physics.vehicleId,
         vehicleName: this.quests.getCurrentVehicleName(),
-        availableVehicles: this.quests.getVehicleCatalog(),
+        isInRvCabin: this.isInRvCabin,
+        rvPose: this.rvPose,
+        rvNearbyStation,
+        rvLightsOn: this.rvLightsOn,
+        rvTvOn: this.rvTvOn,
+        rvShowerOn: this.rvShowerOn,
+        rvCoffeeBrewed: this.rvCoffeeBrewed,
+        rvWindowTinted: this.rvWindowTinted,
+        companionLocation: this.companionLocation,
+        companionRvActivity: this.companionLocation === 'rv' ? this.rvCompActivity : null,
         pedestriansHitCount: this.quests.pedestriansHitCount,
         autopilotActive: this.autopilotActive,
         canToggleAutopilot,

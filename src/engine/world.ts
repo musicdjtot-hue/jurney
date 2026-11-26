@@ -12,11 +12,9 @@ import type { PlanetConfig } from './planets';
 import type { WorldLandmark } from './events';
 import type {
   BiomeId,
-  NearbyVehiclePickup,
   PlanetId,
   SeasonId,
   SpecialSpotInfo,
-  VehicleTypeId,
   WeatherMode,
 } from '../types/simulation';
 
@@ -555,10 +553,6 @@ interface RoadGateAnchor {
   radius: number;
 }
 
-interface ParkedVehicleSpot extends NearbyVehiclePickup {
-  group: THREE.Group;
-}
-
 export class CoruscantWorld {
   public readonly group = new THREE.Group();
 
@@ -624,12 +618,6 @@ export class CoruscantWorld {
   private domeEdgeGroup = new THREE.Group();
   private reptiloidGroup = new THREE.Group();
   private reptiloidBeaconRing: THREE.Mesh | null = null;
-
-  private parkedTruckGroup = new THREE.Group();
-  private parkedUfoGroup = new THREE.Group();
-  private parkedInterceptorGroup = new THREE.Group();
-  private parkedCoupeGroup = new THREE.Group();
-  private parkedSpots: ParkedVehicleSpot[] = [];
 
   private pedestrianMesh: THREE.InstancedMesh;
   private pedestrians: Pedestrian[] = [];
@@ -1114,9 +1102,8 @@ export class CoruscantWorld {
     if (this.groundCarMesh.instanceColor) this.groundCarMesh.instanceColor.needsUpdate = true;
     if (this.groundCarGlowMesh.instanceColor) this.groundCarGlowMesh.instanceColor.needsUpdate = true;
 
-    // 8c. Special Landmarks: Moscow Red Square, Dom Serbosa, Flat Earth Ice Dome Edge, Reptiloid City & Parked Vehicles
+    // 8c. Special Landmarks: Moscow Red Square, Dom Serbosa, Flat Earth Ice Dome Edge & Reptiloid City
     this.buildSpecialLandmarks();
-    this.buildParkedVehicles();
 
     // 9. Walking Pedestrians on Boulevard Sidewalks (1 draw call)
     const pedGeo = buildPedestrianGeometry();
@@ -1638,138 +1625,6 @@ export class CoruscantWorld {
     );
   }
 
-  private buildParkedVehicles(): void {
-    const padRingGeo = new THREE.TorusGeometry(4.0, 0.14, 6, 32);
-    padRingGeo.rotateX(Math.PI / 2);
-    const padMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
-    const padUfoMat = new THREE.MeshBasicMaterial({ color: 0x34d399, toneMapped: false });
-    const padAmberMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24, toneMapped: false });
-    const darkMetalMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4, metalness: 0.75 });
-    const truckCabMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.65 });
-    const ufoHullMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.16, metalness: 0.92 });
-    const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.32, 14);
-    wheelGeo.rotateZ(Math.PI / 2);
-
-    // 1) Heavy Cargo Truck «Титан»
-    const tPad = new THREE.Mesh(padRingGeo, padAmberMat);
-    tPad.position.y = 0.08;
-    this.parkedTruckGroup.add(tPad);
-    const tCabGeo = new THREE.BoxGeometry(2.2, 1.55, 2.2);
-    const tCab = new THREE.Mesh(tCabGeo, truckCabMat);
-    tCab.position.set(0, 1.15, -1.1);
-    this.parkedTruckGroup.add(tCab);
-    const tCargoGeo = new THREE.BoxGeometry(2.35, 1.85, 3.2);
-    const tCargo = new THREE.Mesh(tCargoGeo, darkMetalMat);
-    tCargo.position.set(0, 1.32, 1.6);
-    this.parkedTruckGroup.add(tCargo);
-    const tBarGeo = new THREE.BoxGeometry(1.5, 0.14, 0.25);
-    const tBar = new THREE.Mesh(tBarGeo, padAmberMat);
-    tBar.position.set(0, 2.0, -1.2);
-    this.parkedTruckGroup.add(tBar);
-    for (const [wx, wz] of [
-      [-1.16, -1.4],
-      [1.16, -1.4],
-      [-1.18, 1.1],
-      [1.18, 1.1],
-      [-1.18, 2.3],
-      [1.18, 2.3],
-    ]) {
-      const w = new THREE.Mesh(wheelGeo, darkMetalMat);
-      w.position.set(wx, 0.45, wz);
-      this.parkedTruckGroup.add(w);
-    }
-    this.group.add(this.parkedTruckGroup);
-
-    // 2) Wheelless Hover-UFO Saucer «Тарелка» (NO wheels!)
-    const uPad = new THREE.Mesh(padRingGeo, padUfoMat);
-    uPad.position.y = 0.08;
-    this.parkedUfoGroup.add(uPad);
-    const uDiscGeo = new THREE.CylinderGeometry(2.3, 2.6, 0.36, 32);
-    const uDisc = new THREE.Mesh(uDiscGeo, ufoHullMat);
-    uDisc.position.y = 0.95;
-    this.parkedUfoGroup.add(uDisc);
-    const uDomeGeo = new THREE.SphereGeometry(1.2, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
-    const uDome = new THREE.Mesh(uDomeGeo, padMat);
-    uDome.position.y = 1.1;
-    this.parkedUfoGroup.add(uDome);
-    const uRimGeo = new THREE.TorusGeometry(2.5, 0.08, 8, 36);
-    uRimGeo.rotateX(Math.PI / 2);
-    const uRim = new THREE.Mesh(uRimGeo, padUfoMat);
-    uRim.position.y = 0.95;
-    this.parkedUfoGroup.add(uRim);
-    this.group.add(this.parkedUfoGroup);
-
-    // 3) Hyper-Interceptor «Вектор»
-    const iPad = new THREE.Mesh(padRingGeo, padMat);
-    iPad.position.y = 0.08;
-    this.parkedInterceptorGroup.add(iPad);
-    const iHullGeo = new THREE.BoxGeometry(2.0, 0.56, 4.4);
-    const iHull = new THREE.Mesh(iHullGeo, darkMetalMat);
-    iHull.position.set(0, 0.52, 0);
-    this.parkedInterceptorGroup.add(iHull);
-    const iCanopyGeo = new THREE.BoxGeometry(1.45, 0.44, 1.9);
-    const iCanopy = new THREE.Mesh(iCanopyGeo, truckCabMat);
-    iCanopy.position.set(0, 0.96, 0.15);
-    this.parkedInterceptorGroup.add(iCanopy);
-    const iWingGeo = new THREE.BoxGeometry(2.25, 0.08, 0.45);
-    const iWing = new THREE.Mesh(iWingGeo, padMat);
-    iWing.position.set(0, 1.05, 1.9);
-    this.parkedInterceptorGroup.add(iWing);
-    for (const [wx, wz] of [
-      [-1.04, -1.4],
-      [1.04, -1.4],
-      [-1.04, 1.4],
-      [1.04, 1.4],
-    ]) {
-      const w = new THREE.Mesh(wheelGeo, darkMetalMat);
-      w.position.set(wx, 0.42, wz);
-      this.parkedInterceptorGroup.add(w);
-    }
-    this.group.add(this.parkedInterceptorGroup);
-
-    // 4) Classic Cyber-Speeder Coupe «Горизонт»
-    const cPad = new THREE.Mesh(padRingGeo, padAmberMat);
-    cPad.position.y = 0.08;
-    this.parkedCoupeGroup.add(cPad);
-    const cHull = new THREE.Mesh(iHullGeo, truckCabMat);
-    cHull.position.set(0, 0.56, 0);
-    this.parkedCoupeGroup.add(cHull);
-    const cCanopy = new THREE.Mesh(iCanopyGeo, darkMetalMat);
-    cCanopy.position.set(0, 0.98, 0.1);
-    this.parkedCoupeGroup.add(cCanopy);
-    for (const [wx, wz] of [
-      [-1.02, -1.35],
-      [1.02, -1.35],
-      [-1.02, 1.35],
-      [1.02, 1.35],
-    ]) {
-      const w = new THREE.Mesh(wheelGeo, padAmberMat);
-      w.position.set(wx, 0.42, wz);
-      this.parkedCoupeGroup.add(w);
-    }
-    this.group.add(this.parkedCoupeGroup);
-
-    this.disposables.push(
-      padRingGeo,
-      padMat,
-      padUfoMat,
-      padAmberMat,
-      darkMetalMat,
-      truckCabMat,
-      ufoHullMat,
-      wheelGeo,
-      tCabGeo,
-      tCargoGeo,
-      tBarGeo,
-      uDiscGeo,
-      uDomeGeo,
-      uRimGeo,
-      iHullGeo,
-      iCanopyGeo,
-      iWingGeo,
-    );
-  }
-
   public setPlanetBiome(
     planet: Pick<PlanetConfig, 'id' | 'biome' | 'seed' | 'name'>,
     centerX = 0,
@@ -1932,53 +1787,6 @@ export class CoruscantWorld {
     return null;
   }
 
-  public getNearestParkedVehicle(
-    x: number,
-    z: number,
-    currentVehicleId: VehicleTypeId,
-  ): NearbyVehiclePickup | null {
-    let best: ParkedVehicleSpot | null = null;
-    let bestDist = Infinity;
-    for (let i = 0; i < this.parkedSpots.length; i++) {
-      const s = this.parkedSpots[i];
-      if (s.vehicleId === currentVehicleId) continue;
-      const d = Math.hypot(s.x - x, s.z - z);
-      if (d < 22 && d < bestDist) {
-        bestDist = d;
-        best = s;
-      }
-    }
-    if (!best) return null;
-    return {
-      id: best.id,
-      vehicleId: best.vehicleId,
-      name: best.name,
-      desc: best.desc,
-      wheelMode: best.wheelMode,
-      x: best.x,
-      z: best.z,
-    };
-  }
-
-  public getNextUndiscoveredVehiclePos(
-    unlocked: Set<VehicleTypeId>,
-    currentVehicleId: VehicleTypeId,
-  ): { vehicleId: VehicleTypeId; name: string; x: number; z: number } | null {
-    for (let i = 0; i < this.parkedSpots.length; i++) {
-      const s = this.parkedSpots[i];
-      if (!unlocked.has(s.vehicleId)) {
-        return { vehicleId: s.vehicleId, name: s.name, x: s.x, z: s.z };
-      }
-    }
-    for (let i = 0; i < this.parkedSpots.length; i++) {
-      const s = this.parkedSpots[i];
-      if (s.vehicleId !== currentVehicleId) {
-        return { vehicleId: s.vehicleId, name: s.name, x: s.x, z: s.z };
-      }
-    }
-    return null;
-  }
-
   private getNearestLandmarkOfType(
     x: number,
     z: number,
@@ -2056,60 +1864,6 @@ export class CoruscantWorld {
     this.serbosGroup.visible = false;
     this.domeEdgeGroup.visible = false;
     this.reptiloidGroup.visible = false;
-
-    const ufoX = isEarth ? -24 : -26;
-    const ufoZ = isEarth ? -1252 : -315;
-    this.parkedTruckGroup.position.set(58, 0, -30);
-    this.parkedTruckGroup.rotation.set(0, -0.35, 0);
-    this.parkedUfoGroup.position.set(ufoX, 0, ufoZ);
-    this.parkedUfoGroup.rotation.set(0, 0.4, 0);
-    this.parkedInterceptorGroup.position.set(320, 0, 28);
-    this.parkedInterceptorGroup.rotation.set(0, 0.25, 0);
-    this.parkedCoupeGroup.position.set(-52, 0, 28);
-    this.parkedCoupeGroup.rotation.set(0, 0.3, 0);
-
-    this.parkedSpots = [
-      {
-        id: 'pickup_truck',
-        vehicleId: 'truck',
-        name: 'Грузовик «Титан»',
-        desc: '6-колёсный тяжёлый вездеход с грузовым отсеком',
-        wheelMode: 'wheeled',
-        x: 58,
-        z: -30,
-        group: this.parkedTruckGroup,
-      },
-      {
-        id: 'pickup_ufo',
-        vehicleId: 'ufo',
-        name: 'НЛО «Тарелка»',
-        desc: 'Диск без колёс, парит над асфальтом и едет как авто',
-        wheelMode: 'wheelless',
-        x: ufoX,
-        z: ufoZ,
-        group: this.parkedUfoGroup,
-      },
-      {
-        id: 'pickup_interceptor',
-        vehicleId: 'interceptor',
-        name: 'Перехватчик «Вектор»',
-        desc: 'Сверхбыстрый гиперкар с двойным антикрылом',
-        wheelMode: 'wheeled',
-        x: 320,
-        z: 28,
-        group: this.parkedInterceptorGroup,
-      },
-      {
-        id: 'pickup_coupe',
-        vehicleId: 'coupe',
-        name: 'Кибер-Спидер «Горизонт»',
-        desc: 'Маневренный городской спидер с турбинами',
-        wheelMode: 'wheeled',
-        x: -52,
-        z: 28,
-        group: this.parkedCoupeGroup,
-      },
-    ];
 
     const biome = BIOMES[this.biomeId];
     const foliagePalette = this.getSeasonalFoliagePalette(biome);
@@ -2904,7 +2658,6 @@ export class CoruscantWorld {
     insideInterior = false,
     isWalking = false,
     shelteredInHangar = false,
-    currentVehicleId: VehicleTypeId = 'coupe',
   ): number {
     this.group.visible = !insideInterior && spaceFactor < 0.99;
     if (!this.group.visible) return 0;
@@ -2912,15 +2665,6 @@ export class CoruscantWorld {
     if (this.reptiloidBeaconRing) {
       this.reptiloidBeaconRing.rotation.y = elapsed * 1.4;
       this.reptiloidBeaconRing.rotation.x = Math.sin(elapsed * 0.9) * 0.45;
-    }
-
-    for (let i = 0; i < this.parkedSpots.length; i++) {
-      const spot = this.parkedSpots[i];
-      spot.group.visible = spot.vehicleId !== currentVehicleId;
-      if (spot.vehicleId === 'ufo' && spot.group.visible) {
-        spot.group.rotation.y = elapsed * 0.65;
-        spot.group.position.y = Math.sin(elapsed * 2.2) * 0.14;
-      }
     }
 
     const biome = BIOMES[this.biomeId];
@@ -3254,8 +2998,8 @@ export class CoruscantWorld {
           const endLx = endOx * cosH - endOz * sinH;
           const endLz = endOx * sinH + endOz * cosH;
 
-          const startInside = Math.abs(lx) < 3.25 && lz > -4.2 && lz < 3.85 && oy > -1.4 && oy < 3.5;
-          const endInside = Math.abs(endLx) < 3.25 && endLz > -4.2 && endLz < 3.85 && oy + precipLen > -1.4 && oy < 3.5;
+          const startInside = Math.abs(lx) < 2.25 && lz > -3.4 && lz < 5.35 && oy > -1.4 && oy < 3.5;
+          const endInside = Math.abs(endLx) < 2.25 && endLz > -3.4 && endLz < 5.35 && oy + precipLen > -1.4 && oy < 3.5;
 
           if (startInside || endInside) {
             lx = lx >= 0 ? 4.0 : -4.0;

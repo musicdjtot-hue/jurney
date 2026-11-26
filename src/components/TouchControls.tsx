@@ -19,6 +19,7 @@ import {
   Copy,
   DoorOpen,
   Download,
+  Droplets,
   Eye,
   EyeOff,
   FolderOpen,
@@ -49,6 +50,7 @@ import {
   Thermometer,
   Tv,
   UserCheck,
+  Users,
   UserX,
   WifiOff,
   Wind,
@@ -68,7 +70,6 @@ import type {
   SimulationSnapshot,
   SteeringMode,
   TimePreset,
-  VehicleTypeId,
   WeatherMode,
   WeatherSetting,
 } from '../types/simulation';
@@ -118,8 +119,17 @@ interface TouchControlsProps {
   onSelectLandingSite: (siteId: string) => void;
   onDescendToSite: (siteId?: string) => void;
   onInteractSpecialSpot: () => void;
-  onSwapVehicle: () => void;
-  onSelectVehicle: (id: VehicleTypeId) => void;
+  onEnterRvCabin: () => void;
+  onReturnToDriverSeat: () => void;
+  onToggleRvLights: () => void;
+  onToggleRvTv: () => void;
+  onBrewRvCoffee: () => void;
+  onToggleRvShower: () => void;
+  onUseRvToilet: () => void;
+  onToggleRvBedPose: () => void;
+  onToggleRvWindowTint: () => void;
+  onCallCompanionToCab: () => void;
+  onSendCompanionToRv: () => void;
   onSaveGame: () => void;
   onLoadSave: () => void;
   onResetProgress: () => void;
@@ -231,8 +241,17 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onSelectLandingSite,
   onDescendToSite,
   onInteractSpecialSpot,
-  onSwapVehicle,
-  onSelectVehicle,
+  onEnterRvCabin,
+  onReturnToDriverSeat,
+  onToggleRvLights,
+  onToggleRvTv,
+  onBrewRvCoffee,
+  onToggleRvShower,
+  onUseRvToilet,
+  onToggleRvBedPose,
+  onToggleRvWindowTint,
+  onCallCompanionToCab,
+  onSendCompanionToRv,
   onSaveGame,
   onLoadSave,
   onResetProgress,
@@ -258,8 +277,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onToggleFullscreen,
 }) => {
   const insideInterior = snapshot.interiorMode !== 'none';
-  const isSeatedOrLying = insideInterior && snapshot.interiorPose !== 'stand';
   const isWalking = snapshot.isWalking;
+  const inRvCabin = snapshot.isInRvCabin && !insideInterior && !isWalking;
+  const isSeatedOrLying =
+    (insideInterior && snapshot.interiorPose !== 'stand') ||
+    (inRvCabin && snapshot.rvPose === 'lie');
   const isAir = snapshot.isFlying && !isWalking;
   const inOrbitMode = snapshot.inOrbitMode && !isWalking;
   const inDeepSpace = snapshot.inSpace && !isWalking;
@@ -466,11 +488,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   }, [showVerticalArrows, onControlPress]);
 
   React.useEffect(() => {
-    if (steeringMode !== 'touch' && !isWalking) {
+    if (steeringMode !== 'touch' && !isWalking && !inRvCabin) {
       steerPointerIdRef.current = null;
       onSteerAxisChange(0);
     }
-  }, [steeringMode, isWalking, onSteerAxisChange]);
+  }, [steeringMode, isWalking, inRvCabin, onSteerAxisChange]);
 
   React.useEffect(() => {
     if (settingsOpen || journalOpen || cafeOpen) {
@@ -480,10 +502,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   }, [settingsOpen, journalOpen, cafeOpen]);
 
   React.useEffect(() => {
-    if (insideInterior || isWalking) {
+    if (insideInterior || isWalking || inRvCabin) {
       setCabinOpen(false);
     }
-  }, [insideInterior, isWalking]);
+  }, [insideInterior, isWalking, inRvCabin]);
 
   const updateSteerFromClientX = (clientX: number) => {
     const el = steerPadRef.current;
@@ -690,6 +712,155 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       );
     }
 
+    if (inRvCabin) {
+      const nearRing = 'ring-2 ring-amber-300/90';
+      return (
+        <>
+          <button
+            type="button"
+            onClick={onReturnToDriverSeat}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-amber-500/30 border-amber-300 text-amber-50 ${
+              snapshot.rvNearbyStation === 'cab' ? nearRing : ''
+            }`}
+          >
+            <Car className={`${iconCls} text-amber-200`} />
+            <span>За руль</span>
+          </button>
+
+          {!snapshot.autopilotActive && snapshot.speedKmh < 18 && (
+            <button
+              type="button"
+              onClick={onExitVehicle}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-emerald-500/30 border-emerald-300 text-emerald-50 ${
+                snapshot.rvNearbyStation === 'exit' ? nearRing : ''
+              }`}
+            >
+              <DoorOpen className={`${iconCls} text-emerald-200`} />
+              <span>На улицу</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onToggleRvBedPose}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvPose === 'lie'
+                ? 'bg-rose-500/40 border-rose-300 text-white'
+                : 'bg-[#090d14]/88 border-rose-400/45 text-rose-100'
+            } ${snapshot.rvNearbyStation === 'bed' ? nearRing : ''}`}
+          >
+            <BedDouble className={`${iconCls} text-rose-300`} />
+            <span>{snapshot.rvPose === 'lie' ? 'Встать' : 'Кровать'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleRvTv}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvTvOn
+                ? 'bg-sky-500/35 border-sky-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-sky-100'
+            } ${snapshot.rvNearbyStation === 'tv' ? nearRing : ''}`}
+          >
+            <Tv className={`${iconCls} text-sky-300`} />
+            <span>{snapshot.rvTvOn ? 'ТВ ✓' : compact ? 'ТВ' : 'Телевизор'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleRvLights}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvLightsOn
+                ? 'bg-amber-500/30 border-amber-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-slate-200'
+            }`}
+          >
+            <Lightbulb className={`${iconCls} text-amber-300`} />
+            <span>{snapshot.rvLightsOn ? 'Свет ✓' : 'Свет'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onBrewRvCoffee}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvCoffeeBrewed
+                ? 'bg-amber-500/35 border-amber-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-amber-100'
+            } ${snapshot.rvNearbyStation === 'coffee' ? nearRing : ''}`}
+          >
+            <Coffee className={`${iconCls} text-amber-300`} />
+            <span>{snapshot.rvCoffeeBrewed ? 'Кофе ✓' : compact ? 'Кофе' : 'Кофеварка'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleRvShower}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvShowerOn
+                ? 'bg-cyan-500/35 border-cyan-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-cyan-100'
+            } ${snapshot.rvNearbyStation === 'shower' ? nearRing : ''}`}
+          >
+            <Droplets className={`${iconCls} text-cyan-300`} />
+            <span>{snapshot.rvShowerOn ? 'Душ ✓' : 'Душ'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onUseRvToilet}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-[#090d14]/88 border-white/20 text-slate-100 ${
+              snapshot.rvNearbyStation === 'toilet' ? nearRing : ''
+            }`}
+          >
+            <Sparkles className={`${iconCls} text-sky-300`} />
+            <span>Туалет</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleRvWindowTint}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.rvWindowTinted
+                ? 'bg-indigo-500/35 border-indigo-300 text-white'
+                : 'bg-[#090d14]/88 border-white/20 text-indigo-100'
+            }`}
+          >
+            <Moon className={`${iconCls} text-indigo-300`} />
+            <span>{snapshot.rvWindowTinted ? 'Окна ✓' : 'Тонировка'}</span>
+          </button>
+
+          {snapshot.hasCompanion && (
+            <button
+              type="button"
+              onClick={snapshot.companionLocation === 'rv' ? onCallCompanionToCab : onSendCompanionToRv}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-rose-500/25 border-rose-300/60 text-rose-100`}
+            >
+              <Users className={`${iconCls} text-rose-300`} />
+              <span>
+                {snapshot.companionLocation === 'rv'
+                  ? compact
+                    ? 'В кабину'
+                    : 'Позвать в кабину'
+                  : compact
+                    ? 'В дом'
+                    : 'Позвать в дом'}
+              </span>
+            </button>
+          )}
+        </>
+      );
+    }
+
     return (
       <>
         {!inAnySpace && !isWalking && (
@@ -714,6 +885,22 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 <span>В облака</span>
               </>
             )}
+          </button>
+        )}
+
+        {snapshot.flightState === 'road' && !isWalking && !inAnySpace && (
+          <button
+            type="button"
+            onClick={onEnterRvCabin}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} ${
+              snapshot.autopilotActive
+                ? 'bg-emerald-500/35 border-emerald-300 text-white shadow-[0_0_14px_rgba(16,185,129,0.3)]'
+                : 'bg-amber-500/25 border-amber-400/55 text-amber-100'
+            }`}
+          >
+            <Home className={`${iconCls} text-emerald-300`} />
+            <span>{compact ? 'Мини-дом' : 'В мини-дом'}</span>
           </button>
         )}
 
@@ -827,26 +1014,6 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               {compact && snapshot.nearbySpecialSpot.actionLabel.length > 18
                 ? snapshot.nearbySpecialSpot.name.split(' · ')[0]
                 : snapshot.nearbySpecialSpot.actionLabel}
-            </span>
-          </button>
-        )}
-
-        {snapshot.nearbyVehiclePickup && !inAnySpace && (
-          <button
-            type="button"
-            onClick={onSwapVehicle}
-            onPointerDown={(e) => e.stopPropagation()}
-            className={`${btnCls} bg-emerald-500/30 border-emerald-300/70 text-emerald-50`}
-          >
-            <Car className={`${iconCls} text-emerald-300`} />
-            <span>
-              {snapshot.nearbyVehiclePickup.wheelMode === 'wheelless'
-                ? compact
-                  ? 'Сесть в НЛО'
-                  : 'Пересесть: НЛО (без колёс)'
-                : compact
-                  ? `В ${snapshot.nearbyVehiclePickup.name.split(' ')[0]}`
-                  : `Пересесть: ${snapshot.nearbyVehiclePickup.name}`}
             </span>
           </button>
         )}
@@ -1051,11 +1218,29 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
+      {/* RV Mini-Home Live Status Banner */}
+      {!hudHidden && inRvCabin && !snapshot.toastMessage && (
+        <div className="pointer-events-none fixed top-20 sm:top-16 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] w-fit">
+          <div className="px-3.5 py-1.5 rounded-2xl bg-[#090d14]/88 border border-emerald-400/35 text-xs text-slate-100 shadow-xl flex flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5">
+            <span className="font-semibold text-emerald-200">Мини-дом · +{snapshot.cabinTempC}°C</span>
+            {snapshot.autopilotActive && (
+              <span className="text-cyan-200 font-mono-tabular">
+                Автопилот · {snapshot.speedKmh} км/ч
+              </span>
+            )}
+            {snapshot.hasCompanion && snapshot.companionLocation === 'rv' && snapshot.companionRvActivity && (
+              <span className="text-rose-200">· {snapshot.companionRvActivity}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Cozy Companion Note Speech Bubble */}
       {!hudHidden && snapshot.companionNote && snapshot.hasCompanion && (
         <div
           className={`pointer-events-none fixed ${
-            snapshot.interiorMode === 'serbos' && snapshot.serbosDialogLine
+            (snapshot.interiorMode === 'serbos' && snapshot.serbosDialogLine) ||
+            (inRvCabin && !snapshot.toastMessage)
               ? 'top-36 sm:top-32'
               : 'top-28 sm:top-24'
           } left-1/2 -translate-x-1/2 z-20 max-w-[90vw] w-fit`}
@@ -1165,7 +1350,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {!hudHidden && !insideInterior && !isWalking && (
+          {!hudHidden && !insideInterior && !isWalking && !inRvCabin && (
             <button
               type="button"
               onClick={() => {
@@ -1364,6 +1549,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               Л:{snapshot.leftWindowOpen ? 'откр' : 'закр'} · П:{snapshot.rightWindowOpen ? 'откр' : 'закр'}
             </span>
           </div>
+
+          {snapshot.flightState === 'road' && (
+            <button
+              type="button"
+              onClick={() => {
+                setCabinOpen(false);
+                onEnterRvCabin();
+              }}
+              className="w-full min-h-[44px] px-3 rounded-xl border border-emerald-400/45 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100 text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+            >
+              <Home className="w-4 h-4 text-emerald-300 shrink-0" />
+              <span>Пройти назад в мини-дом</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1447,6 +1646,35 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   </div>
                   <div className="text-[11px] text-slate-400">
                     Идти совсем близко плечом к плечу
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {snapshot.hasCompanion && !isWalking && !insideInterior && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (snapshot.companionLocation === 'rv') {
+                    onCallCompanionToCab();
+                  } else {
+                    onSendCompanionToRv();
+                  }
+                  setCompanionOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-amber-100"
+              >
+                <Users className="w-4 h-4 text-amber-300 shrink-0" />
+                <div>
+                  <div className="font-semibold">
+                    {snapshot.companionLocation === 'rv'
+                      ? 'Позвать спутницу в кабину'
+                      : 'Отпустить спутницу в мини-дом'}
+                  </div>
+                  <div className="text-[11px] text-amber-200/75">
+                    {snapshot.companionLocation === 'rv'
+                      ? snapshot.companionRvActivity ?? 'Сейчас отдыхает в мини-доме'
+                      : 'Она пойдёт назад: приготовит кофе, посмотрит ТВ или отдохнёт'}
                   </div>
                 </div>
               </button>
@@ -1649,59 +1877,17 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             </div>
           )}
 
-          {snapshot.availableVehicles.length > 0 && (
-            <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
-              <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
-                <div className="flex items-center gap-1.5">
-                  <Car className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>Гараж и транспорт</span>
-                </div>
-                {snapshot.pedestriansHitCount > 0 && (
-                  <span className="text-[11px] text-slate-400 font-mono-tabular">
-                    Сбито пешеходов: {snapshot.pedestriansHitCount}
-                  </span>
-                )}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                {snapshot.availableVehicles.map((v) => {
-                  const isActive = snapshot.vehicleId === v.id;
-                  return (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => onSelectVehicle(v.id)}
-                      className={`min-h-[48px] px-2.5 py-1.5 rounded-xl border text-left flex items-center gap-2 transition-colors ${
-                        isActive
-                          ? 'bg-emerald-500/20 border-emerald-400/60 text-white'
-                          : v.unlocked
-                            ? 'bg-black/40 border-white/15 text-slate-200 hover:bg-white/5'
-                            : 'bg-black/25 border-white/10 text-slate-400 opacity-75'
-                      }`}
-                    >
-                      <span
-                        className="w-3 h-3 rounded-full shrink-0 border border-white/30"
-                        style={{ backgroundColor: v.accentHex }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[11px] font-semibold truncate">{v.name}</div>
-                        <div className="text-[10px] text-slate-400 truncate">
-                          {isActive
-                            ? v.wheelMode === 'wheelless'
-                              ? 'Активно · Без колёс'
-                              : 'Активно'
-                            : v.unlocked
-                              ? v.wheelMode === 'wheelless'
-                                ? 'Доступно · Без колёс'
-                                : 'Доступно'
-                              : 'Найдите на улице'}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10 text-xs text-slate-300">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Car className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+              <span className="truncate">{snapshot.vehicleName} · +22°C и жилой мини-дом</span>
             </div>
-          )}
+            {snapshot.pedestriansHitCount > 0 && (
+              <span className="text-[11px] text-slate-400 font-mono-tabular shrink-0">
+                Пешеходов: {snapshot.pedestriansHitCount}
+              </span>
+            )}
+          </div>
 
           {snapshot.cabinThemes.length > 0 && (
             <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
@@ -2336,7 +2522,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   </>
                 )}
 
-                {!insideInterior && (
+                {!insideInterior && !inRvCabin && (
                   <button
                     type="button"
                     onPointerDown={(e) => {
@@ -2387,7 +2573,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             <div className="flex items-end justify-between gap-2 sm:gap-4 w-full min-w-0">
               {/* LEFT THUMB: Analog Slide/Tap Steering Pad or Gyroscope Bar */}
               <div className="pointer-events-auto flex flex-col items-start min-w-0 flex-1 sm:flex-initial">
-                {steeringMode === 'touch' || isWalking ? (
+                {steeringMode === 'touch' || isWalking || inRvCabin ? (
                   <div
                     ref={steerPadRef}
                     onPointerDown={handleSteerDown}
@@ -2397,7 +2583,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                     onLostPointerCapture={handleSteerUp}
                     className="relative w-full max-w-[164px] sm:w-[210px] sm:max-w-none h-[64px] rounded-2xl bg-[#090d14]/84 border border-white/16 shadow-xl touch-none select-none flex items-center justify-between px-3 cursor-ew-resize"
                     role="slider"
-                    aria-label={isWalking ? 'Поворот камеры' : 'Поворот руля'}
+                    aria-label={isWalking || inRvCabin ? 'Поворот камеры' : 'Поворот руля'}
                     aria-valuemin={-100}
                     aria-valuemax={100}
                     aria-valuenow={Math.round(-steerVisual * 100)}
@@ -2451,7 +2637,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
               {/* RIGHT THUMB: Brake & Gas Pedals (or Walk Back/Forward) + Boost/Alt above on sm+ */}
               <div className="pointer-events-auto flex flex-col items-end gap-2 shrink-0">
-                {!insideInterior && (
+                {!insideInterior && !inRvCabin && (
                   <div className="hidden sm:flex items-center gap-2">
                     {showVerticalArrows && (
                       <>
@@ -2532,7 +2718,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                         : 'bg-[#090d14]/84 border-white/16 text-slate-200'
                     }`}
                   >
-                    <span>{isWalking ? 'Назад' : 'Тормоз'}</span>
+                    <span>{isWalking || inRvCabin ? 'Назад' : 'Тормоз'}</span>
                   </button>
 
                   <button
@@ -2543,7 +2729,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                     onLostPointerCapture={handleHoldEnd('throttle')}
                     className={`h-[64px] w-[74px] sm:w-[92px] rounded-2xl border text-sm font-semibold inline-flex items-center justify-center shadow-xl active:scale-95 transition-transform touch-none shrink-0 ${
                       pressedMap.throttle
-                        ? isWalking
+                        ? isWalking || inRvCabin
                           ? 'bg-emerald-500/45 border-emerald-300 text-white'
                           : inDeepSpace
                             ? 'bg-violet-500/45 border-violet-300 text-white'
@@ -2555,7 +2741,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                         : 'bg-[#090d14]/84 border-white/20 text-white'
                     }`}
                   >
-                    <span>{isWalking ? 'Идти' : 'Газ'}</span>
+                    <span>{isWalking || inRvCabin ? 'Идти' : 'Газ'}</span>
                   </button>
                 </div>
               </div>

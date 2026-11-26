@@ -12,7 +12,6 @@ import type {
   QuestKind,
   SeasonId,
   SpecialSpotInfo,
-  VehicleCatalogItem,
   VehicleFlightState,
   VehicleTypeId,
   WeatherMode,
@@ -50,36 +49,7 @@ const THEME_DEFS: Omit<CabinThemeOption, 'unlocked'>[] = [
   { id: 'violet', name: 'Галактик-Ультра', hex: '#a78bfa', cost: 240 },
 ];
 
-export const VEHICLE_DEFS: Omit<VehicleCatalogItem, 'unlocked'>[] = [
-  {
-    id: 'coupe',
-    name: 'Кибер-Спидер',
-    desc: 'Маневренный городской спидер с 4 турбинами',
-    accentHex: '#f59e0b',
-    wheelMode: 'wheeled',
-  },
-  {
-    id: 'truck',
-    name: 'Грузовик «Титан»',
-    desc: 'Тяжёлый 6-колёсный вездеход с грузовым отсеком',
-    accentHex: '#fbbf24',
-    wheelMode: 'wheeled',
-  },
-  {
-    id: 'ufo',
-    name: 'НЛО «Тарелка»',
-    desc: 'Без колёс: парит над асфальтом и едет как машина',
-    accentHex: '#34d399',
-    wheelMode: 'wheelless',
-  },
-  {
-    id: 'interceptor',
-    name: 'Перехватчик «Вектор»',
-    desc: 'Сверхбыстрый гиперкар для трасс и облаков',
-    accentHex: '#38bdf8',
-    wheelMode: 'wheeled',
-  },
-];
+export const MAIN_VEHICLE_NAME = 'Автодом «Горизонт»';
 
 export const CAFE_MENU_BY_BIOME: Record<BiomeId, CafeMenuItem[]> = {
   coruscant: [
@@ -283,7 +253,6 @@ export class QuestManager {
   public cabinTheme: CabinThemeId = 'auto';
   public holdHands = false;
   public currentVehicleId: VehicleTypeId = 'coupe';
-  public unlockedVehicles = new Set<VehicleTypeId>(['coupe']);
   public pedestriansHitCount = 0;
   private unlockedThemes = new Set<CabinThemeId>(['auto', 'amber']);
   private visitedPlanets = new Set<PlanetId>(['coruscant']);
@@ -458,47 +427,8 @@ export class QuestManager {
     }));
   }
 
-  public getVehicleCatalog(): VehicleCatalogItem[] {
-    return VEHICLE_DEFS.map((v) => ({
-      ...v,
-      unlocked: this.unlockedVehicles.has(v.id),
-    }));
-  }
-
   public getCurrentVehicleName(): string {
-    return VEHICLE_DEFS.find((v) => v.id === this.currentVehicleId)?.name ?? 'Кибер-Спидер';
-  }
-
-  public unlockAndSelectVehicle(id: VehicleTypeId, fromStreetPickup = false): boolean {
-    if (!fromStreetPickup && !this.unlockedVehicles.has(id)) {
-      this.showToast('Сначала найдите этот транспорт на улице и пересядьте в него!', 3.2);
-      return false;
-    }
-    const isNew = !this.unlockedVehicles.has(id);
-    this.unlockedVehicles.add(id);
-    this.currentVehicleId = id;
-    const def = VEHICLE_DEFS.find((v) => v.id === id);
-    if (isNew && fromStreetPickup) {
-      this.credits += 75;
-      this.showToast(`Найден новый транспорт: ${def?.name ?? id} (+75 ✦)`, 4.0);
-      if (def?.wheelMode === 'wheelless') {
-        this.setCompanionNote(
-          '«Ух ты! Настоящая летающая тарелка без колёс — а управляется на дороге прямо как машина!»',
-          5.5,
-        );
-      } else if (id === 'truck') {
-        this.setCompanionNote('«Ого, какой мощный грузовик! На таком проедем через любую преграду».', 4.8);
-      } else if (id === 'interceptor') {
-        this.setCompanionNote('«Вот это гиперкар! Теперь разгонимся на полную!»', 4.8);
-      }
-    } else if (def) {
-      this.showToast(`Транспорт: ${def.name}`, 2.6);
-    }
-
-    if (this.activeQuest?.kind === 'vehicle_hunt') {
-      this.completeActiveQuest();
-    }
-    return true;
+    return MAIN_VEHICLE_NAME;
   }
 
   public onPedestrianHit(count: number): void {
@@ -803,7 +733,6 @@ export class QuestManager {
     walkSpeed: number,
     zoneType: 'city' | 'park' | 'fields' | 'viaduct',
     landmarks: WorldLandmark[],
-    nextVehiclePos?: { x: number; z: number; name: string } | null,
   ): void {
     if (this.toastTimer > 0) {
       this.toastTimer = Math.max(0, this.toastTimer - delta);
@@ -908,12 +837,6 @@ export class QuestManager {
           this.completeActiveQuest();
           return;
         }
-      }
-    } else if (q.kind === 'vehicle_hunt') {
-      if (nextVehiclePos) {
-        q.targetX = nextVehiclePos.x;
-        q.targetZ = nextVehiclePos.z;
-        q.targetName = nextVehiclePos.name;
       }
     } else if (q.kind === 'orbit_landing') {
       if (flightState === 'orbit') {
@@ -1100,19 +1023,6 @@ export class QuestManager {
       progressValue: 0,
     }));
 
-    ensureKind('vehicle_hunt', () => ({
-      id: `q_${this.questSeq++}`,
-      kind: 'vehicle_hunt',
-      title: 'Охота за новым транспортом',
-      subtitle: 'Найдите припаркованный грузовик или НЛО без колёс на улице и пересядьте',
-      reward: 210,
-      targetX: 58,
-      targetZ: -30,
-      targetName: 'Грузовик «Титан»',
-      goalValue: 1,
-      progressValue: 0,
-    }));
-
     ensureKind('road_rings', () => ({
       id: `q_${this.questSeq++}`,
       kind: 'road_rings',
@@ -1141,7 +1051,6 @@ export class QuestManager {
       cabinTheme: this.cabinTheme,
       holdHands: this.holdHands,
       vehicleId: this.currentVehicleId,
-      unlockedVehicles: Array.from(this.unlockedVehicles),
       pedestriansHitCount: this.pedestriansHitCount,
       unlockedThemes: Array.from(this.unlockedThemes),
       visitedPlanets: Array.from(this.visitedPlanets),
@@ -1159,7 +1068,6 @@ export class QuestManager {
     cabinTheme: CabinThemeId;
     holdHands: boolean;
     vehicleId?: VehicleTypeId;
-    unlockedVehicles?: VehicleTypeId[];
     pedestriansHitCount?: number;
     unlockedThemes: CabinThemeId[];
     visitedPlanets: PlanetId[];
@@ -1173,9 +1081,7 @@ export class QuestManager {
     this.credits = save.credits ?? 240;
     this.cabinTheme = save.cabinTheme ?? 'auto';
     this.holdHands = Boolean(save.holdHands);
-    this.currentVehicleId = save.vehicleId ?? 'coupe';
-    this.unlockedVehicles = new Set(save.unlockedVehicles?.length ? save.unlockedVehicles : ['coupe']);
-    this.unlockedVehicles.add(this.currentVehicleId);
+    this.currentVehicleId = 'coupe';
     this.pedestriansHitCount = save.pedestriansHitCount ?? 0;
     this.unlockedThemes = new Set(save.unlockedThemes?.length ? save.unlockedThemes : ['auto', 'amber']);
     this.visitedPlanets = new Set(save.visitedPlanets?.length ? save.visitedPlanets : ['coruscant']);
@@ -1183,8 +1089,9 @@ export class QuestManager {
     this.discoveredCloudLayer = Boolean(save.discoveredCloudLayer);
     this.discoveredCountryside = Boolean(save.discoveredCountryside);
     this.questSeq = save.questSeq || 1;
-    this.activeQuest = save.activeQuest ? { ...save.activeQuest } : null;
-    this.questPool = (save.questPool ?? []).map((q) => ({ ...q }));
+    const validKind = (k: QuestKind) => (k as string) !== 'vehicle_hunt';
+    this.activeQuest = save.activeQuest && validKind(save.activeQuest.kind) ? { ...save.activeQuest } : null;
+    this.questPool = (save.questPool ?? []).filter((q) => validKind(q.kind)).map((q) => ({ ...q }));
   }
 
   public getSnapshots(
@@ -1219,8 +1126,7 @@ export class QuestManager {
         q.kind === 'planet_visit' ||
         q.kind === 'serbos_visit' ||
         q.kind === 'earth_moscow' ||
-        q.kind === 'earth_reptiloids' ||
-        q.kind === 'vehicle_hunt'
+        q.kind === 'earth_reptiloids'
           ? 0
           : Math.min(100, Math.round((q.progressValue / Math.max(1, q.goalValue)) * 100));
 

@@ -7,7 +7,6 @@ import type {
   SimulationSnapshot,
   SteeringMode,
   TimePreset,
-  VehicleTypeId,
   WeatherSetting,
 } from './types/simulation';
 
@@ -51,7 +50,6 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   nearbyObservatoryName: null,
   nearbySerbosName: null,
   nearbySpecialSpot: null,
-  nearbyVehiclePickup: null,
   insideHangarName: null,
   interiorMode: 'none',
   interiorPose: 'stand',
@@ -67,8 +65,17 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   cabinTheme: 'auto',
   cabinThemes: [],
   vehicleId: 'coupe',
-  vehicleName: 'Кибер-Спидер',
-  availableVehicles: [],
+  vehicleName: 'Автодом «Горизонт»',
+  isInRvCabin: false,
+  rvPose: 'stand',
+  rvNearbyStation: null,
+  rvLightsOn: true,
+  rvTvOn: false,
+  rvShowerOn: false,
+  rvCoffeeBrewed: false,
+  rvWindowTinted: false,
+  companionLocation: 'cab',
+  companionRvActivity: null,
   pedestriansHitCount: 0,
   autopilotActive: false,
   canToggleAutopilot: true,
@@ -263,7 +270,9 @@ export default function App() {
 
       if (!e.repeat && e.code === 'KeyF') {
         e.preventDefault();
-        engineRef.current?.toggleFlight();
+        if (!snapshotRef.current.isInRvCabin) {
+          engineRef.current?.toggleFlight();
+        }
         return;
       }
 
@@ -365,14 +374,62 @@ export default function App() {
     engineRef.current?.interactNearbySpecialSpot();
   }, []);
 
-  const handleSwapVehicle = useCallback(() => {
-    hapticTap(16);
-    engineRef.current?.swapToNearbyVehicle();
+  const handleEnterRvCabin = useCallback(() => {
+    hapticTap(14);
+    setSettingsOpen(false);
+    setJournalOpen(false);
+    setCafeOpen(false);
+    engineRef.current?.enterRvCabin();
   }, []);
 
-  const handleSelectVehicle = useCallback((id: VehicleTypeId) => {
+  const handleReturnToDriverSeat = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.returnToDriverSeat();
+  }, []);
+
+  const handleToggleRvLights = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleRvLights();
+  }, []);
+
+  const handleToggleRvTv = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleRvTv();
+  }, []);
+
+  const handleBrewRvCoffee = useCallback(() => {
     hapticTap(12);
-    engineRef.current?.selectVehicle(id);
+    engineRef.current?.brewRvCoffee();
+  }, []);
+
+  const handleToggleRvShower = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleRvShower();
+  }, []);
+
+  const handleUseRvToilet = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.useRvToilet();
+  }, []);
+
+  const handleToggleRvBedPose = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.toggleRvBedPose();
+  }, []);
+
+  const handleToggleRvWindowTint = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleRvWindowTint();
+  }, []);
+
+  const handleCallCompanionToCab = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.callCompanionToCab();
+  }, []);
+
+  const handleSendCompanionToRv = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.sendCompanionToRv();
   }, []);
 
   const handleSaveGame = useCallback(() => {
@@ -748,8 +805,17 @@ export default function App() {
         onSelectLandingSite={handleSelectLandingSite}
         onDescendToSite={handleDescendToSite}
         onInteractSpecialSpot={handleInteractSpecialSpot}
-        onSwapVehicle={handleSwapVehicle}
-        onSelectVehicle={handleSelectVehicle}
+        onEnterRvCabin={handleEnterRvCabin}
+        onReturnToDriverSeat={handleReturnToDriverSeat}
+        onToggleRvLights={handleToggleRvLights}
+        onToggleRvTv={handleToggleRvTv}
+        onBrewRvCoffee={handleBrewRvCoffee}
+        onToggleRvShower={handleToggleRvShower}
+        onUseRvToilet={handleUseRvToilet}
+        onToggleRvBedPose={handleToggleRvBedPose}
+        onToggleRvWindowTint={handleToggleRvWindowTint}
+        onCallCompanionToCab={handleCallCompanionToCab}
+        onSendCompanionToRv={handleSendCompanionToRv}
         onSaveGame={handleSaveGame}
         onLoadSave={handleLoadSave}
         onResetProgress={handleResetProgress}

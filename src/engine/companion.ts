@@ -479,8 +479,8 @@ export class BlondePassengerRig {
     if (!visible) return;
 
     const breath = Math.sin(elapsed * 1.85);
-    const targetTorsoY = (seatsReclined ? 0.455 : 0.5) + breath * 0.0035;
-    const targetTorsoRotX = (seatsReclined ? 1.04 : 0.16) - breath * 0.008;
+    const targetTorsoY = (seatsReclined ? 0.48 : 0.5) + breath * 0.0035;
+    const targetTorsoRotX = (seatsReclined ? 0.72 : 0.16) - breath * 0.008;
     this.torsoPivot.position.y = THREE.MathUtils.damp(this.torsoPivot.position.y, targetTorsoY, 5.5, delta);
     this.torsoPivot.rotation.x = THREE.MathUtils.damp(this.torsoPivot.rotation.x, targetTorsoRotX, 5.5, delta);
 
@@ -490,13 +490,13 @@ export class BlondePassengerRig {
     this.torsoPivot.rotation.z = THREE.MathUtils.damp(this.torsoPivot.rotation.z, leanZ, 6, delta);
 
     let targetHeadYaw = Math.sin(elapsed * 0.42) * 0.07;
-    let targetHeadPitch = (seatsReclined ? (monitorOpen ? -0.42 : -0.32) : -0.14) + Math.sin(elapsed * 0.55) * 0.025;
+    let targetHeadPitch = (seatsReclined ? (monitorOpen ? -0.32 : -0.24) : -0.14) + Math.sin(elapsed * 0.55) * 0.025;
     let targetHeadRoll = Math.sin(elapsed * 0.35) * 0.03;
 
     if (seatsReclined && monitorOpen && !driverLookingAtMe) {
       // Watch center drop-down movie monitor, occasionally glancing warmly toward the player
       targetHeadYaw = 0.24 + Math.sin(elapsed * 0.55) * 0.04;
-      targetHeadPitch = -0.36 + Math.sin(elapsed * 0.9) * 0.02;
+      targetHeadPitch = -0.30 + Math.sin(elapsed * 0.9) * 0.02;
     }
 
     if (driverLookingAtMe) {

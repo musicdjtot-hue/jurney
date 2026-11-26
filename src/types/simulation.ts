@@ -48,32 +48,23 @@ export interface LandingSite {
   subtitle: string;
   x: number;
   z: number;
+  approachX?: number;
+  approachZ?: number;
+  lookAtX?: number;
+  lookAtZ?: number;
   accentHex: string;
   screenX: number;
   screenY: number;
   inFront: boolean;
 }
 
-export type VehicleTypeId = 'coupe' | 'truck' | 'ufo' | 'interceptor';
+export type VehicleTypeId = 'coupe';
 
-export interface VehicleCatalogItem {
-  id: VehicleTypeId;
-  name: string;
-  desc: string;
-  accentHex: string;
-  unlocked: boolean;
-  wheelMode: 'wheeled' | 'wheelless';
-}
+export type RvPose = 'stand' | 'lie';
 
-export interface NearbyVehiclePickup {
-  id: string;
-  vehicleId: VehicleTypeId;
-  name: string;
-  desc: string;
-  wheelMode: 'wheeled' | 'wheelless';
-  x: number;
-  z: number;
-}
+export type RvStationKind = 'bed' | 'tv' | 'coffee' | 'shower' | 'toilet' | 'cab' | 'exit';
+
+export type CompanionLocation = 'cab' | 'rv';
 
 export type SpecialSpotKind = 'serbos_house' | 'red_square' | 'dome_edge' | 'reptiloid_city';
 
@@ -98,7 +89,6 @@ export type QuestKind =
   | 'earth_moscow'
   | 'earth_reptiloids'
   | 'orbit_landing'
-  | 'vehicle_hunt'
   | 'road_rings';
 
 export interface ActiveQuestSnapshot {
@@ -188,7 +178,6 @@ export interface SimulationSnapshot {
   nearbyObservatoryName: string | null;
   nearbySerbosName: string | null;
   nearbySpecialSpot: SpecialSpotInfo | null;
-  nearbyVehiclePickup: NearbyVehiclePickup | null;
   insideHangarName: string | null;
   interiorMode: InteriorMode;
   interiorPose: InteriorPose;
@@ -216,7 +205,16 @@ export interface SimulationSnapshot {
   cabinThemes: CabinThemeOption[];
   vehicleId: VehicleTypeId;
   vehicleName: string;
-  availableVehicles: VehicleCatalogItem[];
+  isInRvCabin: boolean;
+  rvPose: RvPose;
+  rvNearbyStation: RvStationKind | null;
+  rvLightsOn: boolean;
+  rvTvOn: boolean;
+  rvShowerOn: boolean;
+  rvCoffeeBrewed: boolean;
+  rvWindowTinted: boolean;
+  companionLocation: CompanionLocation;
+  companionRvActivity: string | null;
   pedestriansHitCount: number;
   toastMessage: string | null;
   saveMeta: SaveMetaSnapshot;

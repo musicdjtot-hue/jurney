@@ -1,15 +1,16 @@
 import * as THREE from 'three';
-import { BlondePassengerRig } from './companion';
+import { BlondePassengerRig, BlondeWalkerRig } from './companion';
 import { DashboardDisplay, MovieScreenDisplay } from './textures';
 import type {
   CabinThemeId,
+  RvStationKind,
   VehicleFlightState,
   VehicleTypeId,
   WeatherMode,
 } from '../types/simulation';
 
-const DRIVER_X = -0.36;
-const PASSENGER_X = 0.36;
+const DRIVER_X = -0.42;
+const PASSENGER_X = 0.42;
 
 function createQuadGeometry(
   bl: THREE.Vector3,
@@ -173,14 +174,25 @@ export interface CockpitCabinOptions {
   cabinMonitorOpen?: boolean;
   leftWindowOpen?: boolean;
   rightWindowOpen?: boolean;
+  rvLightsOn?: boolean;
+  rvTvOn?: boolean;
+  rvShowerOn?: boolean;
+  rvCoffeeBrewed?: boolean;
+  rvWindowTinted?: boolean;
+}
+
+interface ShowerDropMeta {
+  mesh: THREE.Mesh;
+  baseX: number;
+  baseZ: number;
+  phase: number;
 }
 
 export class CockpitRig {
   public readonly group = new THREE.Group();
   public readonly companion: BlondePassengerRig;
+  public readonly rvCompanion: BlondeWalkerRig;
   private steeringWheelGroup = new THREE.Group();
-  private steeringColumnMesh!: THREE.Mesh;
-  private truckWheelRim!: THREE.Mesh;
   private drivePrism: THREE.Mesh;
   private display: DashboardDisplay;
   private movieDisplay: MovieScreenDisplay;
@@ -199,6 +211,7 @@ export class CockpitRig {
   private roofDomeLight!: THREE.PointLight;
   private roofDomeLampMat!: THREE.MeshStandardMaterial;
   private cabinGlassMat!: THREE.MeshStandardMaterial;
+  private rvGlassMat!: THREE.MeshStandardMaterial;
   private glassClearColor = new THREE.Color('#dbeafe');
   private glassTintColor = new THREE.Color('#04070d');
   private leftDoorWindowMesh!: THREE.Mesh;
@@ -206,15 +219,19 @@ export class CockpitRig {
   private seatBackPivots: THREE.Group[] = [];
   private movieMonitorPivot = new THREE.Group();
   private movieScreenLight!: THREE.PointLight;
-  private ufoOrbMesh!: THREE.Mesh;
-  private ufoHoloRingMesh!: THREE.Mesh;
-  private ufoInteriorGroup = new THREE.Group();
-  private truckInteriorGroup = new THREE.Group();
-  private interceptorInteriorGroup = new THREE.Group();
-  private coupeGroup = new THREE.Group();
-  private truckGroup = new THREE.Group();
-  private ufoGroup = new THREE.Group();
-  private interceptorGroup = new THREE.Group();
+
+  // RV Mini-Home interactive fixtures
+  private rvCeilingLight!: THREE.PointLight;
+  private rvCeilingLampMat!: THREE.MeshStandardMaterial;
+  private rvTvLight!: THREE.PointLight;
+  private rvTvScreenMesh!: THREE.Mesh;
+  private rvCoffeeCupsGroup = new THREE.Group();
+  private rvCoffeeLedMat!: THREE.MeshStandardMaterial;
+  private rvSteamDots: THREE.Mesh[] = [];
+  private rvShowerDrops: ShowerDropMeta[] = [];
+  private rvToiletFlushMat!: THREE.MeshStandardMaterial;
+  private toiletFlushTimer = 0;
+
   private vehicleModel: VehicleTypeId = 'coupe';
   private disposables: { dispose: () => void }[] = [];
 
@@ -222,7 +239,8 @@ export class CockpitRig {
     this.display = new DashboardDisplay(maxAnisotropy);
     this.movieDisplay = new MovieScreenDisplay(maxAnisotropy);
     this.companion = new BlondePassengerRig(maxAnisotropy);
-    this.disposables.push(this.display, this.movieDisplay, this.companion);
+    this.rvCompanion = new BlondeWalkerRig(maxAnisotropy);
+    this.disposables.push(this.display, this.movieDisplay, this.companion, this.rvCompanion);
 
     const carbonMat = new THREE.MeshStandardMaterial({
       color: 0x0e131b,
@@ -271,6 +289,15 @@ export class CockpitRig {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
+    this.rvGlassMat = new THREE.MeshStandardMaterial({
+      color: 0xdbeafe,
+      roughness: 0.08,
+      metalness: 0.16,
+      transparent: true,
+      opacity: 0.11,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
     const glassMat = this.cabinGlassMat;
     const holoGlassMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
@@ -306,29 +333,14 @@ export class CockpitRig {
       seatBolsterMat,
       doorTrimMat,
       glassMat,
+      this.rvGlassMat,
       holoGlassMat,
       headlightMat,
       taillightMat,
       accentMat,
     );
 
-    // 1. Futuristic Sculpted Airspeeder Hood & Twin Energy Strakes (Coupe default shell)
-    this.truckGroup.visible = false;
-    this.ufoGroup.visible = false;
-    this.interceptorGroup.visible = false;
-    this.ufoInteriorGroup.visible = false;
-    this.truckInteriorGroup.visible = false;
-    this.interceptorInteriorGroup.visible = false;
-    this.group.add(
-      this.coupeGroup,
-      this.truckGroup,
-      this.ufoGroup,
-      this.interceptorGroup,
-      this.ufoInteriorGroup,
-      this.truckInteriorGroup,
-      this.interceptorInteriorGroup,
-    );
-
+    // 1. Futuristic Sculpted Airspeeder Hood & Twin Energy Strakes
     const hoodShape = new THREE.Shape();
     hoodShape.moveTo(-0.92, 0);
     hoodShape.lineTo(0.92, 0);
@@ -348,7 +360,7 @@ export class CockpitRig {
     hoodGeo.rotateX(-Math.PI / 2 - 0.075);
     const hoodMesh = new THREE.Mesh(hoodGeo, hullPaintMat);
     hoodMesh.position.set(0, 0.66, -1.0);
-    this.coupeGroup.add(hoodMesh);
+    this.group.add(hoodMesh);
     this.disposables.push(hoodGeo);
 
     const ridgeGeo = new THREE.BoxGeometry(0.12, 0.055, 1.42);
@@ -358,13 +370,13 @@ export class CockpitRig {
       fender.position.set(side * 0.67, 0.71, -1.66);
       fender.rotation.y = side * 0.14;
       fender.rotation.x = 0.07;
-      this.coupeGroup.add(fender);
+      this.group.add(fender);
 
       const strake = new THREE.Mesh(strakeGlowGeo, accentMat);
       strake.position.set(side * 0.62, 0.742, -1.64);
       strake.rotation.y = side * 0.14;
       strake.rotation.x = 0.07;
-      this.coupeGroup.add(strake);
+      this.group.add(strake);
     }
     this.disposables.push(ridgeGeo, strakeGlowGeo);
 
@@ -375,7 +387,6 @@ export class CockpitRig {
     this.group.add(dashMesh);
     this.disposables.push(dashGeo);
 
-    // Sealed front cowl bar joining hood & base of windshield with zero gap
     const cowlGeo = new THREE.BoxGeometry(1.76, 0.12, 0.24);
     const cowlMesh = new THREE.Mesh(cowlGeo, hullPaintMat);
     cowlMesh.position.set(0, 0.77, -0.88);
@@ -412,7 +423,6 @@ export class CockpitRig {
     this.group.add(screenMesh);
     this.disposables.push(screenGeo, screenMat);
 
-    // Floating holographic HUD glass pane above driver dash
     const hudGlassGeo = new THREE.PlaneGeometry(0.36, 0.11);
     const hudGlass = new THREE.Mesh(hudGlassGeo, holoGlassMat);
     hudGlass.position.set(DRIVER_X, 0.985, -0.56);
@@ -420,7 +430,6 @@ export class CockpitRig {
     hudGlass.renderOrder = 4;
     this.group.add(hudGlass);
 
-    // Passenger-side futuristic holo-console glass bar
     const passHoloGeo = new THREE.PlaneGeometry(0.46, 0.08);
     const passHolo = new THREE.Mesh(passHoloGeo, holoGlassMat);
     passHolo.position.set(PASSENGER_X, 0.85, -0.46);
@@ -429,10 +438,10 @@ export class CockpitRig {
     this.group.add(passHolo);
     this.disposables.push(hudGlassGeo, passHoloGeo);
 
-    // Full floorboard + firewall + floating futuristic center bridge console
-    const floorGeo = new THREE.BoxGeometry(1.92, 0.1, 2.38);
+    // Full floorboard spanning cab + RV mini-home (z = -1.04 .. +4.86), plus open walk-through console
+    const floorGeo = new THREE.BoxGeometry(2.12, 0.1, 5.9);
     const floorMesh = new THREE.Mesh(floorGeo, leatherGripMat);
-    floorMesh.position.set(0, 0.14, 0.04);
+    floorMesh.position.set(0, 0.14, 1.91);
     this.group.add(floorMesh);
 
     const firewallGeo = new THREE.BoxGeometry(1.86, 0.56, 0.14);
@@ -440,30 +449,30 @@ export class CockpitRig {
     firewallMesh.position.set(0, 0.44, -0.96);
     this.group.add(firewallMesh);
 
-    const consoleGeo = new THREE.BoxGeometry(0.24, 0.22, 1.44);
+    // Shortened center console (z = -0.76 .. +0.08) so aisle between seats is open to walk into RV!
+    const consoleGeo = new THREE.BoxGeometry(0.2, 0.22, 0.84);
     const consoleMesh = new THREE.Mesh(consoleGeo, carbonMat);
-    consoleMesh.position.set(0, 0.39, -0.04);
+    consoleMesh.position.set(0, 0.39, -0.34);
     this.group.add(consoleMesh);
 
-    const bridgeSlopeGeo = new THREE.BoxGeometry(0.22, 0.05, 0.52);
+    const bridgeSlopeGeo = new THREE.BoxGeometry(0.18, 0.05, 0.46);
     const bridgeSlope = new THREE.Mesh(bridgeSlopeGeo, titaniumMat);
-    bridgeSlope.position.set(0, 0.56, -0.34);
+    bridgeSlope.position.set(0, 0.55, -0.46);
     bridgeSlope.rotation.x = -0.34;
     this.group.add(bridgeSlope);
 
-    const consoleLidGeo = new THREE.BoxGeometry(0.2, 0.04, 0.58);
+    const consoleLidGeo = new THREE.BoxGeometry(0.18, 0.04, 0.32);
     const consoleLid = new THREE.Mesh(consoleLidGeo, seatBolsterMat);
-    consoleLid.position.set(0, 0.51, 0.14);
+    consoleLid.position.set(0, 0.51, -0.1);
     this.group.add(consoleLid);
 
-    const consoleGlowGeo = new THREE.BoxGeometry(0.012, 0.012, 1.15);
+    const consoleGlowGeo = new THREE.BoxGeometry(0.012, 0.012, 0.74);
     for (const side of [-1, 1]) {
       const strip = new THREE.Mesh(consoleGlowGeo, accentMat);
-      strip.position.set(side * 0.124, 0.49, -0.06);
+      strip.position.set(side * 0.105, 0.49, -0.34);
       this.group.add(strip);
     }
 
-    // Floating rotating holo-drive prism on center console
     const prismGeo = new THREE.OctahedronGeometry(0.028, 0);
     this.drivePrism = new THREE.Mesh(prismGeo, accentMat);
     this.drivePrism.position.set(0, 0.575, -0.26);
@@ -487,12 +496,6 @@ export class CockpitRig {
     const yokeLower = new THREE.Mesh(yokeLowerGeo, titaniumMat);
     yokeLower.rotation.z = Math.PI * 0.925;
     this.steeringWheelGroup.add(yokeLower);
-
-    // Heavy full rim ring visible only in heavy cargo truck cabin
-    const truckRimGeo = new THREE.TorusGeometry(0.175, 0.019, 10, 32);
-    this.truckWheelRim = new THREE.Mesh(truckRimGeo, leatherGripMat);
-    this.truckWheelRim.visible = false;
-    this.steeringWheelGroup.add(this.truckWheelRim);
 
     const gripGeo = new THREE.CapsuleGeometry(0.021, 0.11, 8, 12);
     for (const side of [-1, 1]) {
@@ -521,102 +524,21 @@ export class CockpitRig {
 
     const colGeo = new THREE.CylinderGeometry(0.034, 0.04, 0.28, 12);
     colGeo.rotateX(Math.PI / 2);
-    this.steeringColumnMesh = new THREE.Mesh(colGeo, carbonMat);
-    this.steeringColumnMesh.position.set(DRIVER_X, 0.77, -0.46);
-    this.steeringColumnMesh.rotation.x = -0.24;
-    this.group.add(this.steeringColumnMesh);
+    const steeringCol = new THREE.Mesh(colGeo, carbonMat);
+    steeringCol.position.set(DRIVER_X, 0.77, -0.46);
+    steeringCol.rotation.x = -0.24;
+    this.group.add(steeringCol);
 
     this.group.add(this.steeringWheelGroup);
-    this.disposables.push(yokeLowerGeo, truckRimGeo, gripGeo, hubGeo, hubCoreGeo, colGeo);
+    this.disposables.push(yokeLowerGeo, gripGeo, hubGeo, hubCoreGeo, colGeo);
 
-    // 3b. Vehicle-specific interior cabins (UFO alien console without wheel, Truck armored cab, Interceptor fighter HUD)
-    const ufoBioMat = new THREE.MeshPhysicalMaterial({
-      color: 0x0b1c1c,
-      roughness: 0.28,
-      metalness: 0.65,
-      clearcoat: 0.8,
-    });
-    const ufoPlasmaMat = new THREE.MeshBasicMaterial({
-      color: 0x34d399,
-      toneMapped: false,
-    });
-    const ufoDashRimGeo = new THREE.TorusGeometry(0.72, 0.045, 10, 32, Math.PI * 0.78);
-    ufoDashRimGeo.rotateX(Math.PI / 2);
-    const ufoDashRim = new THREE.Mesh(ufoDashRimGeo, ufoBioMat);
-    ufoDashRim.rotation.y = Math.PI * 0.11;
-    ufoDashRim.position.set(0, 0.81, -0.14);
-    this.ufoInteriorGroup.add(ufoDashRim);
-
-    const ufoOrbGeo = new THREE.IcosahedronGeometry(0.068, 1);
-    this.ufoOrbMesh = new THREE.Mesh(ufoOrbGeo, ufoPlasmaMat);
-    this.ufoOrbMesh.position.set(DRIVER_X, 0.87, -0.34);
-    this.ufoInteriorGroup.add(this.ufoOrbMesh);
-
-    const ufoHoloRingGeo = new THREE.TorusGeometry(0.125, 0.008, 8, 28);
-    ufoHoloRingGeo.rotateX(Math.PI / 2);
-    this.ufoHoloRingMesh = new THREE.Mesh(ufoHoloRingGeo, ufoPlasmaMat);
-    this.ufoHoloRingMesh.position.set(DRIVER_X, 0.85, -0.34);
-    this.ufoInteriorGroup.add(this.ufoHoloRingMesh);
-
-    const ufoRoofHaloGeo = new THREE.TorusGeometry(0.56, 0.016, 8, 36);
-    ufoRoofHaloGeo.rotateX(Math.PI / 2);
-    const ufoRoofHalo = new THREE.Mesh(ufoRoofHaloGeo, ufoPlasmaMat);
-    ufoRoofHalo.position.set(0, 1.49, 0.22);
-    this.ufoInteriorGroup.add(ufoRoofHalo);
-
-    // Heavy Truck interior bolsters, grab handles & overhead toggle strip
-    const truckBolsterGeo = new THREE.BoxGeometry(1.78, 0.09, 0.34);
-    const truckBolster = new THREE.Mesh(truckBolsterGeo, seatBolsterMat);
-    truckBolster.position.set(0, 0.825, -0.66);
-    this.truckInteriorGroup.add(truckBolster);
-
-    const truckHandleGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.34, 10);
-    for (const side of [-1, 1]) {
-      const handle = new THREE.Mesh(truckHandleGeo, titaniumMat);
-      handle.position.set(side * 0.77, 1.18, -0.45);
-      handle.rotation.x = 0.72;
-      handle.rotation.z = side * -0.14;
-      this.truckInteriorGroup.add(handle);
-    }
-    const truckOverheadGeo = new THREE.BoxGeometry(0.68, 0.055, 0.16);
-    const truckOverhead = new THREE.Mesh(truckOverheadGeo, carbonMat);
-    truckOverhead.position.set(0, 1.485, -0.02);
-    this.truckInteriorGroup.add(truckOverhead);
-
-    // Hyper-Interceptor aero gauge wings & dual fighter HUD sidebars
-    const intWingGeoDash = new THREE.BoxGeometry(0.76, 0.028, 0.18);
-    const intWingDash = new THREE.Mesh(intWingGeoDash, titaniumMat);
-    intWingDash.position.set(DRIVER_X, 0.96, -0.56);
-    this.interceptorInteriorGroup.add(intWingDash);
-    const intSideHudGeo = new THREE.PlaneGeometry(0.08, 0.16);
-    for (const side of [-1, 1]) {
-      const sh = new THREE.Mesh(intSideHudGeo, holoGlassMat);
-      sh.position.set(DRIVER_X + side * 0.24, 0.99, -0.52);
-      sh.rotation.y = side * -0.35;
-      this.interceptorInteriorGroup.add(sh);
-    }
-
-    this.disposables.push(
-      ufoBioMat,
-      ufoPlasmaMat,
-      ufoDashRimGeo,
-      ufoOrbGeo,
-      ufoHoloRingGeo,
-      ufoRoofHaloGeo,
-      truckBolsterGeo,
-      truckHandleGeo,
-      truckOverheadGeo,
-      intWingGeoDash,
-      intSideHudGeo,
-    );
-
-    // 4. Sculpted Futuristic Cyber-Sport Bucket Seats (Driver & Passenger)
-    const seatCushionGeo = new THREE.BoxGeometry(0.46, 0.12, 0.48);
-    const cushionBolsterGeo = new THREE.BoxGeometry(0.08, 0.15, 0.46);
-    const backrestGeo = new THREE.BoxGeometry(0.42, 0.62, 0.1);
-    const backBolsterGeo = new THREE.BoxGeometry(0.085, 0.56, 0.15);
-    const headrestGeo = new THREE.BoxGeometry(0.24, 0.18, 0.085);
-    const seatAccentGeo = new THREE.BoxGeometry(0.014, 0.26, 0.016);
+    // 4. Sculpted Futuristic Cyber-Sport Bucket Seats (Driver & Passenger) — wide walk-through aisle between them
+    const seatCushionGeo = new THREE.BoxGeometry(0.42, 0.12, 0.46);
+    const cushionBolsterGeo = new THREE.BoxGeometry(0.075, 0.15, 0.44);
+    const backrestGeo = new THREE.BoxGeometry(0.38, 0.58, 0.09);
+    const backBolsterGeo = new THREE.BoxGeometry(0.075, 0.52, 0.13);
+    const headrestGeo = new THREE.BoxGeometry(0.22, 0.16, 0.08);
+    const seatAccentGeo = new THREE.BoxGeometry(0.014, 0.24, 0.016);
 
     for (const seatX of [DRIVER_X, PASSENGER_X]) {
       const seatGroup = new THREE.Group();
@@ -629,32 +551,32 @@ export class CockpitRig {
 
       for (const side of [-1, 1]) {
         const b1 = new THREE.Mesh(cushionBolsterGeo, seatBolsterMat);
-        b1.position.set(side * 0.22, 0.37, -0.06);
+        b1.position.set(side * 0.2, 0.37, -0.06);
         b1.rotation.z = side * -0.18;
         seatGroup.add(b1);
       }
 
       const backPivot = new THREE.Group();
-      backPivot.position.set(0, 0.39, 0.14);
+      backPivot.position.set(0, 0.39, 0.13);
       backPivot.rotation.x = 0.22;
 
       const back = new THREE.Mesh(backrestGeo, seatLeatherMat);
-      back.position.set(0, 0.31, 0);
+      back.position.set(0, 0.29, 0);
       backPivot.add(back);
 
       for (const side of [-1, 1]) {
         const b2 = new THREE.Mesh(backBolsterGeo, seatBolsterMat);
-        b2.position.set(side * 0.21, 0.29, -0.02);
+        b2.position.set(side * 0.19, 0.27, -0.02);
         b2.rotation.y = side * -0.22;
         backPivot.add(b2);
 
         const sAccent = new THREE.Mesh(seatAccentGeo, accentMat);
-        sAccent.position.set(side * 0.215, 0.42, -0.08);
+        sAccent.position.set(side * 0.195, 0.4, -0.07);
         backPivot.add(sAccent);
       }
 
       const headrest = new THREE.Mesh(headrestGeo, titaniumMat);
-      headrest.position.set(0, 0.72, -0.01);
+      headrest.position.set(0, 0.67, -0.01);
       backPivot.add(headrest);
 
       seatGroup.add(backPivot);
@@ -670,8 +592,7 @@ export class CockpitRig {
       seatAccentGeo,
     );
 
-    // 5. Watertight Cabin Canopy Frame & Flush-Fitted Window Glazing
-    // Shared exact corner points guarantee zero gaps between metal pillars, roof, sills, and glass
+    // 5. Watertight Front Cabin Canopy Frame (Open behind seats straight into RV living room!)
     const wsBL = new THREE.Vector3(-0.845, 0.815, -0.82);
     const wsBR = new THREE.Vector3(0.845, 0.815, -0.82);
     const wsTL = new THREE.Vector3(-0.725, 1.515, -0.125);
@@ -682,75 +603,62 @@ export class CockpitRig {
     const bTL = new THREE.Vector3(-0.725, 1.515, 0.48);
     const bTR = new THREE.Vector3(0.725, 1.515, 0.48);
 
-    const rTL = new THREE.Vector3(-0.725, 1.515, 0.66);
-    const rTR = new THREE.Vector3(0.725, 1.515, 0.66);
-    const rBL = new THREE.Vector3(-0.87, 0.835, 1.24);
-    const rBR = new THREE.Vector3(0.87, 0.835, 1.24);
-
-    // A-pillars, B-pillars, C-pillars, and roof headers exactly spanning the corners
     createStrutBetween(wsBL, wsTL, 0.056, 0.068, titaniumMat, this.group, this.disposables);
     createStrutBetween(wsBR, wsTR, 0.056, 0.068, titaniumMat, this.group, this.disposables);
-    createStrutBetween(bBL, bTL, 0.075, 0.11, carbonMat, this.group, this.disposables);
-    createStrutBetween(bBR, bTR, 0.075, 0.11, carbonMat, this.group, this.disposables);
-    createStrutBetween(rTL, rBL, 0.075, 0.095, carbonMat, this.group, this.disposables);
-    createStrutBetween(rTR, rBR, 0.075, 0.095, carbonMat, this.group, this.disposables);
+    createStrutBetween(bBL, bTL, 0.085, 0.11, carbonMat, this.group, this.disposables);
+    createStrutBetween(bBR, bTR, 0.085, 0.11, carbonMat, this.group, this.disposables);
 
-    const headerGeo = new THREE.BoxGeometry(1.52, 0.055, 0.12);
+    const headerGeo = new THREE.BoxGeometry(1.54, 0.06, 0.12);
     const roofHeader = new THREE.Mesh(headerGeo, carbonMat);
     roofHeader.position.set(0, 1.52, -0.125);
 
-    const rearHeader = new THREE.Mesh(headerGeo, carbonMat);
-    rearHeader.position.set(0, 1.52, 0.66);
-
-    const roofRailGeo = new THREE.BoxGeometry(0.08, 0.058, 0.86);
+    const roofRailGeo = new THREE.BoxGeometry(0.085, 0.058, 0.66);
     const leftRoofRail = new THREE.Mesh(roofRailGeo, carbonMat);
-    leftRoofRail.position.set(-0.725, 1.518, 0.27);
+    leftRoofRail.position.set(-0.725, 1.518, 0.18);
     const rightRoofRail = new THREE.Mesh(roofRailGeo, carbonMat);
-    rightRoofRail.position.set(0.725, 1.518, 0.27);
+    rightRoofRail.position.set(0.725, 1.518, 0.18);
 
-    // Flush panoramic roof glass + central structural spine with LED rail
-    const roofGlassGeo = createQuadGeometry(wsTL, wsTR, rTR, rTL);
+    // Flush panoramic cab roof glass + structural spine
+    const roofGlassGeo = createQuadGeometry(wsTL, wsTR, bTR, bTL);
     const roofGlass = new THREE.Mesh(roofGlassGeo, glassMat);
     roofGlass.renderOrder = 4;
 
-    const spineGeo = new THREE.BoxGeometry(0.12, 0.045, 0.82);
+    const spineGeo = new THREE.BoxGeometry(0.12, 0.045, 0.62);
     const roofSpine = new THREE.Mesh(spineGeo, titaniumMat);
-    roofSpine.position.set(0, 1.528, 0.27);
+    roofSpine.position.set(0, 1.528, 0.18);
 
-    const spineLedGeo = new THREE.BoxGeometry(0.018, 0.012, 0.74);
+    const spineLedGeo = new THREE.BoxGeometry(0.018, 0.012, 0.56);
     const spineLed = new THREE.Mesh(spineLedGeo, accentMat);
-    spineLed.position.set(0, 1.502, 0.27);
+    spineLed.position.set(0, 1.502, 0.18);
 
     // Sealed door sills, lower doors, and armrests
-    const sillGeo = new THREE.BoxGeometry(0.12, 0.22, 1.48);
+    const sillGeo = new THREE.BoxGeometry(0.14, 0.22, 1.48);
     const leftSill = new THREE.Mesh(sillGeo, carbonMat);
-    leftSill.position.set(-0.87, 0.72, -0.14);
+    leftSill.position.set(-0.88, 0.72, -0.14);
     const rightSill = new THREE.Mesh(sillGeo, carbonMat);
-    rightSill.position.set(0.87, 0.72, -0.14);
+    rightSill.position.set(0.88, 0.72, -0.14);
 
-    const doorLowerGeo = new THREE.BoxGeometry(0.12, 0.5, 1.48);
+    const doorLowerGeo = new THREE.BoxGeometry(0.14, 0.5, 1.48);
     const armrestGeo = new THREE.BoxGeometry(0.095, 0.06, 0.74);
     const doorGlowGeo = new THREE.BoxGeometry(0.014, 0.012, 0.96);
 
     for (const side of [-1, 1]) {
       const doorLower = new THREE.Mesh(doorLowerGeo, doorTrimMat);
-      doorLower.position.set(side * 0.88, 0.42, -0.12);
+      doorLower.position.set(side * 0.9, 0.42, -0.12);
       this.group.add(doorLower);
 
       const armrest = new THREE.Mesh(armrestGeo, seatBolsterMat);
-      armrest.position.set(side * 0.83, 0.56, 0.02);
+      armrest.position.set(side * 0.84, 0.56, 0.02);
       this.group.add(armrest);
 
       const doorGlow = new THREE.Mesh(doorGlowGeo, accentMat);
-      doorGlow.position.set(side * 0.835, 0.67, -0.05);
+      doorGlow.position.set(side * 0.845, 0.67, -0.05);
       this.group.add(doorGlow);
     }
 
-    // Flush-fitted sliding left & right door windows + rear quarter glass (strictly in window openings)
+    // Flush-fitted sliding left & right door windows
     const leftDoorGlassGeo = createQuadGeometry(bBL, wsBL, wsTL, bTL);
     const rightDoorGlassGeo = createQuadGeometry(wsBR, bBR, bTR, wsTR);
-    const leftQuarterGlassGeo = createQuadGeometry(rBL, bBL, bTL, rTL);
-    const rightQuarterGlassGeo = createQuadGeometry(bBR, rBR, rTR, bTR);
 
     this.leftDoorWindowMesh = new THREE.Mesh(leftDoorGlassGeo, glassMat);
     this.leftDoorWindowMesh.renderOrder = 4;
@@ -760,28 +668,13 @@ export class CockpitRig {
     this.rightDoorWindowMesh.renderOrder = 4;
     this.group.add(this.rightDoorWindowMesh);
 
-    for (const g of [leftQuarterGlassGeo, rightQuarterGlassGeo]) {
-      const pane = new THREE.Mesh(g, glassMat);
-      pane.renderOrder = 4;
-      this.group.add(pane);
-    }
-
-    // Sealed rear deck & sloped rear glass
-    const rearShelfGeo = new THREE.BoxGeometry(1.78, 0.28, 0.86);
-    const rearShelf = new THREE.Mesh(rearShelfGeo, carbonMat);
-    rearShelf.position.set(0, 0.72, 0.88);
-
-    const rearGlassGeo = createQuadGeometry(rBL, rBR, rTR, rTL);
-    const rearGlass = new THREE.Mesh(rearGlassGeo, glassMat);
-    rearGlass.renderOrder = 4;
-
-    // Sleek Blade Side Camera-Mirrors & Frameless Rearview Mirror
+    // Blade Side Camera-Mirrors & Rearview Mirror
     const mirrorGeo = new THREE.BoxGeometry(0.18, 0.04, 0.08);
     const leftMirror = new THREE.Mesh(mirrorGeo, titaniumMat);
-    leftMirror.position.set(-1.01, 0.87, -0.58);
+    leftMirror.position.set(-1.05, 0.87, -0.58);
     leftMirror.rotation.y = 0.22;
     const rightMirror = new THREE.Mesh(mirrorGeo, titaniumMat);
-    rightMirror.position.set(1.01, 0.87, -0.58);
+    rightMirror.position.set(1.05, 0.87, -0.58);
     rightMirror.rotation.y = -0.22;
 
     const rearMirrorGeo = new THREE.BoxGeometry(0.24, 0.05, 0.018);
@@ -790,7 +683,6 @@ export class CockpitRig {
 
     this.group.add(
       roofHeader,
-      rearHeader,
       roofGlass,
       roofSpine,
       spineLed,
@@ -798,8 +690,6 @@ export class CockpitRig {
       rightRoofRail,
       leftSill,
       rightSill,
-      rearShelf,
-      rearGlass,
       leftMirror,
       rightMirror,
       rearMirror,
@@ -816,277 +706,199 @@ export class CockpitRig {
       doorGlowGeo,
       leftDoorGlassGeo,
       rightDoorGlassGeo,
-      leftQuarterGlassGeo,
-      rightQuarterGlassGeo,
-      rearShelfGeo,
-      rearGlassGeo,
       mirrorGeo,
       rearMirrorGeo,
     );
 
-    // 6. Futuristic Aero-Speeder Exterior Body Shell (Coupe)
+    // 6. Luxury Futuristic RV Motorhome Exterior Shell («Автодом Горизонт»)
     const frontNoseGeo = new THREE.BoxGeometry(1.78, 0.3, 0.76);
     const frontNose = new THREE.Mesh(frontNoseGeo, hullPaintMat);
     frontNose.position.set(0, 0.44, -2.14);
-    this.coupeGroup.add(frontNose);
+    this.group.add(frontNose);
 
     const splitterGeo = new THREE.BoxGeometry(2.04, 0.065, 0.56);
     const splitter = new THREE.Mesh(splitterGeo, carbonMat);
     splitter.position.set(0, 0.21, -2.26);
-    this.coupeGroup.add(splitter);
+    this.group.add(splitter);
 
     const chinGlowGeo = new THREE.BoxGeometry(1.3, 0.018, 0.03);
     const chinGlow = new THREE.Mesh(chinGlowGeo, accentMat);
     chinGlow.position.set(0, 0.23, -2.53);
-    this.coupeGroup.add(chinGlow);
+    this.group.add(chinGlow);
 
     const headlightBarGeo = new THREE.BoxGeometry(0.56, 0.032, 0.06);
     for (const side of [-1, 1]) {
       const hl = new THREE.Mesh(headlightBarGeo, headlightMat);
       hl.position.set(side * 0.62, 0.52, -2.48);
       hl.rotation.y = side * -0.24;
-      this.coupeGroup.add(hl);
+      this.group.add(hl);
     }
 
-    const sideBodyGeo = new THREE.BoxGeometry(0.22, 0.52, 3.76);
-    const sideSkirtGeo = new THREE.BoxGeometry(0.26, 0.14, 3.45);
-    const sideIntakeGlowGeo = new THREE.BoxGeometry(0.02, 0.025, 2.3);
+    // Front lower side skirts & aero wheel arches
+    const sideBodyFrontGeo = new THREE.BoxGeometry(0.22, 0.52, 2.35);
+    const sideSkirtGeo = new THREE.BoxGeometry(0.24, 0.14, 6.85);
+    const sideIntakeGlowGeo = new THREE.BoxGeometry(0.02, 0.025, 4.95);
     for (const side of [-1, 1]) {
-      const sb = new THREE.Mesh(sideBodyGeo, hullPaintMat);
-      sb.position.set(side * 0.99, 0.49, -0.45);
-      this.coupeGroup.add(sb);
+      const sb = new THREE.Mesh(sideBodyFrontGeo, hullPaintMat);
+      sb.position.set(side * 1.0, 0.49, -1.18);
+      this.group.add(sb);
 
       const sk = new THREE.Mesh(sideSkirtGeo, carbonMat);
-      sk.position.set(side * 1.02, 0.21, -0.42);
-      this.coupeGroup.add(sk);
+      sk.position.set(side * 1.04, 0.21, 1.35);
+      this.group.add(sk);
 
       const ig = new THREE.Mesh(sideIntakeGlowGeo, accentMat);
-      ig.position.set(side * 1.105, 0.44, -0.35);
-      this.coupeGroup.add(ig);
+      ig.position.set(side * 1.115, 0.44, 1.35);
+      this.group.add(ig);
     }
 
-    const rearBodyGeo = new THREE.BoxGeometry(1.98, 0.58, 0.68);
-    const rearBody = new THREE.Mesh(rearBodyGeo, hullPaintMat);
-    rearBody.position.set(0, 0.54, 1.28);
-    this.coupeGroup.add(rearBody);
+    // Aerodynamic roof rise fairing bridging cab roof (z=0.42, y=1.52) to tall RV roof (z=0.78, y=2.09)
+    const fairingGeo = new THREE.BoxGeometry(1.66, 0.14, 0.68);
+    const fairingMesh = new THREE.Mesh(fairingGeo, hullPaintMat);
+    fairingMesh.position.set(0, 1.78, 0.52);
+    fairingMesh.rotation.x = 0.78;
+    this.group.add(fairingMesh);
 
-    const rearFinGeo = new THREE.BoxGeometry(0.07, 0.24, 0.65);
+    // Side transition gussets sealing the fairing sides
+    const gussetGeo = new THREE.BoxGeometry(0.14, 0.62, 0.56);
     for (const side of [-1, 1]) {
-      const fin = new THREE.Mesh(rearFinGeo, titaniumMat);
-      fin.position.set(side * 0.88, 0.88, 1.22);
-      fin.rotation.z = side * -0.22;
-      this.coupeGroup.add(fin);
+      const gus = new THREE.Mesh(gussetGeo, hullPaintMat);
+      gus.position.set(side * 0.88, 1.56, 0.55);
+      this.group.add(gus);
     }
 
-    const rearDiffuserGeo = new THREE.BoxGeometry(1.86, 0.18, 0.28);
-    const rearDiffuser = new THREE.Mesh(rearDiffuserGeo, carbonMat);
-    rearDiffuser.position.set(0, 0.22, 1.48);
-    this.coupeGroup.add(rearDiffuser);
+    // RV Roof Cap (z = 0.72 .. 4.86, y = 2.09) + Interior Cream Ceiling Liner
+    const rvRoofGeo = new THREE.BoxGeometry(2.14, 0.1, 4.22);
+    const rvRoof = new THREE.Mesh(rvRoofGeo, hullPaintMat);
+    rvRoof.position.set(0, 2.09, 2.79);
+    this.group.add(rvRoof);
 
-    // Twin glowing rear ion thruster vents
-    const jetVentGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.12, 16);
+    const rvCeilingMat = new THREE.MeshStandardMaterial({
+      color: 0xd8dee9,
+      roughness: 0.76,
+      metalness: 0.08,
+    });
+    const rvCeilingGeo = new THREE.BoxGeometry(1.98, 0.03, 4.08);
+    const rvCeiling = new THREE.Mesh(rvCeilingGeo, rvCeilingMat);
+    rvCeiling.position.set(0, 2.035, 2.78);
+    this.group.add(rvCeiling);
+
+    // RV Sidewalls with real panoramic window openings (z = 0.46 .. 4.84)
+    const rvWallPanelMat = new THREE.MeshStandardMaterial({
+      color: 0x1a2232,
+      roughness: 0.65,
+      metalness: 0.2,
+    });
+    const rvLowerWallGeo = new THREE.BoxGeometry(0.1, 0.76, 4.38);
+    const rvUpperWallGeo = new THREE.BoxGeometry(0.1, 0.34, 4.38);
+    const rvFrontPostGeo = new THREE.BoxGeometry(0.12, 0.92, 0.36);
+    const rvMidPostGeo = new THREE.BoxGeometry(0.12, 0.92, 1.16);
+    const rvRearPostGeo = new THREE.BoxGeometry(0.12, 0.92, 0.46);
+    const rvSideWinGeo = new THREE.PlaneGeometry(1.38, 0.84);
+    rvSideWinGeo.rotateY(Math.PI / 2);
+
+    for (const side of [-1, 1]) {
+      const lw = new THREE.Mesh(rvLowerWallGeo, hullPaintMat);
+      lw.position.set(side * 1.03, 0.56, 2.65);
+      this.group.add(lw);
+
+      const lwInner = new THREE.Mesh(rvLowerWallGeo, rvWallPanelMat);
+      lwInner.position.set(side * 0.99, 0.56, 2.65);
+      this.group.add(lwInner);
+
+      const uw = new THREE.Mesh(rvUpperWallGeo, hullPaintMat);
+      uw.position.set(side * 1.03, 1.9, 2.65);
+      this.group.add(uw);
+
+      const fp = new THREE.Mesh(rvFrontPostGeo, carbonMat);
+      fp.position.set(side * 1.03, 1.36, 0.64);
+      this.group.add(fp);
+
+      const mp = new THREE.Mesh(rvMidPostGeo, hullPaintMat);
+      mp.position.set(side * 1.03, 1.36, 2.72);
+      this.group.add(mp);
+
+      const rp = new THREE.Mesh(rvRearPostGeo, hullPaintMat);
+      rp.position.set(side * 1.03, 1.36, 4.62);
+      this.group.add(rp);
+
+      // Front RV panoramic window (z = 1.48) & Rear RV panoramic window (z = 3.85)
+      for (const wz of [1.48, 3.85]) {
+        const winMesh = new THREE.Mesh(rvSideWinGeo, this.rvGlassMat);
+        winMesh.position.set(side * 1.03, 1.36, wz);
+        winMesh.renderOrder = 4;
+        this.group.add(winMesh);
+      }
+    }
+
+    // Rear RV Wall (z = 4.84) with Rear Panoramic Window + Bumper + Taillights + Thrusters
+    const rearLowerGeo = new THREE.BoxGeometry(2.14, 0.78, 0.12);
+    const rearLower = new THREE.Mesh(rearLowerGeo, hullPaintMat);
+    rearLower.position.set(0, 0.56, 4.84);
+    this.group.add(rearLower);
+
+    const rearUpperGeo = new THREE.BoxGeometry(2.14, 0.36, 0.12);
+    const rearUpper = new THREE.Mesh(rearUpperGeo, hullPaintMat);
+    rearUpper.position.set(0, 1.9, 4.84);
+    this.group.add(rearUpper);
+
+    const rearCornerGeo = new THREE.BoxGeometry(0.28, 0.92, 0.12);
+    for (const side of [-1, 1]) {
+      const rc = new THREE.Mesh(rearCornerGeo, hullPaintMat);
+      rc.position.set(side * 0.93, 1.36, 4.84);
+      this.group.add(rc);
+    }
+
+    const rearWinGeo = new THREE.PlaneGeometry(1.58, 0.84);
+    const rearWin = new THREE.Mesh(rearWinGeo, this.rvGlassMat);
+    rearWin.position.set(0, 1.36, 4.84);
+    rearWin.renderOrder = 4;
+    this.group.add(rearWin);
+
+    const rearDiffuserGeo = new THREE.BoxGeometry(1.94, 0.2, 0.24);
+    const rearDiffuser = new THREE.Mesh(rearDiffuserGeo, carbonMat);
+    rearDiffuser.position.set(0, 0.22, 4.86);
+    this.group.add(rearDiffuser);
+
+    const jetVentGeo = new THREE.CylinderGeometry(0.13, 0.15, 0.12, 16);
     jetVentGeo.rotateX(Math.PI / 2);
     for (const side of [-1, 1]) {
       const vent = new THREE.Mesh(jetVentGeo, accentMat);
-      vent.position.set(side * 0.48, 0.38, 1.59);
-      this.coupeGroup.add(vent);
+      vent.position.set(side * 0.56, 0.36, 4.92);
+      this.group.add(vent);
     }
 
-    const taillightBarGeo = new THREE.BoxGeometry(1.84, 0.036, 0.04);
+    const taillightBarGeo = new THREE.BoxGeometry(1.94, 0.045, 0.04);
     const taillightBar = new THREE.Mesh(taillightBarGeo, taillightMat);
-    taillightBar.position.set(0, 0.69, 1.595);
-    this.coupeGroup.add(taillightBar);
+    taillightBar.position.set(0, 0.72, 4.92);
+    this.group.add(taillightBar);
 
-    // 4 Shrouded Futuristic Repulsor-Turbine Pods with Glowing Energy Rings
-    const podShroudGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.26, 24);
+    // 4 Shrouded Repulsor-Turbine Wheels (Front & Rear Motorhome Axle)
+    const podShroudGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.26, 24);
     podShroudGeo.rotateZ(Math.PI / 2);
-    const podCoreGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.27, 18);
+    const podCoreGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.27, 18);
     podCoreGeo.rotateZ(Math.PI / 2);
-    const podGlowRingGeo = new THREE.TorusGeometry(0.24, 0.018, 8, 24);
+    const podGlowRingGeo = new THREE.TorusGeometry(0.25, 0.018, 8, 24);
     podGlowRingGeo.rotateY(Math.PI / 2);
 
     const podCoords: [number, number, number][] = [
-      [-1.06, 0.35, -1.5],
-      [1.06, 0.35, -1.5],
-      [-1.08, 0.35, 0.88],
-      [1.08, 0.35, 0.88],
+      [-1.08, 0.36, -1.5],
+      [1.08, 0.36, -1.5],
+      [-1.08, 0.36, 3.65],
+      [1.08, 0.36, 3.65],
     ];
     for (const [wx, wy, wz] of podCoords) {
       const shroud = new THREE.Mesh(podShroudGeo, carbonMat);
       shroud.position.set(wx, wy, wz);
-      this.coupeGroup.add(shroud);
+      this.group.add(shroud);
 
       const core = new THREE.Mesh(podCoreGeo, titaniumMat);
       core.position.set(wx, wy, wz);
-      this.coupeGroup.add(core);
+      this.group.add(core);
 
       const ring = new THREE.Mesh(podGlowRingGeo, accentMat);
       ring.position.set(wx + Math.sign(wx) * 0.138, wy, wz);
-      this.coupeGroup.add(ring);
-    }
-
-    // 6b. Heavy Cargo Truck Shell («Титан» — 6 heavy wheels, armored hood, cargo module)
-    const truckPaintMat = new THREE.MeshPhysicalMaterial({
-      color: 0x334155,
-      roughness: 0.32,
-      metalness: 0.72,
-      clearcoat: 0.6,
-    });
-    const truckHoodGeo = new THREE.BoxGeometry(2.05, 0.42, 1.55);
-    const truckHood = new THREE.Mesh(truckHoodGeo, truckPaintMat);
-    truckHood.position.set(0, 0.64, -1.78);
-    this.truckGroup.add(truckHood);
-
-    const truckGrilleGeo = new THREE.BoxGeometry(1.78, 0.44, 0.08);
-    const truckGrille = new THREE.Mesh(truckGrilleGeo, titaniumMat);
-    truckGrille.position.set(0, 0.56, -2.56);
-    this.truckGroup.add(truckGrille);
-
-    const truckBumperGeo = new THREE.BoxGeometry(2.36, 0.24, 0.34);
-    const truckBumper = new THREE.Mesh(truckBumperGeo, carbonMat);
-    truckBumper.position.set(0, 0.26, -2.56);
-    this.truckGroup.add(truckBumper);
-
-    const truckRoofRackGeo = new THREE.BoxGeometry(1.48, 0.1, 0.16);
-    const truckRoofRack = new THREE.Mesh(truckRoofRackGeo, accentMat);
-    truckRoofRack.position.set(0, 1.62, -0.05);
-    this.truckGroup.add(truckRoofRack);
-
-    const truckSideStepGeo = new THREE.BoxGeometry(0.28, 0.14, 4.35);
-    for (const side of [-1, 1]) {
-      const step = new THREE.Mesh(truckSideStepGeo, titaniumMat);
-      step.position.set(side * 1.12, 0.24, 0.15);
-      this.truckGroup.add(step);
-
-      const tHl = new THREE.Mesh(headlightBarGeo, headlightMat);
-      tHl.position.set(side * 0.74, 0.62, -2.56);
-      this.truckGroup.add(tHl);
-    }
-
-    const cargoBoxGeo = new THREE.BoxGeometry(2.26, 1.48, 2.35);
-    const cargoBox = new THREE.Mesh(cargoBoxGeo, truckPaintMat);
-    cargoBox.position.set(0, 1.02, 2.15);
-    this.truckGroup.add(cargoBox);
-
-    const cargoStripeGeo = new THREE.BoxGeometry(2.3, 0.08, 2.2);
-    const cargoStripe = new THREE.Mesh(cargoStripeGeo, accentMat);
-    cargoStripe.position.set(0, 1.45, 2.15);
-    this.truckGroup.add(cargoStripe);
-
-    const truckTail = new THREE.Mesh(taillightBarGeo, taillightMat);
-    truckTail.position.set(0, 0.52, 3.34);
-    this.truckGroup.add(truckTail);
-
-    const truckWheelGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.34, 20);
-    truckWheelGeo.rotateZ(Math.PI / 2);
-    const truckWheelCoords: [number, number, number][] = [
-      [-1.16, 0.46, -1.65],
-      [1.16, 0.46, -1.65],
-      [-1.18, 0.46, 1.25],
-      [1.18, 0.46, 1.25],
-      [-1.18, 0.46, 2.35],
-      [1.18, 0.46, 2.35],
-    ];
-    for (const [wx, wy, wz] of truckWheelCoords) {
-      const tw = new THREE.Mesh(truckWheelGeo, carbonMat);
-      tw.position.set(wx, wy, wz);
-      this.truckGroup.add(tw);
-      const tRim = new THREE.Mesh(podGlowRingGeo, accentMat);
-      tRim.position.set(wx + Math.sign(wx) * 0.175, wy, wz);
-      this.truckGroup.add(tRim);
-    }
-
-    // 6c. Wheelless Hover-UFO Saucer («Тарелка» — NO wheels at all!)
-    const ufoHullMat = new THREE.MeshPhysicalMaterial({
-      color: 0x94a3b8,
-      roughness: 0.15,
-      metalness: 0.92,
-      clearcoat: 1.0,
-    });
-    const ufoDiscGeo = new THREE.CylinderGeometry(2.25, 2.55, 0.32, 36);
-    const ufoDisc = new THREE.Mesh(ufoDiscGeo, ufoHullMat);
-    ufoDisc.position.set(0, 0.44, -0.35);
-    this.ufoGroup.add(ufoDisc);
-
-    const ufoUpperLipGeo = new THREE.CylinderGeometry(1.55, 2.25, 0.24, 36);
-    const ufoUpperLip = new THREE.Mesh(ufoUpperLipGeo, titaniumMat);
-    ufoUpperLip.position.set(0, 0.68, -0.35);
-    this.ufoGroup.add(ufoUpperLip);
-
-    const ufoBellyGeo = new THREE.CylinderGeometry(2.35, 0.95, 0.22, 32);
-    const ufoBelly = new THREE.Mesh(ufoBellyGeo, carbonMat);
-    ufoBelly.position.set(0, 0.2, -0.35);
-    this.ufoGroup.add(ufoBelly);
-
-    const ufoRimGeo = new THREE.TorusGeometry(2.48, 0.06, 10, 44);
-    ufoRimGeo.rotateX(Math.PI / 2);
-    const ufoRim = new THREE.Mesh(ufoRimGeo, accentMat);
-    ufoRim.position.set(0, 0.42, -0.35);
-    this.ufoGroup.add(ufoRim);
-
-    const ufoCoreGlowGeo = new THREE.CylinderGeometry(0.82, 0.82, 0.04, 24);
-    const ufoCoreGlowMat = new THREE.MeshBasicMaterial({ color: 0x34d399, toneMapped: false });
-    const ufoCoreGlow = new THREE.Mesh(ufoCoreGlowGeo, ufoCoreGlowMat);
-    ufoCoreGlow.position.set(0, 0.09, -0.35);
-    this.ufoGroup.add(ufoCoreGlow);
-
-    const ufoDomeTrimGeo = new THREE.TorusGeometry(1.52, 0.035, 8, 32);
-    ufoDomeTrimGeo.rotateX(Math.PI / 2);
-    const ufoDomeTrim = new THREE.Mesh(ufoDomeTrimGeo, holoGlassMat);
-    ufoDomeTrim.position.set(0, 0.82, -0.35);
-    this.ufoGroup.add(ufoDomeTrim);
-
-    // 6d. Hyper-Interceptor Shell («Вектор» — razor aero nose + twin rear wings)
-    const intPaintMat = new THREE.MeshPhysicalMaterial({
-      color: 0x0f172a,
-      roughness: 0.12,
-      metalness: 0.9,
-      clearcoat: 1.0,
-    });
-    const intNoseGeo = new THREE.BoxGeometry(1.56, 0.24, 1.85);
-    const intNose = new THREE.Mesh(intNoseGeo, intPaintMat);
-    intNose.position.set(0, 0.52, -1.78);
-    intNose.rotation.x = 0.08;
-    this.interceptorGroup.add(intNose);
-
-    const intSplitterGeo = new THREE.BoxGeometry(2.18, 0.05, 0.72);
-    const intSplitter = new THREE.Mesh(intSplitterGeo, accentMat);
-    intSplitter.position.set(0, 0.2, -2.38);
-    this.interceptorGroup.add(intSplitter);
-
-    const intWingGeo = new THREE.BoxGeometry(2.26, 0.055, 0.42);
-    const intWing = new THREE.Mesh(intWingGeo, carbonMat);
-    intWing.position.set(0, 1.08, 1.48);
-    this.interceptorGroup.add(intWing);
-
-    const intStabGeo = new THREE.BoxGeometry(0.08, 0.42, 0.55);
-    for (const side of [-1, 1]) {
-      const sb = new THREE.Mesh(sideBodyGeo, intPaintMat);
-      sb.position.set(side * 1.02, 0.44, -0.45);
-      this.interceptorGroup.add(sb);
-
-      const stab = new THREE.Mesh(intStabGeo, accentMat);
-      stab.position.set(side * 1.08, 0.96, 1.42);
-      this.interceptorGroup.add(stab);
-
-      const hl = new THREE.Mesh(headlightBarGeo, headlightMat);
-      hl.position.set(side * 0.56, 0.46, -2.65);
-      hl.rotation.y = side * -0.3;
-      this.interceptorGroup.add(hl);
-    }
-    const intRear = new THREE.Mesh(rearBodyGeo, intPaintMat);
-    intRear.position.set(0, 0.5, 1.3);
-    this.interceptorGroup.add(intRear);
-    const intTail = new THREE.Mesh(taillightBarGeo, taillightMat);
-    intTail.position.set(0, 0.65, 1.64);
-    this.interceptorGroup.add(intTail);
-    for (const [wx, wy, wz] of podCoords) {
-      const shroud = new THREE.Mesh(podShroudGeo, intPaintMat);
-      shroud.position.set(wx * 1.04, wy, wz);
-      this.interceptorGroup.add(shroud);
-      const ring = new THREE.Mesh(podGlowRingGeo, accentMat);
-      ring.position.set((wx + Math.sign(wx) * 0.138) * 1.04, wy, wz);
-      this.interceptorGroup.add(ring);
+      this.group.add(ring);
     }
 
     this.disposables.push(
@@ -1094,42 +906,37 @@ export class CockpitRig {
       splitterGeo,
       chinGlowGeo,
       headlightBarGeo,
-      sideBodyGeo,
+      sideBodyFrontGeo,
       sideSkirtGeo,
       sideIntakeGlowGeo,
-      rearBodyGeo,
-      rearFinGeo,
+      fairingGeo,
+      gussetGeo,
+      rvRoofGeo,
+      rvCeilingMat,
+      rvCeilingGeo,
+      rvWallPanelMat,
+      rvLowerWallGeo,
+      rvUpperWallGeo,
+      rvFrontPostGeo,
+      rvMidPostGeo,
+      rvRearPostGeo,
+      rvSideWinGeo,
+      rearLowerGeo,
+      rearUpperGeo,
+      rearCornerGeo,
+      rearWinGeo,
       rearDiffuserGeo,
       jetVentGeo,
       taillightBarGeo,
       podShroudGeo,
       podCoreGeo,
       podGlowRingGeo,
-      truckPaintMat,
-      truckHoodGeo,
-      truckGrilleGeo,
-      truckBumperGeo,
-      truckRoofRackGeo,
-      truckSideStepGeo,
-      cargoBoxGeo,
-      cargoStripeGeo,
-      truckWheelGeo,
-      ufoHullMat,
-      ufoDiscGeo,
-      ufoUpperLipGeo,
-      ufoBellyGeo,
-      ufoRimGeo,
-      ufoCoreGlowGeo,
-      ufoCoreGlowMat,
-      ufoDomeTrimGeo,
-      intPaintMat,
-      intNoseGeo,
-      intSplitterGeo,
-      intWingGeo,
-      intStabGeo,
     );
 
-    // 7. Properly Sloped, Flush-Sealed Windshield + Exterior Rain & Snow Shader
+    // 7. RV MINI-HOME INTERIOR FIXTURES (Floor y = 0.19, Ceiling y = 2.02)
+    this.buildRvMiniHomeInterior(carbonMat, titaniumMat, seatBolsterMat, accentMat);
+
+    // 8. Properly Sloped, Flush-Sealed Windshield + Exterior Rain & Snow Shader
     const windshieldGeo = createQuadGeometry(wsBL, wsBR, wsTR, wsTL);
     const windshield = new THREE.Mesh(windshieldGeo, glassMat);
     windshield.renderOrder = 4;
@@ -1143,15 +950,18 @@ export class CockpitRig {
     this.group.add(this.rainGlass);
     this.disposables.push(windshieldGeo, this.windshieldRainMat);
 
-    // 8. Seated Blonde Passenger Companion on Right Seat
+    // 9. Blonde Companion (Seated in Front Seat OR Walking/Living Inside RV Mini-Home)
     this.companion.group.position.set(PASSENGER_X, 0, 0);
     this.group.add(this.companion.group);
+    this.rvCompanion.group.position.set(0.2, 0.195, 1.8);
+    this.rvCompanion.group.visible = false;
+    this.group.add(this.rvCompanion.group);
 
     this.interiorLight = new THREE.PointLight(0xf59e0b, 0.72, 3.8, 2);
     this.interiorLight.position.set(0, 1.32, -0.05);
     this.group.add(this.interiorLight);
 
-    // 9. Roof Cabin Dome Light + Retractable Overhead Movie Monitor
+    // 10. Front Roof Cabin Dome Light + Retractable Overhead Movie Monitor
     this.roofDomeLampMat = new THREE.MeshStandardMaterial({
       color: 0xfef3c7,
       emissive: 0xfde68a,
@@ -1197,25 +1007,408 @@ export class CockpitRig {
     );
   }
 
-  public setVehicleModel(id: VehicleTypeId): void {
-    this.vehicleModel = id;
-    this.coupeGroup.visible = id === 'coupe';
-    this.truckGroup.visible = id === 'truck';
-    this.ufoGroup.visible = id === 'ufo';
-    this.interceptorGroup.visible = id === 'interceptor';
+  private buildRvMiniHomeInterior(
+    carbonMat: THREE.Material,
+    titaniumMat: THREE.Material,
+    seatBolsterMat: THREE.Material,
+    accentMat: THREE.Material,
+  ): void {
+    const woodFloorMat = new THREE.MeshStandardMaterial({
+      color: 0x5c3d28,
+      roughness: 0.62,
+      metalness: 0.08,
+    });
+    const cabinetMat = new THREE.MeshStandardMaterial({
+      color: 0x262f3f,
+      roughness: 0.48,
+      metalness: 0.25,
+    });
+    const counterTopMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      roughness: 0.24,
+      metalness: 0.18,
+    });
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.2,
+      metalness: 0.06,
+    });
+    const mattressMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      roughness: 0.85,
+    });
+    const blanketMat = new THREE.MeshStandardMaterial({
+      color: 0x3b4d6b,
+      roughness: 0.88,
+    });
+    const pillowMat = new THREE.MeshStandardMaterial({
+      color: 0xfef3c7,
+      roughness: 0.82,
+    });
+    const showerTileMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.35,
+      metalness: 0.2,
+    });
+    const showerGlassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xbae6fd,
+      roughness: 0.08,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const waterDropMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      transparent: true,
+      opacity: 0.78,
+    });
+    const steamMat = new THREE.MeshBasicMaterial({
+      color: 0xf8fafc,
+      transparent: true,
+      opacity: 0.45,
+    });
 
-    // Distinct interior cockpits per vehicle: wheelless UFO replaces wheel with floating plasma orb console
-    const hasWheel = id !== 'ufo';
-    this.steeringWheelGroup.visible = hasWheel;
-    this.steeringColumnMesh.visible = hasWheel;
-    this.truckWheelRim.visible = id === 'truck';
-    this.ufoInteriorGroup.visible = id === 'ufo';
-    this.truckInteriorGroup.visible = id === 'truck';
-    this.interceptorInteriorGroup.visible = id === 'interceptor';
+    // Warm wood composite floor in RV module (y = 0.193)
+    const rvFloorGeo = new THREE.BoxGeometry(1.94, 0.02, 4.18);
+    const rvFloor = new THREE.Mesh(rvFloorGeo, woodFloorMat);
+    rvFloor.position.set(0, 0.193, 2.7);
+    this.group.add(rvFloor);
+
+    // 1) Kitchenette Counter & Working Coffee Maker (left front: x = -0.72, z = 1.42)
+    const kBaseGeo = new THREE.BoxGeometry(0.56, 0.72, 1.12);
+    const kBase = new THREE.Mesh(kBaseGeo, cabinetMat);
+    kBase.position.set(-0.7, 0.56, 1.42);
+    this.group.add(kBase);
+
+    const kTopGeo = new THREE.BoxGeometry(0.6, 0.045, 1.16);
+    const kTop = new THREE.Mesh(kTopGeo, counterTopMat);
+    kTop.position.set(-0.69, 0.94, 1.42);
+    this.group.add(kTop);
+
+    const coffeeBodyGeo = new THREE.BoxGeometry(0.2, 0.28, 0.22);
+    const coffeeBody = new THREE.Mesh(coffeeBodyGeo, carbonMat);
+    coffeeBody.position.set(-0.72, 1.1, 1.42);
+    this.group.add(coffeeBody);
+
+    const coffeeSpoutGeo = new THREE.BoxGeometry(0.08, 0.06, 0.09);
+    const coffeeSpout = new THREE.Mesh(coffeeSpoutGeo, titaniumMat);
+    coffeeSpout.position.set(-0.59, 1.14, 1.42);
+    this.group.add(coffeeSpout);
+
+    this.rvCoffeeLedMat = new THREE.MeshStandardMaterial({
+      color: 0x22c55e,
+      emissive: 0x22c55e,
+      emissiveIntensity: 0.4,
+    });
+    const coffeeLedGeo = new THREE.BoxGeometry(0.02, 0.025, 0.06);
+    const coffeeLed = new THREE.Mesh(coffeeLedGeo, this.rvCoffeeLedMat);
+    coffeeLed.position.set(-0.615, 1.2, 1.42);
+    this.group.add(coffeeLed);
+
+    // Ceramic mugs & steam visible after brewing
+    const mugGeo = new THREE.CylinderGeometry(0.036, 0.032, 0.075, 12);
+    for (const mz of [1.34, 1.5]) {
+      const mug = new THREE.Mesh(mugGeo, ceramicMat);
+      mug.position.set(-0.56, 1.0, mz);
+      this.rvCoffeeCupsGroup.add(mug);
+    }
+    const steamGeo = new THREE.SphereGeometry(0.018, 6, 6);
+    for (let i = 0; i < 4; i++) {
+      const dot = new THREE.Mesh(steamGeo, steamMat);
+      dot.position.set(-0.56, 1.08 + i * 0.05, i % 2 === 0 ? 1.34 : 1.5);
+      this.rvCoffeeCupsGroup.add(dot);
+      this.rvSteamDots.push(dot);
+    }
+    this.rvCoffeeCupsGroup.visible = false;
+    this.group.add(this.rvCoffeeCupsGroup);
+
+    // 2) Wall-Mounted TV on Right RV Wall (x = +0.94, y = 1.38, z = 1.52 facing -X)
+    const tvBezelGeo = new THREE.BoxGeometry(0.04, 0.5, 0.86);
+    const tvBezel = new THREE.Mesh(tvBezelGeo, carbonMat);
+    tvBezel.position.set(0.96, 1.38, 1.52);
+    this.group.add(tvBezel);
+
+    const tvScreenGeo = new THREE.PlaneGeometry(0.8, 0.44);
+    tvScreenGeo.rotateY(-Math.PI / 2);
+    const tvScreenMat = new THREE.MeshBasicMaterial({
+      map: this.movieDisplay.texture,
+      toneMapped: false,
+    });
+    this.rvTvScreenMesh = new THREE.Mesh(tvScreenGeo, tvScreenMat);
+    this.rvTvScreenMesh.position.set(0.938, 1.38, 1.52);
+    this.rvTvScreenMesh.visible = false;
+    this.group.add(this.rvTvScreenMesh);
+
+    this.rvTvLight = new THREE.PointLight(0x7dd3fc, 0, 3.2, 1.6);
+    this.rvTvLight.position.set(0.76, 1.38, 1.52);
+    this.group.add(this.rvTvLight);
+
+    // Compact bench / lounge shelf under TV
+    const loungeBenchGeo = new THREE.BoxGeometry(0.42, 0.34, 0.96);
+    const loungeBench = new THREE.Mesh(loungeBenchGeo, seatBolsterMat);
+    loungeBench.position.set(0.76, 0.37, 1.52);
+    this.group.add(loungeBench);
+
+    // 3) Corner Glass Shower Stall (left mid: x = -0.66, z = 2.46)
+    const trayGeo = new THREE.BoxGeometry(0.68, 0.08, 0.82);
+    const showerTray = new THREE.Mesh(trayGeo, ceramicMat);
+    showerTray.position.set(-0.65, 0.24, 2.46);
+    this.group.add(showerTray);
+
+    const wetWallGeo = new THREE.BoxGeometry(0.04, 1.72, 0.82);
+    const wetWall = new THREE.Mesh(wetWallGeo, showerTileMat);
+    wetWall.position.set(-0.97, 1.12, 2.46);
+    this.group.add(wetWall);
+
+    const glassSideGeo = new THREE.PlaneGeometry(0.68, 1.64);
+    const glassFrontWall = new THREE.Mesh(glassSideGeo, showerGlassMat);
+    glassFrontWall.position.set(-0.65, 1.1, 2.05);
+    this.group.add(glassFrontWall);
+
+    const glassInnerGeo = new THREE.PlaneGeometry(0.82, 1.64);
+    glassInnerGeo.rotateY(Math.PI / 2);
+    const glassInner = new THREE.Mesh(glassInnerGeo, showerGlassMat);
+    glassInner.position.set(-0.32, 1.1, 2.46);
+    this.group.add(glassInner);
+
+    const showerPipeGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.28, 8);
+    showerPipeGeo.rotateZ(Math.PI / 2);
+    const showerPipe = new THREE.Mesh(showerPipeGeo, titaniumMat);
+    showerPipe.position.set(-0.84, 1.9, 2.46);
+    this.group.add(showerPipe);
+
+    const showerHeadGeo = new THREE.CylinderGeometry(0.09, 0.06, 0.03, 14);
+    const showerHead = new THREE.Mesh(showerHeadGeo, titaniumMat);
+    showerHead.position.set(-0.68, 1.88, 2.46);
+    this.group.add(showerHead);
+
+    // Animated falling water droplet streaks inside shower stall
+    const dropGeo = new THREE.CylinderGeometry(0.005, 0.005, 0.14, 5);
+    for (let i = 0; i < 14; i++) {
+      const drop = new THREE.Mesh(dropGeo, waterDropMat);
+      const bx = -0.82 + (i % 4) * 0.09 + ((i % 2) * 0.02 - 0.01);
+      const bz = 2.32 + Math.floor(i / 4) * 0.09;
+      drop.position.set(bx, 0.5 + (i % 5) * 0.28, bz);
+      drop.visible = false;
+      this.group.add(drop);
+      this.rvShowerDrops.push({ mesh: drop, baseX: bx, baseZ: bz, phase: i * 0.37 });
+    }
+
+    // 4) Compact RV Toilet Pod (left rear: x = -0.68, z = 3.36)
+    const dividerGeo = new THREE.BoxGeometry(0.66, 1.25, 0.05);
+    const toiletDivider = new THREE.Mesh(dividerGeo, cabinetMat);
+    toiletDivider.position.set(-0.66, 0.82, 2.9);
+    this.group.add(toiletDivider);
+
+    const tBaseGeo = new THREE.CylinderGeometry(0.15, 0.18, 0.34, 14);
+    const tBase = new THREE.Mesh(tBaseGeo, ceramicMat);
+    tBase.position.set(-0.68, 0.37, 3.34);
+    this.group.add(tBase);
+
+    const tBowlGeo = new THREE.TorusGeometry(0.15, 0.045, 10, 18);
+    tBowlGeo.rotateX(Math.PI / 2);
+    const tBowl = new THREE.Mesh(tBowlGeo, ceramicMat);
+    tBowl.position.set(-0.66, 0.55, 3.34);
+    this.group.add(tBowl);
+
+    const tTankGeo = new THREE.BoxGeometry(0.18, 0.38, 0.32);
+    const tTank = new THREE.Mesh(tTankGeo, ceramicMat);
+    tTank.position.set(-0.88, 0.72, 3.34);
+    this.group.add(tTank);
+
+    this.rvToiletFlushMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x38bdf8,
+      emissiveIntensity: 0.35,
+    });
+    const flushBtnGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.02, 10);
+    const flushBtn = new THREE.Mesh(flushBtnGeo, this.rvToiletFlushMat);
+    flushBtn.position.set(-0.88, 0.92, 3.34);
+    this.group.add(flushBtn);
+
+    // 5) Cozy Bed (right rear: x = +0.46, z = 3.88, headboard at z = 4.68 facing forward toward TV)
+    const bedFrameGeo = new THREE.BoxGeometry(0.96, 0.28, 1.62);
+    const bedFrame = new THREE.Mesh(bedFrameGeo, cabinetMat);
+    bedFrame.position.set(0.47, 0.34, 3.92);
+    this.group.add(bedFrame);
+
+    const mattressGeo = new THREE.BoxGeometry(0.92, 0.14, 1.56);
+    const mattress = new THREE.Mesh(mattressGeo, mattressMat);
+    mattress.position.set(0.47, 0.54, 3.92);
+    this.group.add(mattress);
+
+    const blanketGeo = new THREE.BoxGeometry(0.94, 0.08, 1.08);
+    const blanket = new THREE.Mesh(blanketGeo, blanketMat);
+    blanket.position.set(0.47, 0.61, 3.68);
+    this.group.add(blanket);
+
+    const pillowGeo = new THREE.BoxGeometry(0.36, 0.1, 0.24);
+    for (const px of [0.27, 0.67]) {
+      const pillow = new THREE.Mesh(pillowGeo, pillowMat);
+      pillow.position.set(px, 0.65, 4.48);
+      pillow.rotation.x = 0.16;
+      this.group.add(pillow);
+    }
+
+    // Subtle bedside glow trim
+    const bedTrimGeo = new THREE.BoxGeometry(0.015, 0.018, 1.54);
+    const bedTrim = new THREE.Mesh(bedTrimGeo, accentMat);
+    bedTrim.position.set(-0.01, 0.28, 3.92);
+    this.group.add(bedTrim);
+
+    // 6) RV Mini-Home Warm Ceiling Light Panels + PointLight
+    this.rvCeilingLampMat = new THREE.MeshStandardMaterial({
+      color: 0xfef3c7,
+      emissive: 0xfde68a,
+      emissiveIntensity: 0.05,
+      roughness: 0.24,
+    });
+    const rvLampGeo = new THREE.BoxGeometry(0.56, 0.025, 0.28);
+    for (const lz of [1.65, 3.45]) {
+      const panel = new THREE.Mesh(rvLampGeo, this.rvCeilingLampMat);
+      panel.position.set(0, 2.015, lz);
+      this.group.add(panel);
+    }
+    this.rvCeilingLight = new THREE.PointLight(0xfff4d6, 0, 6.2, 1.4);
+    this.rvCeilingLight.position.set(0, 1.9, 2.65);
+    this.group.add(this.rvCeilingLight);
+
+    this.disposables.push(
+      woodFloorMat,
+      cabinetMat,
+      counterTopMat,
+      ceramicMat,
+      mattressMat,
+      blanketMat,
+      pillowMat,
+      showerTileMat,
+      showerGlassMat,
+      waterDropMat,
+      steamMat,
+      rvFloorGeo,
+      kBaseGeo,
+      kTopGeo,
+      coffeeBodyGeo,
+      coffeeSpoutGeo,
+      this.rvCoffeeLedMat,
+      coffeeLedGeo,
+      mugGeo,
+      steamGeo,
+      tvBezelGeo,
+      tvScreenGeo,
+      tvScreenMat,
+      loungeBenchGeo,
+      trayGeo,
+      wetWallGeo,
+      glassSideGeo,
+      glassFrontWall.geometry,
+      glassInnerGeo,
+      showerPipeGeo,
+      showerHeadGeo,
+      dropGeo,
+      dividerGeo,
+      tBaseGeo,
+      tBowlGeo,
+      tTankGeo,
+      this.rvToiletFlushMat,
+      flushBtnGeo,
+      bedFrameGeo,
+      mattressGeo,
+      blanketGeo,
+      pillowGeo,
+      bedTrimGeo,
+      this.rvCeilingLampMat,
+      rvLampGeo,
+    );
+  }
+
+  public triggerToiletFlush(): void {
+    this.toiletFlushTimer = 1.4;
+  }
+
+  public setVehicleModel(_id: VehicleTypeId): void {
+    this.vehicleModel = 'coupe';
   }
 
   public getVehicleModel(): VehicleTypeId {
     return this.vehicleModel;
+  }
+
+  public clampRvPlayerPos(localPos: THREE.Vector3): void {
+    localPos.y = 0.195;
+    localPos.x = THREE.MathUtils.clamp(localPos.x, -0.84, 0.84);
+    localPos.z = THREE.MathUtils.clamp(localPos.z, -0.1, 4.48);
+
+    // Prevent passing through front seats; keep open center aisle x ∈ [-0.18, 0.18]
+    if (localPos.z < 0.44 && Math.abs(localPos.x) > 0.18) {
+      if (localPos.z < 0.25) {
+        localPos.x = THREE.MathUtils.clamp(localPos.x, -0.18, 0.18);
+      } else {
+        localPos.z = 0.44;
+      }
+    }
+
+    // Left Kitchenette counter (x < -0.32, z ∈ [0.80, 1.98])
+    if (localPos.x < -0.3 && localPos.z > 0.78 && localPos.z < 1.98) {
+      localPos.x = -0.3;
+    }
+
+    // Left Shower stall + Toilet pod (x < -0.26, z ∈ [1.98, 3.72])
+    if (localPos.x < -0.25 && localPos.z >= 1.98 && localPos.z <= 3.74) {
+      localPos.x = -0.25;
+    }
+
+    // Right Lounge bench under TV (x > 0.44, z ∈ [1.0, 2.02])
+    if (localPos.x > 0.44 && localPos.z > 1.0 && localPos.z < 2.02) {
+      localPos.x = 0.44;
+    }
+
+    // Right Bed footprint (x > -0.1, z > 3.04)
+    if (localPos.x > -0.08 && localPos.z > 3.04) {
+      const penX = localPos.x - -0.08;
+      const penZ = localPos.z - 3.04;
+      if (penX < penZ) {
+        localPos.x = -0.08;
+      } else {
+        localPos.z = 3.04;
+      }
+    }
+  }
+
+  public getNearestRvStation(localPos: THREE.Vector3): RvStationKind | null {
+    if (localPos.z < 0.56) return 'cab';
+    const dCoffee = Math.hypot(localPos.x - -0.32, localPos.z - 1.42);
+    const dTv = Math.hypot(localPos.x - 0.36, localPos.z - 1.52);
+    const dShower = Math.hypot(localPos.x - -0.25, localPos.z - 2.46);
+    const dToilet = Math.hypot(localPos.x - -0.28, localPos.z - 3.34);
+    const dBed = Math.hypot(localPos.x - -0.04, localPos.z - 3.65);
+
+    let best: RvStationKind | null = null;
+    let bestDist = 0.92;
+    const checks: [RvStationKind, number][] = [
+      ['coffee', dCoffee],
+      ['tv', dTv],
+      ['shower', dShower],
+      ['toilet', dToilet],
+      ['bed', dBed],
+    ];
+    for (const [kind, d] of checks) {
+      if (d < bestDist) {
+        bestDist = d;
+        best = kind;
+      }
+    }
+    return best;
+  }
+
+  public getRvBedCameraAnchor(): { pos: THREE.Vector3; lookYaw: number; lookPitch: number } {
+    return {
+      pos: new THREE.Vector3(0.45, 0.88, 4.26),
+      lookYaw: 0.22,
+      lookPitch: 0.08,
+    };
   }
 
   public update(
@@ -1246,6 +1439,11 @@ export class CockpitRig {
     const monitorOpen = Boolean(cabinOpts?.cabinMonitorOpen);
     const leftWinOpen = Boolean(cabinOpts?.leftWindowOpen);
     const rightWinOpen = Boolean(cabinOpts?.rightWindowOpen);
+    const rvLightsOn = Boolean(cabinOpts?.rvLightsOn);
+    const rvTvOn = Boolean(cabinOpts?.rvTvOn);
+    const rvShowerOn = Boolean(cabinOpts?.rvShowerOn);
+    const rvCoffeeBrewed = Boolean(cabinOpts?.rvCoffeeBrewed);
+    const rvWindowTinted = Boolean(cabinOpts?.rvWindowTinted);
 
     const targetWheelAngle = steerInput * 0.72;
     this.steeringWheelGroup.rotation.z = THREE.MathUtils.damp(
@@ -1258,15 +1456,7 @@ export class CockpitRig {
     this.drivePrism.rotation.y = elapsed * (boostActive ? 4.2 : 1.4);
     this.drivePrism.rotation.x = Math.sin(elapsed * 0.9) * 0.25;
 
-    if (this.ufoInteriorGroup.visible) {
-      this.ufoOrbMesh.rotation.y = elapsed * 1.6;
-      this.ufoOrbMesh.rotation.x = Math.sin(elapsed * 1.1) * 0.35;
-      this.ufoOrbMesh.position.y = 0.87 + Math.sin(elapsed * 2.3) * 0.014;
-      this.ufoHoloRingMesh.rotation.z = steerInput * 0.55;
-      this.ufoHoloRingMesh.rotation.y = elapsed * 0.9;
-    }
-
-    // Hermetic cabin window tint (sleep privacy), sliding door panes, dome light, reclined seats & retractable movie monitor
+    // Front cab glass tint & sliding door panes
     this.cabinGlassMat.color.lerp(
       tintDark ? this.glassTintColor : this.glassClearColor,
       1 - Math.exp(-5.5 * delta),
@@ -1274,6 +1464,18 @@ export class CockpitRig {
     this.cabinGlassMat.opacity = THREE.MathUtils.damp(
       this.cabinGlassMat.opacity,
       tintDark ? 0.94 : 0.09,
+      6.5,
+      delta,
+    );
+
+    // RV mini-home windows tint
+    this.rvGlassMat.color.lerp(
+      rvWindowTinted ? this.glassTintColor : this.glassClearColor,
+      1 - Math.exp(-5.5 * delta),
+    );
+    this.rvGlassMat.opacity = THREE.MathUtils.damp(
+      this.rvGlassMat.opacity,
+      rvWindowTinted ? 0.94 : 0.11,
       6.5,
       delta,
     );
@@ -1291,7 +1493,8 @@ export class CockpitRig {
       delta,
     );
 
-    const targetBackAngle = seatsReclined ? 1.12 : 0.22;
+    // Reclined front seat angle tuned cleanly so head never clips
+    const targetBackAngle = seatsReclined ? 0.78 : 0.22;
     for (const bp of this.seatBackPivots) {
       bp.rotation.x = THREE.MathUtils.damp(bp.rotation.x, targetBackAngle, 6, delta);
     }
@@ -1321,7 +1524,51 @@ export class CockpitRig {
       6,
       delta,
     );
-    this.movieDisplay.update(elapsed, monitorOpen);
+    this.movieDisplay.update(elapsed, monitorOpen || rvTvOn);
+
+    // RV Mini-Home Fixtures animation
+    this.rvCeilingLight.intensity = THREE.MathUtils.damp(
+      this.rvCeilingLight.intensity,
+      rvLightsOn ? 2.65 : 0.18,
+      6.5,
+      delta,
+    );
+    this.rvCeilingLampMat.emissiveIntensity = THREE.MathUtils.damp(
+      this.rvCeilingLampMat.emissiveIntensity,
+      rvLightsOn ? 1.85 : 0.08,
+      6.5,
+      delta,
+    );
+
+    this.rvTvScreenMesh.visible = rvTvOn;
+    this.rvTvLight.intensity = THREE.MathUtils.damp(this.rvTvLight.intensity, rvTvOn ? 1.05 : 0, 6, delta);
+
+    this.rvCoffeeCupsGroup.visible = rvCoffeeBrewed;
+    this.rvCoffeeLedMat.emissiveIntensity = rvCoffeeBrewed ? 1.65 : 0.3;
+    if (rvCoffeeBrewed) {
+      for (let i = 0; i < this.rvSteamDots.length; i++) {
+        const dot = this.rvSteamDots[i];
+        const cycle = (elapsed * 0.8 + i * 0.25) % 1;
+        dot.position.y = 1.06 + cycle * 0.22;
+        dot.scale.setScalar(0.6 + cycle * 0.7);
+      }
+    }
+
+    for (let i = 0; i < this.rvShowerDrops.length; i++) {
+      const sd = this.rvShowerDrops[i];
+      sd.mesh.visible = rvShowerOn;
+      if (rvShowerOn) {
+        const t = (elapsed * 1.9 + sd.phase) % 1;
+        sd.mesh.position.set(sd.baseX, 1.8 - t * 1.48, sd.baseZ);
+      }
+    }
+
+    if (this.toiletFlushTimer > 0) {
+      this.toiletFlushTimer = Math.max(0, this.toiletFlushTimer - delta);
+      this.rvToiletFlushMat.emissiveIntensity = 1.8;
+    } else {
+      this.rvToiletFlushMat.emissiveIntensity = 0.32;
+    }
 
     const isOrbitState = flightState === 'orbit' || flightState === 'launching_orbit';
     const isSpaceMode = inSpace || flightState === 'launching' || flightState === 'entering';

@@ -205,15 +205,22 @@ export class VehiclePhysics {
     this.spaceFactor = 1;
   }
 
-  public descendToSite(x: number, z: number): void {
+  public descendToSite(x: number, z: number, lookAtX?: number, lookAtZ?: number): void {
     if (this.flightState !== 'orbit' && this.flightState !== 'space') return;
     this.onPlanetSwitch?.(this.activePlanetId, x, z);
-    this.position.set(x, 385, z);
-    this.targetFlightAltitude = 104;
-    this.forwardSpeed = 42;
-    this.verticalSpeed = -28;
-    this.heading = 0;
+    this.position.set(x, 250, z);
+    this.targetFlightAltitude = 92;
+    this.forwardSpeed = 26;
+    this.verticalSpeed = -42;
+    if (lookAtX !== undefined && lookAtZ !== undefined) {
+      const dx = lookAtX - x;
+      const dz = lookAtZ - z;
+      this.heading = Math.hypot(dx, dz) > 0.5 ? Math.atan2(-dx, -dz) : 0;
+    } else {
+      this.heading = 0;
+    }
     this.spacePitch = 0;
+    this.pitch = -0.18;
     this.flightState = 'entering';
   }
 
@@ -264,22 +271,8 @@ export class VehiclePhysics {
     const isRoad = this.flightState === 'road';
     const wetFactor = weather === 'rain' ? 0.35 : weather === 'storm' ? 0.55 : 0;
 
-    const baseRoadMax =
-      this.vehicleId === 'interceptor'
-        ? 78
-        : this.vehicleId === 'ufo'
-          ? 74
-          : this.vehicleId === 'truck'
-            ? 56
-            : 68;
-    const boostRoadMax =
-      this.vehicleId === 'interceptor'
-        ? 112
-        : this.vehicleId === 'ufo'
-          ? 106
-          : this.vehicleId === 'truck'
-            ? 82
-            : 98;
+    const baseRoadMax = 68;
+    const boostRoadMax = 98;
     const maxForward = isRoad
       ? boostActive
         ? boostRoadMax
@@ -287,30 +280,15 @@ export class VehiclePhysics {
       : this.flightState === 'launching' || this.flightState === 'launching_orbit'
         ? 135
         : boostActive
-          ? this.vehicleId === 'interceptor'
-            ? 138
-            : 126
-          : this.vehicleId === 'interceptor'
-            ? 94
-            : 86;
+          ? 126
+          : 86;
     const maxReverse = isRoad ? -16 : 0;
 
     const speedRatio = Math.abs(this.forwardSpeed) / maxForward;
     const torqueCurve = Math.max(0.25, 1.0 - speedRatio * 0.64);
-    const accelBase =
-      this.vehicleId === 'interceptor'
-        ? boostActive
-          ? 54
-          : 29
-        : this.vehicleId === 'truck'
-          ? boostActive
-            ? 40
-            : 21
-          : boostActive
-            ? 46
-            : 24;
+    const accelBase = boostActive ? 46 : 24;
     const engineAccel = accelBase * torqueCurve;
-    const brakeDecel = isRoad ? (this.vehicleId === 'truck' ? 30 : 34) : 28;
+    const brakeDecel = isRoad ? 34 : 28;
 
     let longitudinalAccel = 0;
 
@@ -375,11 +353,9 @@ export class VehiclePhysics {
 
       this.distanceTraveled += absSpeed * delta;
       const roadWave =
-        this.vehicleId === 'ufo'
-          ? 0.14 + Math.sin(elapsed * 2.2) * 0.035
-          : (Math.sin(this.distanceTraveled * 0.16) * 0.012 +
-              Math.sin(this.distanceTraveled * 0.43) * 0.005) *
-            THREE.MathUtils.clamp(absSpeed / 25, 0, 1);
+        (Math.sin(this.distanceTraveled * 0.16) * 0.012 +
+          Math.sin(this.distanceTraveled * 0.43) * 0.005) *
+        THREE.MathUtils.clamp(absSpeed / 25, 0, 1);
       this.suspensionHeave = THREE.MathUtils.damp(this.suspensionHeave, roadWave, 14, delta);
     } else {
       const yawRate = this.steerAngle * (0.58 + 0.25 * Math.min(1, this.forwardSpeed / 40));
@@ -689,7 +665,7 @@ export class VehiclePhysics {
   }): void {
     this.activePlanetId = data.planetId;
     this.flightState = data.flightState;
-    this.vehicleId = data.vehicleId ?? 'coupe';
+    this.vehicleId = 'coupe';
     this.position.set(data.position.x, data.position.y, data.position.z);
     this.heading = data.heading;
     this.forwardSpeed = data.forwardSpeed;
@@ -844,8 +820,8 @@ export class VehiclePhysics {
     const localX = relX * cosH - relZ * sinH;
     const localZ = relX * sinH + relZ * cosH;
 
-    const halfCarW = 1.42;
-    const halfCarBack = 1.98;
+    const halfCarW = 1.48;
+    const halfCarBack = 5.15;
     const halfCarFront = 2.75;
     if (localX > -halfCarW && localX < halfCarW && localZ > -halfCarFront && localZ < halfCarBack) {
       const penLeft = localX + halfCarW;

@@ -1,5 +1,6 @@
 import type {
   CabinThemeId,
+  CompanionLocation,
   PlanetId,
   QuestKind,
   SeasonId,
@@ -40,7 +41,6 @@ export interface GameSaveData {
   planetName: string;
   flightState: VehicleFlightState;
   vehicleId?: VehicleTypeId;
-  unlockedVehicles?: VehicleTypeId[];
   pedestriansHitCount?: number;
   position: Vec3Save;
   heading: number;
@@ -73,6 +73,12 @@ export interface GameSaveData {
   cabinRoofLight?: boolean;
   cabinSeatsReclined?: boolean;
   cabinMonitorOpen?: boolean;
+  rvLightsOn?: boolean;
+  rvTvOn?: boolean;
+  rvShowerOn?: boolean;
+  rvCoffeeBrewed?: boolean;
+  rvWindowTinted?: boolean;
+  companionLocation?: CompanionLocation;
   visitedPlanets: PlanetId[];
   visitedSpecialSpots: string[];
   discoveredCloudLayer: boolean;
