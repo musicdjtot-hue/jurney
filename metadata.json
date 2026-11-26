@@ -1,0 +1,8 @@
+{
+  "name": "Remix Корускант · Горизонт",
+  "description": "Медитативный симулятор вождения и полётов сквозь облака над футуристическим мегаполисом в стиле Корускант с динамической сменой дня, ночи и погоды.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
