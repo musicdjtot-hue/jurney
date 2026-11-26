@@ -240,9 +240,11 @@ export class VehiclePhysics {
       freezeWalking?: boolean;
       skipCarCollision?: boolean;
       clampWalkBounds?: (pos: THREE.Vector3) => void;
+      engineRunning?: boolean;
     },
   ): void {
     const delta = Math.min(dt, 0.05);
+    const engineRunning = options?.engineRunning ?? true;
 
     if (this.isWalking) {
       if (!options?.freezeWalking) {
@@ -252,22 +254,23 @@ export class VehiclePhysics {
     }
 
     if (this.flightState === 'space') {
-      this.updateSpacePhysics(delta, inputs, elapsed);
+      this.updateSpacePhysics(delta, inputs, elapsed, engineRunning);
       return;
     }
 
     if (this.flightState === 'orbit') {
-      this.updateOrbitPhysics(delta, inputs, elapsed);
+      this.updateOrbitPhysics(delta, inputs, elapsed, engineRunning);
       return;
     }
 
-    if (inputs.brake) {
+    if (!engineRunning || inputs.brake) {
       this.boostTimer = 0;
     } else if (this.boostTimer > 0) {
       this.boostTimer = Math.max(0, this.boostTimer - delta);
     }
 
-    const boostActive = this.boostTimer > 0 || inputs.boost;
+    const boostActive = engineRunning && (this.boostTimer > 0 || inputs.boost);
+    const throttleOn = engineRunning && inputs.throttle;
     const isRoad = this.flightState === 'road';
     const wetFactor = weather === 'rain' ? 0.35 : weather === 'storm' ? 0.55 : 0;
 
@@ -293,7 +296,7 @@ export class VehiclePhysics {
     let longitudinalAccel = 0;
 
     if (
-      inputs.throttle ||
+      throttleOn ||
       boostActive ||
       this.flightState === 'launching' ||
       this.flightState === 'launching_orbit'
@@ -306,7 +309,7 @@ export class VehiclePhysics {
     } else if (inputs.brake) {
       if (this.forwardSpeed > 0.6) {
         longitudinalAccel = -brakeDecel;
-      } else if (isRoad) {
+      } else if (isRoad && engineRunning) {
         longitudinalAccel = -12;
       } else {
         this.forwardSpeed = THREE.MathUtils.damp(this.forwardSpeed, 0, 6, delta);
@@ -507,18 +510,23 @@ export class VehiclePhysics {
     }
   }
 
-  private updateSpacePhysics(delta: number, inputs: ControlInputs, elapsed: number): void {
+  private updateSpacePhysics(
+    delta: number,
+    inputs: ControlInputs,
+    elapsed: number,
+    engineRunning: boolean,
+  ): void {
     this.spaceFactor = 1;
-    if (inputs.brake) {
+    if (!engineRunning || inputs.brake) {
       this.boostTimer = 0;
     } else if (this.boostTimer > 0) {
       this.boostTimer = Math.max(0, this.boostTimer - delta);
     }
-    const boostActive = this.boostTimer > 0 || inputs.boost;
+    const boostActive = engineRunning && (this.boostTimer > 0 || inputs.boost);
     const maxSpace = boostActive ? 325 : 195;
     const minSpace = -110;
 
-    if (inputs.throttle || boostActive) {
+    if (engineRunning && (inputs.throttle || boostActive)) {
       this.spaceSpeed += (boostActive ? 120 : 62) * delta;
     } else if (inputs.brake) {
       this.spaceSpeed -= 85 * delta;
@@ -536,7 +544,7 @@ export class VehiclePhysics {
     const yawRate = this.steerAngle * 0.85;
     this.heading += yawRate * delta;
 
-    const pitchInput = (inputs.climb ? 1 : 0) - (inputs.descend ? 1 : 0);
+    const pitchInput = engineRunning ? (inputs.climb ? 1 : 0) - (inputs.descend ? 1 : 0) : 0;
     this.spacePitch = THREE.MathUtils.clamp(this.spacePitch + pitchInput * 0.72 * delta, -1.05, 1.05);
 
     this.pitch = THREE.MathUtils.damp(this.pitch, this.spacePitch, 5.5, delta);
@@ -565,27 +573,34 @@ export class VehiclePhysics {
     }
   }
 
-  private updateOrbitPhysics(delta: number, inputs: ControlInputs, elapsed: number): void {
+  private updateOrbitPhysics(
+    delta: number,
+    inputs: ControlInputs,
+    elapsed: number,
+    engineRunning: boolean,
+  ): void {
     this.spaceFactor = 1;
-    if (inputs.brake) {
+    if (!engineRunning || inputs.brake) {
       this.boostTimer = 0;
     } else if (this.boostTimer > 0) {
       this.boostTimer = Math.max(0, this.boostTimer - delta);
     }
-    const boostActive = this.boostTimer > 0 || inputs.boost;
+    const boostActive = engineRunning && (this.boostTimer > 0 || inputs.boost);
     const planet = getPlanetConfig(this.activePlanetId);
 
     const digitalSteer = (inputs.steerLeft ? 1 : 0) - (inputs.steerRight ? 1 : 0);
     const rawSteer = THREE.MathUtils.clamp(digitalSteer + inputs.steerAxis, -1, 1);
     this.steerAngle = THREE.MathUtils.damp(this.steerAngle, rawSteer, 4.5, delta);
 
-    const throttleBias = boostActive
-      ? 0.38
-      : inputs.throttle
-        ? 0.22
-        : inputs.brake
-          ? -0.08
-          : 0.055;
+    const throttleBias = !engineRunning
+      ? 0.028
+      : boostActive
+        ? 0.38
+        : inputs.throttle
+          ? 0.22
+          : inputs.brake
+            ? -0.08
+            : 0.055;
     this.orbitTheta += (throttleBias - this.steerAngle * 0.36) * delta;
 
     const vInput = (inputs.climb ? 1 : 0) - (inputs.descend ? 1 : 0);

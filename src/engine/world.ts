@@ -2683,6 +2683,34 @@ export class CoruscantWorld {
     if (this.beaconMesh.instanceColor) this.beaconMesh.instanceColor.needsUpdate = true;
   }
 
+  public setQualityProfile(
+    quality: number,
+    lowTierProfile: boolean,
+    touchProfile: boolean,
+  ): void {
+    const q = THREE.MathUtils.clamp(quality, 0, 1);
+    const baseGrid = lowTierProfile ? 2 : DEFAULT_GRID_RADIUS;
+    const targetGrid =
+      q < 0.25 ? 1 : q < 0.48 ? 2 : q < 0.72 ? baseGrid : DEFAULT_GRID_RADIUS;
+    if (targetGrid !== this.gridRadius) {
+      this.gridRadius = targetGrid;
+      this.lastChunkX = Number.NaN;
+      this.lastChunkZ = Number.NaN;
+    }
+
+    const baseTraffic = lowTierProfile ? 0.5 : touchProfile ? 0.72 : 1.0;
+    const baseFx = lowTierProfile ? 0.55 : touchProfile ? 0.75 : 1.0;
+    if (q <= 0.5) {
+      const t = q / 0.5;
+      this.trafficScale = THREE.MathUtils.lerp(0.18, baseTraffic, t);
+      this.fxScale = THREE.MathUtils.lerp(0.22, baseFx, t);
+    } else {
+      const t = (q - 0.5) / 0.5;
+      this.trafficScale = THREE.MathUtils.lerp(baseTraffic, 1.0, t);
+      this.fxScale = THREE.MathUtils.lerp(baseFx, 1.0, t);
+    }
+  }
+
   public update(
     vehiclePos: THREE.Vector3,
     vehicleHeading: number,
@@ -2698,6 +2726,8 @@ export class CoruscantWorld {
     insideInterior = false,
     isWalking = false,
     shelteredInHangar = false,
+    carPos: THREE.Vector3 = vehiclePos,
+    carHeading: number = vehicleHeading,
   ): number {
     this.group.visible = !insideInterior && spaceFactor < 0.99;
     if (!this.group.visible) return 0;
@@ -2845,11 +2875,14 @@ export class CoruscantWorld {
       this.groundCarGlowMesh.instanceMatrix.needsUpdate = true;
     }
 
-    // 2. Animate Street Pedestrians + Knockdown Physics on Player Vehicle Impact
+    // 2. Animate Street Pedestrians + Knockdown Physics on Impact + Avoid Parked Motorhome
     let newlyKnocked = 0;
     const activePeds = Math.floor(biome.pedCount * this.trafficScale);
     const canHitPeds = !insideInterior && !isWalking && vehiclePos.y < 2.2;
     const carSpeed = canHitPeds ? Math.hypot(vehicleVel.x, vehicleVel.z) : 0;
+    const avoidParkedCar = !insideInterior && carPos.y < 2.2 && (carSpeed <= 4.2 || isWalking);
+    const carSin = avoidParkedCar ? Math.sin(carHeading) : 0;
+    const carCos = avoidParkedCar ? Math.cos(carHeading) : 1;
 
     if (vehiclePos.y < 45 && activePeds > 0) {
       this.pedestrianMesh.visible = true;
@@ -2906,6 +2939,8 @@ export class CoruscantWorld {
           continue;
         }
 
+        const prevX = p.x;
+        const prevZ = p.z;
         p.x += p.dirX * p.speed * delta;
         p.z += p.dirZ * p.speed * delta;
 
@@ -2915,9 +2950,57 @@ export class CoruscantWorld {
         if (p.z - vehiclePos.z > pedWrap) p.z -= pedWrap * 2;
         else if (p.z - vehiclePos.z < -pedWrap) p.z += pedWrap * 2;
 
+        if (avoidParkedCar) {
+          const dxC = p.x - carPos.x;
+          const dzC = p.z - carPos.z;
+          if (Math.abs(dxC) < 6.4 && Math.abs(dzC) < 6.4) {
+            let localX = dxC * carCos - dzC * carSin;
+            let localZ = dxC * carSin + dzC * carCos;
+            const halfW = 1.55;
+            const minZ = -3.05;
+            const maxZ = 5.45;
+            if (Math.abs(localX) < halfW + 0.45 && localZ > minZ - 0.55 && localZ < maxZ + 0.55) {
+              const sideSign = localX >= 0 ? 1 : -1;
+              if (Math.abs(localX) < halfW && localZ > minZ && localZ < maxZ) {
+                const sidePen = halfW - Math.abs(localX);
+                const frontPen = localZ - minZ;
+                const rearPen = maxZ - localZ;
+                if (frontPen < 0.85 && frontPen <= sidePen + 0.35) {
+                  localZ = minZ;
+                  localX += sideSign * p.speed * delta * 1.45;
+                } else if (rearPen < 0.85 && rearPen <= sidePen + 0.35) {
+                  localZ = maxZ;
+                  localX += sideSign * p.speed * delta * 1.45;
+                } else {
+                  localX = sideSign * halfW;
+                  localZ += (localZ < 1.2 ? -1 : 1) * p.speed * delta * 1.15;
+                }
+              } else {
+                // Gentle outer steering halo so pedestrians curve smoothly around the motorhome
+                localX += sideSign * p.speed * delta * 0.85;
+              }
+              p.x = carPos.x + localX * carCos + localZ * carSin;
+              p.z = carPos.z - localX * carSin + localZ * carCos;
+            }
+          }
+        }
+
+        const stepX = p.x - prevX;
+        const stepZ = p.z - prevZ;
+        const pedYaw =
+          Math.abs(stepX) + Math.abs(stepZ) > 0.0001 && Math.abs(stepX) + Math.abs(stepZ) < 5
+            ? Math.atan2(stepX, stepZ)
+            : p.dirX !== 0
+              ? p.dirX > 0
+                ? Math.PI / 2
+                : -Math.PI / 2
+              : p.dirZ > 0
+                ? 0
+                : Math.PI;
+
         const strideBob = Math.abs(Math.sin(elapsed * 6.2 + p.phase)) * 0.09;
         _dummy.position.set(p.x, strideBob, p.z);
-        _dummy.rotation.set(0, p.dirX !== 0 ? Math.PI / 2 : 0, 0);
+        _dummy.rotation.set(0, pedYaw, 0);
         _dummy.scale.setScalar(p.scale);
         _dummy.updateMatrix();
         this.pedestrianMesh.setMatrixAt(i, _dummy.matrix);

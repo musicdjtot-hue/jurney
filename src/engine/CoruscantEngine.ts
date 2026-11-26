@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { AmbientCabinAudio } from './ambientAudio';
+import { AmbientCabinAudio, type AudioFrameInput } from './ambientAudio';
 import { CockpitRig } from './cockpit';
 import { BlondeWalkerRig, type CompanionPose } from './companion';
 import { QuestManager } from './events';
@@ -18,13 +18,18 @@ import {
 import {
   clearGameSave,
   formatSaveTimeLabel,
+  readAudioSettings,
   readGameSave,
+  readGraphicsQuality,
+  writeAudioSettings,
   writeGameSave,
+  writeGraphicsQuality,
   type GameSaveData,
 } from './saveSystem';
 import { SkyAtmosphere } from './sky';
 import { CoruscantWorld, getChunkRoadArms } from './world';
 import type {
+  AudioSettings,
   CabinThemeId,
   CompanionLocation,
   ControlInputs,
@@ -99,7 +104,28 @@ export class CoruscantEngine {
   private space: SpaceSystem;
   private physics = new VehiclePhysics();
   private quests = new QuestManager();
-  private audio = new AmbientCabinAudio();
+  private graphicsQuality = readGraphicsQuality();
+  private audioSettings: AudioSettings = readAudioSettings();
+  private audio = new AmbientCabinAudio(this.audioSettings);
+  private readonly audioInput: AudioFrameInput = {
+    mode: 'road',
+    flightState: 'road',
+    speedKmh: 0,
+    altitudeM: 0,
+    zoneType: 'city',
+    weather: 'clear',
+    weatherBlend: 1,
+    isWalking: false,
+    interiorMode: 'none',
+    inRvCabin: false,
+    windowOpen: false,
+    engineRunning: true,
+    boostActive: false,
+    insideHangar: false,
+    planetBiome: 'coruscant',
+    delta: 0.016,
+    elapsed: 0,
+  };
   private headlight: THREE.SpotLight;
 
   private clock = new THREE.Clock();
@@ -205,6 +231,8 @@ export class CoruscantEngine {
   private cabinRoofLight = false;
   private cabinSeatsReclined = false;
   private cabinMonitorOpen = false;
+  private engineRunning = true;
+  private engineHintCooldown = 0;
   private leftWindowOpen = false;
   private rightWindowOpen = false;
   private serbosCoffeeServed = false;
@@ -336,6 +364,7 @@ export class CoruscantEngine {
     this.cockpit = new CockpitRig(maxAnisotropy, this.isSoftwareGl || this.isLowTierGpu);
     this.walkerCompanion = new BlondeWalkerRig(maxAnisotropy);
     this.walkerCompanion.group.visible = false;
+    this.applyGraphicsQuality(this.graphicsQuality, false);
 
     this.physics.setOnPlanetSwitch((planetId: PlanetId, centerX = 0, centerZ = 0) => {
       const cfg = getPlanetConfig(planetId);
@@ -402,18 +431,30 @@ export class CoruscantEngine {
 
   public toggleFlight(): void {
     if (this.interiorMode !== 'none' || this.isInRvCabin) return;
+    if (this.physics.flightState === 'road' && !this.engineRunning) {
+      this.quests.showToast('Двигатель заглушён — запустите во вкладке «Салон»', 2.6);
+      return;
+    }
     this.autopilotActive = false;
     this.physics.toggleFlight();
   }
 
   public enterOrbitFromFlight(): void {
     if (this.interiorMode !== 'none' || this.isInRvCabin) return;
+    if (!this.engineRunning) {
+      this.quests.showToast('Двигатель заглушён — запустите во вкладке «Салон»', 2.6);
+      return;
+    }
     this.autopilotActive = false;
     this.physics.launchToOrbit();
   }
 
   public launchToSpace(): void {
     if (this.interiorMode !== 'none' || this.isInRvCabin) return;
+    if (!this.engineRunning) {
+      this.quests.showToast('Двигатель заглушён — запустите во вкладке «Салон»', 2.6);
+      return;
+    }
     this.autopilotActive = false;
     if (this.physics.flightState === 'orbit') {
       this.physics.launchFromOrbitToSpace();
@@ -480,6 +521,10 @@ export class CoruscantEngine {
         bestScore = dot;
         bestIdx = d.idx;
       }
+    }
+    if (!this.engineRunning) {
+      this.engineRunning = true;
+      this.audio.playEngineIgnition(true);
     }
     this.autopilotDirIndex = bestIdx;
     this.autopilotLastIntersectionKey = '';
@@ -743,15 +788,104 @@ export class CoruscantEngine {
       5.2,
     );
     this.quests.showToast('Угостили спутницу горячим кофе (+10 ✦)', 3.0);
+    this.quests.advanceCoupleMoments();
     this.saveGame(false);
+  }
+
+  public setGraphicsQuality(quality: number): void {
+    this.applyGraphicsQuality(quality, true);
+  }
+
+  private applyGraphicsQuality(quality: number, persist: boolean): void {
+    const q = THREE.MathUtils.clamp(quality, 0, 1);
+    this.graphicsQuality = q;
+
+    const defaultMaxDpr = this.isSoftwareGl
+      ? 1
+      : this.isLowTierGpu
+        ? 1.0
+        : this.isTouchDevice
+          ? 1.25
+          : 1.75;
+    const defaultMinDpr = this.isSoftwareGl
+      ? 1
+      : this.isLowTierGpu
+        ? 0.72
+        : this.isTouchDevice
+          ? 0.9
+          : 1.1;
+
+    if (q <= 0.5) {
+      const t = q / 0.5;
+      this.baseMaxDpr = this.isSoftwareGl ? 1 : THREE.MathUtils.lerp(0.65, defaultMaxDpr, t);
+      this.minAdaptiveDpr = this.isSoftwareGl ? 1 : THREE.MathUtils.lerp(0.55, defaultMinDpr, t);
+    } else {
+      const t = (q - 0.5) / 0.5;
+      const hiMax = this.isSoftwareGl ? 1 : this.isTouchDevice ? 1.85 : 2.0;
+      const hiMin = this.isSoftwareGl ? 1 : this.isTouchDevice ? 1.1 : 1.35;
+      this.baseMaxDpr = THREE.MathUtils.lerp(defaultMaxDpr, hiMax, t);
+      this.minAdaptiveDpr = THREE.MathUtils.lerp(defaultMinDpr, hiMin, t);
+    }
+
+    this.currentDpr = Math.min(window.devicePixelRatio || 1, this.baseMaxDpr);
+    this.renderer.setPixelRatio(this.currentDpr);
+
+    const allowShadows = !this.isSoftwareGl && (this.isLowTierGpu ? q >= 0.72 : q >= 0.35);
+    this.renderer.shadowMap.enabled = allowShadows;
+    this.sky.sunLight.castShadow = allowShadows;
+
+    this.sky.setQualityScale(q);
+    this.world.setQualityProfile(q, this.isLowTierGpu || this.isSoftwareGl, this.isTouchDevice);
+    this.cockpit.setWeatherDetail(q < 0.3 ? 0 : 1);
+
+    if (persist) {
+      writeGraphicsQuality(q);
+    }
   }
 
   public toggleCabinAudio(): void {
     const on = this.audio.toggle();
     this.quests.showToast(
-      on ? 'Радио салона: тёплый синтезатор включён' : 'Радио салона выключено',
-      2.4,
+      on ? 'Радио салона: космическая медитативная волна' : 'Радио салона выключено',
+      2.6,
     );
+  }
+
+  public toggleEngineIgnition(): void {
+    this.audio.unlockFromGesture();
+    this.engineRunning = !this.engineRunning;
+    if (!this.engineRunning) {
+      this.autopilotActive = false;
+      this.autopilotArrivingStop = false;
+      this.autopilotStatusText = null;
+      if (this.physics.flightState === 'flight' || this.physics.flightState === 'ascending') {
+        this.physics.flightState = 'descending';
+      }
+      this.audio.playEngineIgnition(false);
+      this.quests.showToast('Двигатель заглушён · Можно запустить во вкладке «Салон»', 2.8);
+    } else {
+      this.audio.playEngineIgnition(true);
+      this.quests.showToast('Двигатель запущен · Приятного пути', 2.4);
+    }
+    this.saveGame(false);
+  }
+
+  public updateAudioSettings(partial: Partial<AudioSettings>): void {
+    this.audio.unlockFromGesture();
+    this.audioSettings = {
+      ...this.audioSettings,
+      ...partial,
+    };
+    this.audio.setSettings(this.audioSettings);
+    writeAudioSettings(this.audioSettings);
+  }
+
+  public toggleAudioMute(): void {
+    this.updateAudioSettings({ muted: !this.audioSettings.muted });
+  }
+
+  public unlockAudioFromUi(): void {
+    this.audio.unlockFromGesture();
   }
 
   public callCompanionToCab(): void {
@@ -789,10 +923,18 @@ export class CoruscantEngine {
     if (!side) return;
     if (side === 'left') {
       this.leftWindowOpen = !this.leftWindowOpen;
-      this.quests.showToast(this.leftWindowOpen ? 'Левое окно открыто' : 'Левое окно закрыто', 2.2);
+      this.audio.playWindowSlide(this.leftWindowOpen);
+      this.quests.showToast(
+        this.leftWindowOpen ? 'Левое окно открыто · Слышен город и ветер' : 'Левое окно закрыто · Тишина в салоне',
+        2.4,
+      );
     } else {
       this.rightWindowOpen = !this.rightWindowOpen;
-      this.quests.showToast(this.rightWindowOpen ? 'Правое окно открыто' : 'Правое окно закрыто', 2.2);
+      this.audio.playWindowSlide(this.rightWindowOpen);
+      this.quests.showToast(
+        this.rightWindowOpen ? 'Правое окно открыто · Слышен город и ветер' : 'Правое окно закрыто · Тишина в салоне',
+        2.4,
+      );
     }
   }
 
@@ -913,6 +1055,7 @@ export class CoruscantEngine {
       cabinRoofLight: this.cabinRoofLight,
       cabinSeatsReclined: this.cabinSeatsReclined,
       cabinMonitorOpen: this.cabinMonitorOpen,
+      engineRunning: this.engineRunning,
       rvLightsOn: this.rvLightsOn,
       rvTvOn: this.rvTvOn,
       rvShowerOn: this.rvShowerOn,
@@ -974,6 +1117,7 @@ export class CoruscantEngine {
     this.cabinRoofLight = false;
     this.cabinSeatsReclined = false;
     this.cabinMonitorOpen = false;
+    this.engineRunning = true;
     this.leftWindowOpen = false;
     this.rightWindowOpen = false;
     this.serbosCoffeeServed = false;
@@ -1043,6 +1187,7 @@ export class CoruscantEngine {
     this.cabinRoofLight = Boolean(save.cabinRoofLight);
     this.cabinSeatsReclined = Boolean(save.cabinSeatsReclined);
     this.cabinMonitorOpen = Boolean(save.cabinMonitorOpen);
+    this.engineRunning = save.engineRunning ?? true;
     this.rvLightsOn = save.rvLightsOn ?? true;
     this.rvTvOn = Boolean(save.rvTvOn);
     this.rvShowerOn = Boolean(save.rvShowerOn);
@@ -1138,6 +1283,28 @@ export class CoruscantEngine {
     return this.quests.kissGirl();
   }
 
+  public celebrateCoupleMoment(): void {
+    if (!this.hasCompanion) return;
+    const cfg = getPlanetConfig(this.physics.activePlanetId);
+    const inSpace =
+      this.physics.flightState === 'space' || this.physics.flightState === 'orbit';
+    this.audio.playChime('coffee');
+    this.quests.celebrateCoupleMoment(
+      cfg.name,
+      this.activeWeather,
+      inSpace,
+      this.isInRvCabin,
+    );
+    this.saveGame(false);
+  }
+
+  public cuddleWithCompanion(): void {
+    if (!this.hasCompanion) return;
+    this.audio.playChime('coffee');
+    this.quests.cuddleWithCompanion(this.isInRvCabin, this.rvPose === 'lie');
+    this.saveGame(false);
+  }
+
   public exitVehicle(): void {
     if (this.interiorMode !== 'none') return;
     if (this.isInRvCabin && (this.autopilotActive || Math.abs(this.physics.forwardSpeed) * 3.6 >= 18)) {
@@ -1148,6 +1315,7 @@ export class CoruscantEngine {
     this.isInRvCabin = false;
     this.rvPose = 'stand';
     if (!this.physics.exitVehicle()) return;
+    this.audio.playDoorLatch(true);
     this.walkerGroup.position.copy(this.physics.walkerPos);
     this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
     this.camera.position.set(0, 1.66, 0);
@@ -1162,6 +1330,7 @@ export class CoruscantEngine {
   public enterVehicle(): void {
     if (this.interiorMode !== 'none') return;
     if (!this.physics.enterVehicle()) return;
+    this.audio.playDoorLatch(false);
     this.isInRvCabin = false;
     this.rvPose = 'stand';
     this.quests.holdHands = false;
@@ -1233,6 +1402,14 @@ export class CoruscantEngine {
     this.enterInterior('observatory', nearest.landmark.name);
     this.quests.onObservatoryVisit(nearest.landmark.id, nearest.landmark.name);
     return true;
+  }
+
+  public scanObservatorySky(): void {
+    if (this.interiorMode !== 'observatory') return;
+    const cfg = getPlanetConfig(this.physics.activePlanetId);
+    this.audio.playChime('coffee');
+    this.quests.onObservatoryGalaxyScanned(cfg.name);
+    this.saveGame(false);
   }
 
   public enterNearbySerbos(): boolean {
@@ -1509,7 +1686,14 @@ export class CoruscantEngine {
 
   public triggerBoost(): void {
     if (this.interiorMode !== 'none') return;
+    if (!this.physics.isWalking && !this.engineRunning) {
+      this.quests.showToast('Двигатель заглушён — запустите во вкладке «Салон»', 2.8);
+      return;
+    }
     this.physics.triggerBoost();
+    if (!this.physics.isWalking) {
+      this.audio.playBoostWhoosh();
+    }
   }
 
   public selectQuest(id: string): void {
@@ -1620,6 +1804,7 @@ export class CoruscantEngine {
   };
 
   private handlePointerDown = (e: PointerEvent): void => {
+    this.audio.unlockFromGesture();
     if (this.lookPointerId !== null) return;
     this.lookPointerId = e.pointerId;
     this.lastPointerX = e.clientX;
@@ -1869,6 +2054,21 @@ export class CoruscantEngine {
       }
     }
 
+    if (this.engineHintCooldown > 0) {
+      this.engineHintCooldown = Math.max(0, this.engineHintCooldown - delta);
+    }
+    if (
+      !this.engineRunning &&
+      !insideInterior &&
+      !this.physics.isWalking &&
+      !this.isInRvCabin &&
+      (this.inputs.throttle || this.inputs.boost) &&
+      this.engineHintCooldown <= 0
+    ) {
+      this.engineHintCooldown = 3.5;
+      this.quests.showToast('Двигатель заглушён — запустите его во вкладке «Салон»', 2.8);
+    }
+
     let driveInputs: ControlInputs = this.isInRvCabin ? this.rvIdleInputs : this.inputs;
     if (this.autopilotActive) {
       this.updateAutopilot(delta, activeCfg, walkObstacles);
@@ -1890,9 +2090,11 @@ export class CoruscantEngine {
             freezeWalking: this.interiorPose !== 'stand',
             skipCarCollision: true,
             clampWalkBounds: (pos) => this.interior.clampPlayerPosition(this.interiorMode, pos),
+            engineRunning: this.engineRunning,
           }
         : {
             holdHands: this.quests.holdHands && this.hasCompanion,
+            engineRunning: this.engineRunning,
           },
     );
 
@@ -2200,6 +2402,8 @@ export class CoruscantEngine {
       insideInterior,
       isWalking,
       Boolean(hangarHit),
+      this.physics.position,
+      this.physics.heading,
     );
     if (knockedPeds > 0) {
       this.quests.onPedestrianHit(knockedPeds);
@@ -2267,6 +2471,7 @@ export class CoruscantEngine {
       isWalking && !insideInterior ? this.physics.forwardSpeed : 0,
       zoneType,
       this.world.getLandmarks(),
+      this.timeOfDay,
     );
 
     const driverLookingAtCompanion = !isWalking && !this.isInRvCabin && this.lookYaw < -0.36;
@@ -2355,17 +2560,32 @@ export class CoruscantEngine {
       );
     }
 
-    this.audio.update(
-      this.isInRvCabin
-        ? 'rv'
-        : inSpace
-          ? 'space'
-          : inOrbitMode
-            ? 'orbit'
-            : this.physics.flightState !== 'road'
-              ? 'flight'
-              : 'road',
-    );
+    this.audioInput.mode = this.isInRvCabin
+      ? 'rv'
+      : inSpace
+        ? 'space'
+        : inOrbitMode
+          ? 'orbit'
+          : this.physics.flightState !== 'road'
+            ? 'flight'
+            : 'road';
+    this.audioInput.flightState = this.physics.flightState;
+    this.audioInput.speedKmh = speedKmh;
+    this.audioInput.altitudeM = inSpaceView ? 12000 : Math.max(0, this.physics.position.y);
+    this.audioInput.zoneType = zoneType;
+    this.audioInput.weather = this.activeWeather;
+    this.audioInput.weatherBlend = this.weatherBlend;
+    this.audioInput.isWalking = isWalking;
+    this.audioInput.interiorMode = this.interiorMode;
+    this.audioInput.inRvCabin = this.isInRvCabin;
+    this.audioInput.windowOpen = this.leftWindowOpen || this.rightWindowOpen;
+    this.audioInput.engineRunning = this.engineRunning;
+    this.audioInput.boostActive = boostActive;
+    this.audioInput.insideHangar = Boolean(hangarHit);
+    this.audioInput.planetBiome = activePlanetCfg.biome;
+    this.audioInput.delta = delta;
+    this.audioInput.elapsed = elapsed;
+    this.audio.update(this.audioInput);
 
     this.renderer.render(this.scene, this.camera);
 
@@ -2605,6 +2825,9 @@ export class CoruscantEngine {
         cabinSeatsReclined: this.cabinSeatsReclined,
         cabinMonitorOpen: this.cabinMonitorOpen,
         cabinAudioOn: this.audio.isEnabled(),
+        engineRunning: this.engineRunning,
+        audioSettings: this.audioSettings,
+        graphicsQuality: this.graphicsQuality,
         lookingAtDoorSide,
         leftWindowOpen: this.leftWindowOpen,
         rightWindowOpen: this.rightWindowOpen,

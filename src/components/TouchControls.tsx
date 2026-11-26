@@ -6,6 +6,7 @@ import {
   BedDouble,
   Bot,
   Building2,
+  Camera,
   Car,
   Check,
   ChevronLeft,
@@ -39,6 +40,7 @@ import {
   Palette,
   PlaneLanding,
   PlaneTakeoff,
+  Power,
   RefreshCw,
   Rocket,
   RotateCcw,
@@ -54,6 +56,8 @@ import {
   UserCheck,
   Users,
   UserX,
+  Volume2,
+  VolumeX,
   WifiOff,
   Wind,
   X,
@@ -67,6 +71,7 @@ import { getCafeMenu, getCafeSceneIntro } from '../engine/events';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import type {
+  AudioSettings,
   CabinThemeId,
   SeasonSetting,
   SimulationSnapshot,
@@ -103,6 +108,10 @@ interface TouchControlsProps {
   onSleepHotel: () => void;
   onTalkCompanion: () => void;
   onKissCompanion: () => void;
+  onCouplePhoto: () => void;
+  onCuddleCompanion: () => void;
+  onScanObservatory: () => void;
+  onSetGraphicsQuality: (quality: number) => void;
   onToggleHoldHands: () => void;
   onSelectQuest: (id: string) => void;
   onSkipQuest: () => void;
@@ -114,6 +123,9 @@ interface TouchControlsProps {
   onToggleCabinSeatsRecline: () => void;
   onToggleCabinMonitor: () => void;
   onToggleCabinAudio: () => void;
+  onToggleEngineIgnition: () => void;
+  onUpdateAudioSettings: (partial: Partial<AudioSettings>) => void;
+  onToggleAudioMute: () => void;
   onToggleDoorWindow: () => void;
   onTriggerBoost: () => void;
   onToggleFlight: () => void;
@@ -230,6 +242,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onSleepHotel,
   onTalkCompanion,
   onKissCompanion,
+  onCouplePhoto,
+  onCuddleCompanion,
+  onScanObservatory,
+  onSetGraphicsQuality,
   onToggleHoldHands,
   onSelectQuest,
   onSkipQuest,
@@ -241,6 +257,9 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onToggleCabinSeatsRecline,
   onToggleCabinMonitor,
   onToggleCabinAudio,
+  onToggleEngineIgnition,
+  onUpdateAudioSettings,
+  onToggleAudioMute,
   onToggleDoorWindow,
   onTriggerBoost,
   onToggleFlight,
@@ -709,6 +728,18 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             </button>
           )}
 
+          {snapshot.interiorMode === 'observatory' && (
+            <button
+              type="button"
+              onClick={onScanObservatory}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-cyan-500/30 border-cyan-400/60 text-cyan-100`}
+            >
+              <Telescope className={`${iconCls} text-cyan-300`} />
+              <span>{compact ? 'Галактики' : 'Изучить галактики'}</span>
+            </button>
+          )}
+
           {snapshot.hasCompanion && (
             <button
               type="button"
@@ -767,6 +798,18 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             <BedDouble className={`${iconCls} text-rose-300`} />
             <span>{snapshot.rvPose === 'lie' ? 'Встать' : 'Кровать'}</span>
           </button>
+
+          {snapshot.hasCompanion && snapshot.rvPose === 'lie' && (
+            <button
+              type="button"
+              onClick={onCuddleCompanion}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={`${btnCls} bg-rose-500/35 border-rose-300 text-rose-50`}
+            >
+              <Heart className={`${iconCls} text-rose-200 fill-rose-300`} />
+              <span>Обняться</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1449,12 +1492,14 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 setCabinOpen((prev) => !prev);
               }}
               className={`min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl border text-xs font-medium inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-                cabinOpen ||
-                snapshot.cabinTintDark ||
-                snapshot.cabinRoofLight ||
-                snapshot.cabinSeatsReclined ||
-                snapshot.cabinMonitorOpen ||
-                snapshot.cabinAudioOn
+                !snapshot.engineRunning
+                  ? 'bg-amber-500/20 border-amber-400/55 text-amber-100'
+                  : cabinOpen ||
+                    snapshot.cabinTintDark ||
+                    snapshot.cabinRoofLight ||
+                    snapshot.cabinSeatsReclined ||
+                    snapshot.cabinMonitorOpen ||
+                    snapshot.cabinAudioOn
                   ? 'bg-sky-500/25 border-sky-400/55 text-sky-100'
                   : 'bg-[#090d14]/88 border-white/15 text-slate-100 hover:bg-[#111824]'
               }`}
@@ -1633,18 +1678,40 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
             <button
               type="button"
+              onClick={onToggleEngineIgnition}
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+                snapshot.engineRunning
+                  ? 'bg-emerald-500/25 border-emerald-400/70 text-white'
+                  : 'bg-amber-500/15 border-amber-400/45 text-amber-100 hover:bg-amber-500/25'
+              }`}
+            >
+              <Power
+                className={`w-4 h-4 shrink-0 ${
+                  snapshot.engineRunning ? 'text-emerald-300' : 'text-amber-300'
+                }`}
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold">Запуск двигателя</div>
+                <div className="text-[10px] text-slate-300/90">
+                  {snapshot.engineRunning ? 'Двигатель работает' : 'Заглушён · нажмите старт'}
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
               onClick={onToggleCabinAudio}
-              className={`sm:col-span-2 min-h-[48px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
+              className={`min-h-[52px] px-3 py-2 rounded-xl border text-left flex items-center gap-2.5 transition-colors ${
                 snapshot.cabinAudioOn
-                  ? 'bg-emerald-500/25 border-emerald-300 text-white'
+                  ? 'bg-sky-500/25 border-sky-300 text-white'
                   : 'bg-black/45 border-white/12 text-slate-200 hover:bg-white/5'
               }`}
             >
-              <Music className="w-4 h-4 text-emerald-300 shrink-0" />
+              <Music className="w-4 h-4 text-sky-300 shrink-0" />
               <div className="min-w-0">
-                <div className="text-xs font-semibold">Музыкальная атмосфера салона</div>
+                <div className="text-xs font-semibold">Космическое радио</div>
                 <div className="text-[10px] text-slate-400">
-                  {snapshot.cabinAudioOn ? 'Играет мягкий голо-синт волны' : 'Нажмите, чтобы включить фон'}
+                  {snapshot.cabinAudioOn ? 'Лёгкая медитация в салоне' : 'Только внутри машины'}
                 </div>
               </div>
             </button>
@@ -1728,6 +1795,44 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   <div className="font-semibold">Поцеловать спутницу</div>
                   <div className="text-[11px] text-rose-200/80">
                     Поделиться нежностью и услышать её добрые слова
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {snapshot.hasCompanion && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCuddleCompanion();
+                  setCompanionOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-pink-500/20 hover:bg-pink-500/30 border border-pink-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-pink-100"
+              >
+                <Heart className="w-4 h-4 text-pink-300 shrink-0" />
+                <div>
+                  <div className="font-semibold">Обняться вдвоём</div>
+                  <div className="text-[11px] text-pink-200/75">
+                    Тёплые объятия в поездке или на отдыхе (+15 ✦)
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {snapshot.hasCompanion && (
+              <button
+                type="button"
+                onClick={() => {
+                  onCouplePhoto();
+                  setCompanionOpen(false);
+                }}
+                className="w-full min-h-[44px] px-3 py-2.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/40 text-left flex items-center gap-2.5 text-xs font-medium text-sky-100"
+              >
+                <Camera className="w-4 h-4 text-sky-300 shrink-0" />
+                <div>
+                  <div className="font-semibold">Сделать фото вдвоём</div>
+                  <div className="text-[11px] text-sky-200/75">
+                    Памятный снимок на фоне дороги, звёзд или мини-дома (+25 ✦)
                   </div>
                 </div>
               </button>
@@ -2272,6 +2377,175 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             >
               {snapshot.hasCompanion ? 'Едет с вами' : 'Ехать одному'}
             </button>
+          </div>
+
+          {/* Graphics Quality Slider */}
+          <div className="flex flex-col gap-1.5 pt-2 border-t border-white/10">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <SlidersHorizontal className="w-4 h-4 text-cyan-300 shrink-0" />
+                <span className="text-xs font-semibold text-white truncate">Качество графики</span>
+              </div>
+              <span className="text-[11px] font-mono-tabular text-cyan-200 shrink-0">
+                {snapshot.graphicsQuality < 0.22
+                  ? 'Минимум'
+                  : snapshot.graphicsQuality < 0.44
+                    ? 'Низкая'
+                    : snapshot.graphicsQuality < 0.65
+                      ? 'Средняя'
+                      : snapshot.graphicsQuality < 0.86
+                        ? 'Высокая'
+                        : 'Ультра'}{' '}
+                · {Math.round(snapshot.graphicsQuality * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={snapshot.graphicsQuality}
+              onChange={(e) => onSetGraphicsQuality(parseFloat(e.target.value))}
+              aria-label="Качество графики"
+              className="horizon-slider w-full py-1.5"
+            />
+            <div className="flex items-center justify-between text-[10px] text-slate-400">
+              <span>Экономия FPS</span>
+              <span>Средняя (баланс)</span>
+              <span>Максимум</span>
+            </div>
+          </div>
+
+          {/* Sound & Mixer Settings */}
+          <div className="flex flex-col gap-2.5 pt-2 border-t border-white/10">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                {snapshot.audioSettings.muted ? (
+                  <VolumeX className="w-4 h-4 text-rose-300 shrink-0" />
+                ) : (
+                  <Volume2 className="w-4 h-4 text-emerald-300 shrink-0" />
+                )}
+                <span className="text-xs font-semibold text-white truncate">Звук и громкость</span>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleAudioMute}
+                className={`min-h-[34px] px-2.5 rounded-lg border text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                  snapshot.audioSettings.muted
+                    ? 'bg-rose-500/20 border-rose-400/45 text-rose-100'
+                    : 'bg-emerald-500/20 border-emerald-400/45 text-emerald-100'
+                }`}
+              >
+                {snapshot.audioSettings.muted ? 'Без звука' : 'Звук включён'}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-300">Общая громкость</span>
+                <span className="font-mono-tabular text-slate-200">
+                  {Math.round(snapshot.audioSettings.masterVolume * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.02}
+                value={snapshot.audioSettings.masterVolume}
+                onChange={(e) =>
+                  onUpdateAudioSettings({ masterVolume: parseFloat(e.target.value), muted: false })
+                }
+                aria-label="Общая громкость"
+                className="horizon-slider w-full py-1.5"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Двигатель</span>
+                  <span className="font-mono-tabular text-slate-300">
+                    {Math.round(snapshot.audioSettings.engineVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={snapshot.audioSettings.engineVolume}
+                  onChange={(e) =>
+                    onUpdateAudioSettings({ engineVolume: parseFloat(e.target.value) })
+                  }
+                  aria-label="Громкость двигателя"
+                  className="horizon-slider w-full py-1"
+                />
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Радио салона</span>
+                  <span className="font-mono-tabular text-slate-300">
+                    {Math.round(snapshot.audioSettings.radioVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={snapshot.audioSettings.radioVolume}
+                  onChange={(e) =>
+                    onUpdateAudioSettings({ radioVolume: parseFloat(e.target.value) })
+                  }
+                  aria-label="Громкость радио салона"
+                  className="horizon-slider w-full py-1"
+                />
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Мир и город</span>
+                  <span className="font-mono-tabular text-slate-300">
+                    {Math.round(snapshot.audioSettings.worldVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={snapshot.audioSettings.worldVolume}
+                  onChange={(e) =>
+                    onUpdateAudioSettings({ worldVolume: parseFloat(e.target.value) })
+                  }
+                  aria-label="Громкость города и погоды"
+                  className="horizon-slider w-full py-1"
+                />
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Эффекты</span>
+                  <span className="font-mono-tabular text-slate-300">
+                    {Math.round(snapshot.audioSettings.sfxVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.02}
+                  value={snapshot.audioSettings.sfxVolume}
+                  onChange={(e) =>
+                    onUpdateAudioSettings({ sfxVolume: parseFloat(e.target.value) })
+                  }
+                  aria-label="Громкость эффектов"
+                  className="horizon-slider w-full py-1"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Save & Load Progress */}

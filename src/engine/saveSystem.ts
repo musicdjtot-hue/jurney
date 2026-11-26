@@ -1,4 +1,5 @@
 import type {
+  AudioSettings,
   CabinThemeId,
   CompanionLocation,
   PlanetId,
@@ -13,6 +14,17 @@ import type {
 } from '../types/simulation';
 
 const SAVE_STORAGE_KEY = 'coruscant_horizon_save_v1';
+const AUDIO_STORAGE_KEY = 'coruscant_horizon_audio_v1';
+const GRAPHICS_QUALITY_KEY = 'coruscant_horizon_gfx_v1';
+
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  muted: false,
+  masterVolume: 0.78,
+  engineVolume: 0.68,
+  radioVolume: 0.72,
+  worldVolume: 0.76,
+  sfxVolume: 0.75,
+};
 
 export interface Vec3Save {
   x: number;
@@ -73,6 +85,7 @@ export interface GameSaveData {
   cabinRoofLight?: boolean;
   cabinSeatsReclined?: boolean;
   cabinMonitorOpen?: boolean;
+  engineRunning?: boolean;
   rvLightsOn?: boolean;
   rvTvOn?: boolean;
   rvShowerOn?: boolean;
@@ -134,5 +147,60 @@ export function clearGameSave(): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+export function readAudioSettings(): AudioSettings {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return { ...DEFAULT_AUDIO_SETTINGS };
+    }
+    const raw = window.localStorage.getItem(AUDIO_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_AUDIO_SETTINGS };
+    const p = JSON.parse(raw) as Partial<AudioSettings>;
+    const clamp01 = (v: unknown, fb: number) =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fb;
+    return {
+      muted: Boolean(p.muted),
+      masterVolume: clamp01(p.masterVolume, DEFAULT_AUDIO_SETTINGS.masterVolume),
+      engineVolume: clamp01(p.engineVolume, DEFAULT_AUDIO_SETTINGS.engineVolume),
+      radioVolume: clamp01(p.radioVolume, DEFAULT_AUDIO_SETTINGS.radioVolume),
+      worldVolume: clamp01(p.worldVolume, DEFAULT_AUDIO_SETTINGS.worldVolume),
+      sfxVolume: clamp01(p.sfxVolume, DEFAULT_AUDIO_SETTINGS.sfxVolume),
+    };
+  } catch {
+    return { ...DEFAULT_AUDIO_SETTINGS };
+  }
+}
+
+export function writeAudioSettings(settings: AudioSettings): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(AUDIO_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function readGraphicsQuality(): number {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return 0.5;
+    const raw = window.localStorage.getItem(GRAPHICS_QUALITY_KEY);
+    if (!raw) return 0.5;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return 0.5;
+    return Math.max(0, Math.min(1, parsed));
+  } catch {
+    return 0.5;
+  }
+}
+
+export function writeGraphicsQuality(quality: number): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const clamped = Math.max(0, Math.min(1, quality));
+    window.localStorage.setItem(GRAPHICS_QUALITY_KEY, clamped.toFixed(2));
+  } catch {
+    // Ignore storage errors
   }
 }

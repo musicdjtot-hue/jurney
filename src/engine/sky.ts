@@ -317,6 +317,12 @@ export class SkyAtmosphere {
     this.planetId = id;
   }
 
+  public setQualityScale(quality: number): void {
+    const q = THREE.MathUtils.clamp(quality, 0, 1);
+    const starDrawCount = Math.round(900 * THREE.MathUtils.lerp(0.35, 1.0, q));
+    this.starPoints.geometry.setDrawRange(0, starDrawCount);
+  }
+
   public update(
     timeOfDay: number,
     weather: WeatherMode,

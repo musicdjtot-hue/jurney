@@ -70,6 +70,7 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
       uSnow: { value: 0 },
       uSteer: { value: 0 },
       uSpeed: { value: 0 },
+      uDetail: { value: 1.0 },
       uTint: { value: new THREE.Color('#dbeafe') },
     },
     vertexShader: `
@@ -85,6 +86,7 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
       uniform float uSnow;
       uniform float uSteer;
       uniform float uSpeed;
+      uniform float uDetail;
       uniform vec3 uTint;
       varying vec2 vUv;
 
@@ -147,10 +149,13 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
           vec2 l1 = rainLayer(uv, 11.0, t);
           vec2 l2 = rainLayer(uv + vec2(0.37, 0.19), 18.0, t * 1.25);
 
-          vec2 mst = uv * vec2(52.0, 28.0);
-          vec2 mgv = fract(mst) - 0.5;
-          float mn = hash21(floor(mst));
-          float micro = smoothstep(0.19, 0.05, length(mgv)) * step(0.62, mn) * 0.35;
+          float micro = 0.0;
+          if (uDetail > 0.5) {
+            vec2 mst = uv * vec2(52.0, 28.0);
+            vec2 mgv = fract(mst) - 0.5;
+            float mn = hash21(floor(mst));
+            micro = smoothstep(0.19, 0.05, length(mgv)) * step(0.62, mn) * 0.35;
+          }
 
           rainMask = clamp((l1.x * 0.85 + l2.x * 0.65 + micro) * uRain, 0.0, 0.82);
           highlight = clamp((l1.y + l2.y * 0.7) * uRain, 0.0, 0.9);
@@ -218,6 +223,9 @@ export class CockpitRig {
   private currentAccent = new THREE.Color('#f59e0b');
   private windshieldRainMat: THREE.ShaderMaterial;
   private rainGlass: THREE.Mesh;
+  private leftDoorRainGlass!: THREE.Mesh;
+  private rightDoorRainGlass!: THREE.Mesh;
+  private rvWeatherGlassGroup = new THREE.Group();
   private rainBaseTint = new THREE.Color('#e0f2fe');
   private rainLevel = 0;
   private snowLevel = 0;
@@ -766,18 +774,48 @@ export class CockpitRig {
       this.group.add(ig);
     }
 
-    // Aerodynamic roof rise fairing bridging cab roof (z=0.42, y=1.52) to tall RV roof (z=0.78, y=2.09)
-    const fairingGeo = new THREE.BoxGeometry(1.66, 0.14, 0.68);
+    // Watertight sloped aero roof bridge sealing cab roof (z=0.48, y=1.515) to RV roof (z=0.68..0.80, y=2.04..2.14)
+    const fairingProfile = new THREE.Shape();
+    fairingProfile.moveTo(0.42, 1.49);
+    fairingProfile.lineTo(0.42, 1.56);
+    fairingProfile.lineTo(0.74, 2.14);
+    fairingProfile.lineTo(0.80, 2.14);
+    fairingProfile.lineTo(0.80, 2.02);
+    fairingProfile.lineTo(0.72, 2.02);
+    fairingProfile.lineTo(0.48, 1.49);
+    fairingProfile.closePath();
+    const fairingGeo = new THREE.ExtrudeGeometry(fairingProfile, {
+      depth: 2.14,
+      bevelEnabled: false,
+      curveSegments: 1,
+    });
+    fairingGeo.translate(0, 0, -1.07);
+    fairingGeo.rotateY(-Math.PI / 2);
     const fairingMesh = new THREE.Mesh(fairingGeo, hullPaintMat);
-    fairingMesh.position.set(0, 1.78, 0.52);
-    fairingMesh.rotation.x = 0.78;
     this.group.add(fairingMesh);
 
-    // Side transition gussets sealing the fairing sides
-    const gussetGeo = new THREE.BoxGeometry(0.14, 0.62, 0.56);
+    // Side triangular cheek seals & B-pillar shoulder seals closing every cab-to-RV corner
+    const sideCheekProfile = new THREE.Shape();
+    sideCheekProfile.moveTo(0.46, 1.50);
+    sideCheekProfile.lineTo(0.76, 1.50);
+    sideCheekProfile.lineTo(0.76, 2.10);
+    sideCheekProfile.closePath();
+    const sideCheekGeo = new THREE.ExtrudeGeometry(sideCheekProfile, {
+      depth: 0.14,
+      bevelEnabled: false,
+      curveSegments: 1,
+    });
+    sideCheekGeo.translate(0, 0, -0.07);
+    sideCheekGeo.rotateY(-Math.PI / 2);
+
+    const gussetGeo = new THREE.BoxGeometry(0.36, 0.76, 0.16);
     for (const side of [-1, 1]) {
+      const cheek = new THREE.Mesh(sideCheekGeo, hullPaintMat);
+      cheek.position.set(side * 1.01, 0, 0);
+      this.group.add(cheek);
+
       const gus = new THREE.Mesh(gussetGeo, hullPaintMat);
-      gus.position.set(side * 0.88, 1.56, 0.55);
+      gus.position.set(side * 0.88, 1.18, 0.50);
       this.group.add(gus);
     }
 
@@ -814,6 +852,12 @@ export class CockpitRig {
     rvCeilRear.position.set(0, 2.035, 4.235);
     this.group.add(rvCeilRear);
 
+    const rvCeilSlopeGeo = new THREE.BoxGeometry(1.94, 0.028, 0.62);
+    const rvCeilSlope = new THREE.Mesh(rvCeilSlopeGeo, rvCeilingMat);
+    rvCeilSlope.position.set(0, 1.768, 0.63);
+    rvCeilSlope.rotation.x = -Math.atan2(0.535, 0.30);
+    this.group.add(rvCeilSlope);
+
     const rvCeilSideGeo = new THREE.BoxGeometry(0.45, 0.03, 1.3);
     for (const side of [-1, 1]) {
       const cs = new THREE.Mesh(rvCeilSideGeo, rvCeilingMat);
@@ -847,8 +891,8 @@ export class CockpitRig {
       metalness: 0.2,
     });
     const rvLowerWallGeo = new THREE.BoxGeometry(0.1, 0.76, 4.38);
-    const rvUpperWallGeo = new THREE.BoxGeometry(0.1, 0.34, 4.38);
-    const rvFrontPostGeo = new THREE.BoxGeometry(0.12, 0.92, 0.36);
+    const rvUpperWallGeo = new THREE.BoxGeometry(0.1, 0.34, 4.10);
+    const rvFrontPostGeo = new THREE.BoxGeometry(0.12, 0.68, 0.32);
     const rvMidPostGeo = new THREE.BoxGeometry(0.12, 0.92, 1.16);
     const rvRearPostGeo = new THREE.BoxGeometry(0.12, 0.92, 0.46);
     const rvSideWinGeo = new THREE.PlaneGeometry(1.38, 0.84);
@@ -864,11 +908,11 @@ export class CockpitRig {
       this.group.add(lwInner);
 
       const uw = new THREE.Mesh(rvUpperWallGeo, hullPaintMat);
-      uw.position.set(side * 1.03, 1.9, 2.65);
+      uw.position.set(side * 1.03, 1.9, 2.79);
       this.group.add(uw);
 
       const fp = new THREE.Mesh(rvFrontPostGeo, carbonMat);
-      fp.position.set(side * 1.03, 1.36, 0.64);
+      fp.position.set(side * 1.03, 1.24, 0.64);
       this.group.add(fp);
 
       const mp = new THREE.Mesh(rvMidPostGeo, hullPaintMat);
@@ -967,6 +1011,7 @@ export class CockpitRig {
       sideSkirtGeo,
       sideIntakeGlowGeo,
       fairingGeo,
+      sideCheekGeo,
       gussetGeo,
       rvRoofFrontGeo,
       rvRoofRearGeo,
@@ -974,6 +1019,7 @@ export class CockpitRig {
       rvCeilingMat,
       rvCeilFrontGeo,
       rvCeilRearGeo,
+      rvCeilSlopeGeo,
       rvCeilSideGeo,
       skylightFrameGeo,
       skylightPaneGeo,
@@ -1000,7 +1046,7 @@ export class CockpitRig {
     // 7. RV MINI-HOME INTERIOR FIXTURES (Floor y = 0.19, Ceiling y = 2.02)
     this.buildRvMiniHomeInterior(carbonMat, titaniumMat, seatBolsterMat, accentMat);
 
-    // 8. Properly Sloped, Flush-Sealed Windshield + Exterior Rain & Snow Shader
+    // 8. Properly Sloped, Flush-Sealed Windshield + Exterior Rain & Snow Shader on ALL windows
     const windshieldGeo = createQuadGeometry(wsBL, wsBR, wsTR, wsTL);
     const windshield = new THREE.Mesh(windshieldGeo, glassMat);
     windshield.renderOrder = 4;
@@ -1012,6 +1058,47 @@ export class CockpitRig {
     this.rainGlass.renderOrder = 5;
     this.rainGlass.visible = false;
     this.group.add(this.rainGlass);
+
+    // Door windows rain/snow overlays (attached to sliding glass so droplets move with window)
+    this.leftDoorRainGlass = new THREE.Mesh(leftDoorGlassGeo, this.windshieldRainMat);
+    this.leftDoorRainGlass.position.set(-0.004, 0, 0);
+    this.leftDoorRainGlass.renderOrder = 5;
+    this.leftDoorRainGlass.visible = false;
+    this.leftDoorWindowMesh.add(this.leftDoorRainGlass);
+
+    this.rightDoorRainGlass = new THREE.Mesh(rightDoorGlassGeo, this.windshieldRainMat);
+    this.rightDoorRainGlass.position.set(0.004, 0, 0);
+    this.rightDoorRainGlass.renderOrder = 5;
+    this.rightDoorRainGlass.visible = false;
+    this.rightDoorWindowMesh.add(this.rightDoorRainGlass);
+
+    // Cab panoramic roof, RV side windows, rear window & skylight rain/snow overlays
+    const cabRoofRainGlass = new THREE.Mesh(roofGlassGeo, this.windshieldRainMat);
+    cabRoofRainGlass.position.set(0, 0.004, 0);
+    cabRoofRainGlass.renderOrder = 5;
+    this.rvWeatherGlassGroup.add(cabRoofRainGlass);
+
+    for (const side of [-1, 1]) {
+      for (const wz of [1.48, 3.85]) {
+        const sideRain = new THREE.Mesh(rvSideWinGeo, this.windshieldRainMat);
+        sideRain.position.set(side * 1.036, 1.36, wz);
+        sideRain.renderOrder = 5;
+        this.rvWeatherGlassGroup.add(sideRain);
+      }
+    }
+
+    const rearRain = new THREE.Mesh(rearWinGeo, this.windshieldRainMat);
+    rearRain.position.set(0, 1.36, 4.846);
+    rearRain.renderOrder = 5;
+    this.rvWeatherGlassGroup.add(rearRain);
+
+    const skylightRain = new THREE.Mesh(skylightPaneGeo, this.windshieldRainMat);
+    skylightRain.position.set(0, 2.116, 3.0);
+    skylightRain.renderOrder = 5;
+    this.rvWeatherGlassGroup.add(skylightRain);
+
+    this.rvWeatherGlassGroup.visible = false;
+    this.group.add(this.rvWeatherGlassGroup);
     this.disposables.push(windshieldGeo, this.windshieldRainMat);
 
     // 9. Blonde Companion (Seated in Front Seat OR Walking/Living Inside RV Mini-Home)
@@ -1509,6 +1596,10 @@ export class CockpitRig {
     };
   }
 
+  public setWeatherDetail(detail: number): void {
+    this.windshieldRainMat.uniforms.uDetail.value = detail > 0.5 ? 1.0 : 0.0;
+  }
+
   public update(
     steerInput: number,
     speedKmh: number,
@@ -1741,6 +1832,9 @@ export class CockpitRig {
 
     if (this.rainLevel > 0.008 || this.snowLevel > 0.008) {
       this.rainGlass.visible = true;
+      this.leftDoorRainGlass.visible = true;
+      this.rightDoorRainGlass.visible = true;
+      this.rvWeatherGlassGroup.visible = true;
       this.windshieldRainMat.uniforms.uTime.value = elapsed;
       this.windshieldRainMat.uniforms.uRain.value = this.rainLevel;
       this.windshieldRainMat.uniforms.uSnow.value = this.snowLevel;
@@ -1751,6 +1845,9 @@ export class CockpitRig {
         .lerp(this.rainBaseTint, 0.65);
     } else {
       this.rainGlass.visible = false;
+      this.leftDoorRainGlass.visible = false;
+      this.rightDoorRainGlass.visible = false;
+      this.rvWeatherGlassGroup.visible = false;
     }
 
     this.companion.update(

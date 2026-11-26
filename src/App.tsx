@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TouchControls } from './components/TouchControls';
 import { CoruscantEngine } from './engine/CoruscantEngine';
+import { DEFAULT_AUDIO_SETTINGS } from './engine/saveSystem';
 import type {
+  AudioSettings,
   CabinThemeId,
   SeasonSetting,
   SimulationSnapshot,
@@ -89,6 +91,9 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   cabinSeatsReclined: false,
   cabinMonitorOpen: false,
   cabinAudioOn: false,
+  engineRunning: true,
+  audioSettings: DEFAULT_AUDIO_SETTINGS,
+  graphicsQuality: 0.5,
   lookingAtDoorSide: null,
   leftWindowOpen: false,
   rightWindowOpen: false,
@@ -272,6 +277,7 @@ export default function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
+      engineRef.current?.unlockAudioFromUi();
 
       if (!e.repeat && e.code === 'KeyF') {
         e.preventDefault();
@@ -447,6 +453,20 @@ export default function App() {
     engineRef.current?.toggleCabinAudio();
   }, []);
 
+  const handleToggleEngineIgnition = useCallback(() => {
+    hapticTap(16);
+    engineRef.current?.toggleEngineIgnition();
+  }, []);
+
+  const handleUpdateAudioSettings = useCallback((partial: Partial<AudioSettings>) => {
+    engineRef.current?.updateAudioSettings(partial);
+  }, []);
+
+  const handleToggleAudioMute = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleAudioMute();
+  }, []);
+
   const handleCallCompanionToCab = useCallback(() => {
     hapticTap(12);
     engineRef.current?.callCompanionToCab();
@@ -612,6 +632,25 @@ export default function App() {
     engineRef.current?.kissGirl();
   }, []);
 
+  const handleCouplePhoto = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.celebrateCoupleMoment();
+  }, []);
+
+  const handleCuddleCompanion = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.cuddleWithCompanion();
+  }, []);
+
+  const handleScanObservatory = useCallback(() => {
+    hapticTap(14);
+    engineRef.current?.scanObservatorySky();
+  }, []);
+
+  const handleSetGraphicsQuality = useCallback((quality: number) => {
+    engineRef.current?.setGraphicsQuality(quality);
+  }, []);
+
   const handleToggleHoldHands = useCallback(() => {
     hapticTap(12);
     engineRef.current?.toggleHoldHands();
@@ -728,7 +767,10 @@ export default function App() {
 
   const handleControlPress = useCallback(
     (key: 'throttle' | 'brake' | 'boost' | 'climb' | 'descend', active: boolean) => {
-      if (active) hapticTap(8);
+      if (active) {
+        hapticTap(8);
+        engineRef.current?.unlockAudioFromUi();
+      }
       if (engineRef.current) {
         engineRef.current.inputs[key] = active;
       }
@@ -820,6 +862,10 @@ export default function App() {
         onSleepHotel={handleSleepHotel}
         onTalkCompanion={handleTalkCompanion}
         onKissCompanion={handleKissCompanion}
+        onCouplePhoto={handleCouplePhoto}
+        onCuddleCompanion={handleCuddleCompanion}
+        onScanObservatory={handleScanObservatory}
+        onSetGraphicsQuality={handleSetGraphicsQuality}
         onToggleHoldHands={handleToggleHoldHands}
         onSelectQuest={handleSelectQuest}
         onSkipQuest={handleSkipQuest}
@@ -831,6 +877,9 @@ export default function App() {
         onToggleCabinSeatsRecline={handleToggleCabinSeatsRecline}
         onToggleCabinMonitor={handleToggleCabinMonitor}
         onToggleCabinAudio={handleToggleCabinAudio}
+        onToggleEngineIgnition={handleToggleEngineIgnition}
+        onUpdateAudioSettings={handleUpdateAudioSettings}
+        onToggleAudioMute={handleToggleAudioMute}
         onToggleDoorWindow={handleToggleDoorWindow}
         onTriggerBoost={handleTriggerBoost}
         onToggleFlight={handleToggleFlight}

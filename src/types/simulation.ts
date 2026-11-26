@@ -98,7 +98,10 @@ export type QuestKind =
   | 'earth_moscow'
   | 'earth_reptiloids'
   | 'orbit_landing'
-  | 'road_rings';
+  | 'road_rings'
+  | 'couple_moments'
+  | 'night_cruise'
+  | 'observatory_scan';
 
 export interface ActiveQuestSnapshot {
   id: string;
@@ -145,6 +148,15 @@ export interface SaveMetaSnapshot {
   hasSave: boolean;
   savedAtLabel: string | null;
   planetName: string | null;
+}
+
+export interface AudioSettings {
+  muted: boolean;
+  masterVolume: number;
+  engineVolume: number;
+  radioVolume: number;
+  worldVolume: number;
+  sfxVolume: number;
 }
 
 export interface SimulationSnapshot {
@@ -208,6 +220,8 @@ export interface SimulationSnapshot {
   cabinSeatsReclined: boolean;
   cabinMonitorOpen: boolean;
   cabinAudioOn: boolean;
+  engineRunning: boolean;
+  audioSettings: AudioSettings;
   lookingAtDoorSide: 'left' | 'right' | null;
   leftWindowOpen: boolean;
   rightWindowOpen: boolean;
@@ -230,6 +244,7 @@ export interface SimulationSnapshot {
   companionLocation: CompanionLocation;
   companionRvActivity: string | null;
   pedestriansHitCount: number;
+  graphicsQuality: number;
   toastMessage: string | null;
   saveMeta: SaveMetaSnapshot;
 }

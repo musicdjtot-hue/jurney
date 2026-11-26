@@ -316,7 +316,53 @@ export class QuestManager {
     const reply = replies[Math.floor(Math.random() * replies.length)];
     this.setCompanionNote(reply, 6.0);
     this.showToast('Нежный поцелуй вдвоём · +15 ✦', 3.8);
+    this.advanceCoupleMoments();
     return { reply };
+  }
+
+  public celebrateCoupleMoment(
+    planetName: string,
+    weather: WeatherMode,
+    inSpace: boolean,
+    inRvCabin: boolean,
+  ): void {
+    this.credits += 25;
+    let sceneDesc = `на дорогах ${planetName}`;
+    if (inSpace) {
+      sceneDesc = 'среди звёзд и далёких планет';
+    } else if (inRvCabin) {
+      sceneDesc = 'в уютном мини-доме на колёсах';
+    } else if (weather === 'rain' || weather === 'storm') {
+      sceneDesc = `под дождём на ${planetName}`;
+    } else if (weather === 'snow') {
+      sceneDesc = `в тихом снегопаде на ${planetName}`;
+    }
+    this.setCompanionNote(
+      `«Какой тёплый снимок ${sceneDesc}! Обязательно сохраню его в наш альбом путешествий».`,
+      5.8,
+    );
+    this.showToast(`Фото вдвоём ${sceneDesc} · +25 ✦`, 4.0);
+    this.advanceCoupleMoments();
+  }
+
+  public cuddleWithCompanion(inRvCabin: boolean, isLying: boolean): void {
+    this.credits += 15;
+    const line =
+      inRvCabin && isLying
+        ? 'Она мягко кладёт голову вам на плечо под панорамным люком: «Так хорошо отдыхать рядом…»'
+        : 'Она нежно обнимает вас за плечи и улыбается: «Мне так спокойно рядом с тобой в любом мире».';
+    this.setCompanionNote(line, 5.6);
+    this.showToast('Тёплые объятия вдвоём · +15 ✦', 3.6);
+    this.advanceCoupleMoments();
+  }
+
+  public advanceCoupleMoments(): void {
+    if (this.activeQuest?.kind === 'couple_moments') {
+      this.activeQuest.progressValue += 1;
+      if (this.activeQuest.progressValue >= this.activeQuest.goalValue) {
+        this.completeActiveQuest();
+      }
+    }
   }
 
   public toggleHoldHands(): boolean {
@@ -534,6 +580,23 @@ export class QuestManager {
     }
   }
 
+  public onObservatoryGalaxyScanned(planetName: string): void {
+    this.credits += 45;
+    this.setCompanionNote(
+      `«Смотри, как сияет карта галактик над ${planetName}! Даже далёкие туманности видны как на ладони».`,
+      5.8,
+    );
+    this.showToast('Сканирование галактик в обсерватории · +45 ✦', 4.0);
+    if (this.activeQuest?.kind === 'observatory_scan') {
+      this.completeActiveQuest();
+    } else if (this.activeQuest?.kind === 'city_walk') {
+      this.activeQuest.progressValue = Math.min(
+        this.activeQuest.goalValue,
+        this.activeQuest.progressValue + 25,
+      );
+    }
+  }
+
   public onHangarEntered(id: string, name: string): void {
     const key = `hangar_${id}`;
     if (!this.visitedSpecialSpots.has(key)) {
@@ -738,6 +801,7 @@ export class QuestManager {
     walkSpeed: number,
     zoneType: 'city' | 'park' | 'fields' | 'viaduct',
     landmarks: WorldLandmark[],
+    timeOfDay = 0.5,
   ): void {
     if (this.toastTimer > 0) {
       this.toastTimer = Math.max(0, this.toastTimer - delta);
@@ -852,6 +916,16 @@ export class QuestManager {
       if (flightState === 'orbit') {
         q.progressValue = Math.max(q.progressValue, 0.5);
       }
+    } else if (q.kind === 'night_cruise') {
+      const normT = ((timeOfDay % 1) + 1) % 1;
+      const isEveningOrNight = normT < 0.25 || normT >= 0.66;
+      if (!isWalking && flightState === 'road' && isEveningOrNight) {
+        q.progressValue += delta;
+        if (q.progressValue >= q.goalValue) {
+          this.completeActiveQuest();
+          return;
+        }
+      }
     }
   }
 
@@ -918,11 +992,23 @@ export class QuestManager {
       };
     }
 
-    if (q.kind === 'delivery' || q.kind === 'cafe_visit' || q.kind === 'hotel_visit') {
+    if (
+      q.kind === 'delivery' ||
+      q.kind === 'cafe_visit' ||
+      q.kind === 'hotel_visit' ||
+      q.kind === 'observatory_scan'
+    ) {
       let tx = q.targetX;
       let tz = q.targetZ;
       if (tx === undefined || tz === undefined) {
-        const wantType = q.kind === 'cafe_visit' ? 'cafe' : q.kind === 'hotel_visit' ? 'hotel' : null;
+        const wantType =
+          q.kind === 'cafe_visit'
+            ? 'cafe'
+            : q.kind === 'hotel_visit'
+              ? 'hotel'
+              : q.kind === 'observatory_scan'
+                ? 'observatory'
+                : null;
         let bestDist = Infinity;
         for (let i = 0; i < landmarks.length; i++) {
           const lm = landmarks[i];
@@ -1152,6 +1238,48 @@ export class QuestManager {
       goalValue: 1,
       progressValue: 0,
     }));
+
+    ensureKind('couple_moments', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'couple_moments',
+      title: 'Тёплые моменты вдвоём',
+      subtitle: 'Сделайте фото вдвоём, обнимитесь или угостите спутницу кофе (2 раза)',
+      reward: 175,
+      goalValue: 2,
+      progressValue: 0,
+    }));
+
+    ensureKind('night_cruise', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'night_cruise',
+      title: 'Вечерний или ночной круиз',
+      subtitle: 'Прокатитесь по дороге на закате или ночью (12 секунд)',
+      reward: 155,
+      goalValue: 12,
+      progressValue: 0,
+    }));
+
+    ensureKind('observatory_scan', () => {
+      let best: WorldLandmark | null = null;
+      for (const lm of landmarks) {
+        if (lm.type === 'observatory') {
+          best = lm;
+          break;
+        }
+      }
+      return {
+        id: `q_${this.questSeq++}`,
+        kind: 'observatory_scan',
+        title: 'Звёздное небо в обсерватории',
+        subtitle: 'Зайдите под стеклянный купол обсерватории и изучите галактики',
+        reward: 210,
+        targetX: best ? best.x : pos.x + 240,
+        targetZ: best ? best.z : pos.z + 240,
+        targetName: best ? best.name : 'Обсерватория',
+        goalValue: 1,
+        progressValue: 0,
+      };
+    });
   }
 
   public exportSaveState() {
@@ -1236,7 +1364,8 @@ export class QuestManager {
         q.kind === 'planet_visit' ||
         q.kind === 'serbos_visit' ||
         q.kind === 'earth_moscow' ||
-        q.kind === 'earth_reptiloids'
+        q.kind === 'earth_reptiloids' ||
+        q.kind === 'observatory_scan'
           ? 0
           : Math.min(100, Math.round((q.progressValue / Math.max(1, q.goalValue)) * 100));
 
