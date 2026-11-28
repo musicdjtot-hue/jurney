@@ -40,6 +40,8 @@ export class VehiclePhysics {
   public spaceFactor = 0;
 
   public isWalking = false;
+  public activeFloorY = 0;
+  public walkClampRect: { x: number; z: number; halfW: number; halfD: number } | null = null;
   public readonly walkerPos = new THREE.Vector3();
   public walkerHeading = 0;
   public walkerPitch = 0;
@@ -68,31 +70,47 @@ export class VehiclePhysics {
     this.onPlanetSwitch = cb;
   }
 
-  public exitVehicle(): boolean {
-    if (this.flightState !== 'road' || this.isWalking) {
+  public exitVehicle(options?: {
+    allowHoverExit?: boolean;
+    floorY?: number;
+    clampRect?: { x: number; z: number; halfW: number; halfD: number } | null;
+  }): boolean {
+    const canHoverExit = Boolean(options?.allowHoverExit) && this.flightState === 'flight';
+    if ((this.flightState !== 'road' && !canHoverExit) || this.isWalking) {
       return false;
     }
     this.forwardSpeed = 0;
     this.lateralSpeed = 0;
+    this.verticalSpeed = 0;
     this.pitch = 0;
     this.roll = 0;
     this.steerAngle = 0;
     this.suspensionHeave = 0;
 
+    this.activeFloorY = options?.floorY ?? 0;
+    this.walkClampRect = options?.clampRect ? { ...options.clampRect } : null;
+
     const cosH = Math.cos(this.heading);
     const sinH = Math.sin(this.heading);
-    // Step out onto the street or field beside the left (driver) door
+    // Step out onto the street, field, or rooftop club deck beside the left (driver) door
     this.walkerPos.set(
       this.position.x - cosH * 1.72,
-      0,
+      this.activeFloorY,
       this.position.z + sinH * 1.72,
     );
     // Companion steps out on the passenger side beside the front door
     this.companionPos.set(
       this.position.x + cosH * 1.85 - sinH * 0.4,
-      0,
+      this.activeFloorY,
       this.position.z - sinH * 1.85 - cosH * 0.4,
     );
+    if (this.walkClampRect) {
+      const r = this.walkClampRect;
+      this.walkerPos.x = THREE.MathUtils.clamp(this.walkerPos.x, r.x - r.halfW, r.x + r.halfW);
+      this.walkerPos.z = THREE.MathUtils.clamp(this.walkerPos.z, r.z - r.halfD, r.z + r.halfD);
+      this.companionPos.x = THREE.MathUtils.clamp(this.companionPos.x, r.x - r.halfW, r.x + r.halfW);
+      this.companionPos.z = THREE.MathUtils.clamp(this.companionPos.z, r.z - r.halfD, r.z + r.halfD);
+    }
     this.walkerHeading = this.heading;
     this.companionHeading = this.heading;
     this.companionMoveSpeed = 0;
@@ -105,9 +123,14 @@ export class VehiclePhysics {
   public enterVehicle(): boolean {
     if (!this.isWalking) return false;
     this.isWalking = false;
+    this.activeFloorY = 0;
+    this.walkClampRect = null;
     this.walkBob = 0;
     this.forwardSpeed = 0;
     this.lateralSpeed = 0;
+    if (this.flightState === 'flight') {
+      this.targetFlightAltitude = Math.max(68, this.position.y);
+    }
     return true;
   }
 
@@ -693,6 +716,8 @@ export class VehiclePhysics {
     this.orbitDistFactor = data.orbitDistFactor ?? 2.0;
     this.selectedLandingSiteId = data.selectedLandingSiteId ?? null;
     this.isWalking = Boolean(data.isWalking);
+    this.activeFloorY = data.walkerPos.y || 0;
+    this.walkClampRect = null;
     this.walkerPos.set(data.walkerPos.x, data.walkerPos.y, data.walkerPos.z);
     this.walkerHeading = data.walkerHeading || 0;
     this.companionPos.set(data.companionPos.x, data.companionPos.y, data.companionPos.z);
@@ -755,7 +780,13 @@ export class VehiclePhysics {
     }
 
     // Collide player with buildings / furniture / parked car
+    this.walkerPos.y = this.activeFloorY;
     this.resolveWalkObstacles(this.walkerPos, 0.58, nearbyBuildings, Boolean(options?.skipCarCollision));
+    if (this.walkClampRect) {
+      const r = this.walkClampRect;
+      this.walkerPos.x = THREE.MathUtils.clamp(this.walkerPos.x, r.x - r.halfW, r.x + r.halfW);
+      this.walkerPos.z = THREE.MathUtils.clamp(this.walkerPos.z, r.z - r.halfD, r.z + r.halfD);
+    }
     options?.clampWalkBounds?.(this.walkerPos);
 
     // Update companion walking alongside the player (closer when holding hands!)
@@ -798,7 +829,13 @@ export class VehiclePhysics {
       }
     }
 
+    this.companionPos.y = this.activeFloorY;
     this.resolveWalkObstacles(this.companionPos, 0.48, nearbyBuildings, Boolean(options?.skipCarCollision));
+    if (this.walkClampRect) {
+      const r = this.walkClampRect;
+      this.companionPos.x = THREE.MathUtils.clamp(this.companionPos.x, r.x - r.halfW, r.x + r.halfW);
+      this.companionPos.z = THREE.MathUtils.clamp(this.companionPos.z, r.z - r.halfD, r.z + r.halfD);
+    }
     options?.clampWalkBounds?.(this.companionPos);
   }
 
@@ -810,6 +847,9 @@ export class VehiclePhysics {
   ): void {
     for (let i = 0; i < nearbyBuildings.length; i++) {
       const b = nearbyBuildings[i];
+      if (this.activeFloorY > 0.5 && b.height <= this.activeFloorY + 0.8) {
+        continue;
+      }
       const dx = pos.x - b.x;
       const dz = pos.z - b.z;
       const ex = b.halfW + pedRadius;
@@ -826,7 +866,7 @@ export class VehiclePhysics {
       }
     }
 
-    if (skipCarCollision) return;
+    if (skipCarCollision || Math.abs(this.position.y - this.activeFloorY) > 2.2) return;
 
     const relX = pos.x - this.position.x;
     const relZ = pos.z - this.position.z;

@@ -101,7 +101,90 @@ export type QuestKind =
   | 'road_rings'
   | 'couple_moments'
   | 'night_cruise'
-  | 'observatory_scan';
+  | 'observatory_scan'
+  | 'rally_dispersal'
+  | 'lightsaber_hunt'
+  | 'bounty_hunt'
+  | 'passenger_transport';
+
+export type RpgRarity = 'common' | 'epic' | 'legendary';
+
+export type RpgSlot = 'head' | 'torso' | 'legs' | 'weapon' | 'gadget';
+
+export type RpgWeaponKind = 'fists' | 'blaster' | 'lightsaber';
+
+export type RpgOwnerTarget = 'player' | 'companion';
+
+export interface RpgItem {
+  uid: string;
+  templateId: string;
+  name: string;
+  slot: RpgSlot;
+  rarity: RpgRarity;
+  weaponKind?: RpgWeaponKind;
+  colorHex: string;
+  accentHex: string;
+  hpBonus: number;
+  armorBonus: number;
+  damageBonus: number;
+  healBonus?: number;
+  isUnique?: boolean;
+  desc: string;
+}
+
+export type RpgEquipMap = Record<RpgSlot, RpgItem | null>;
+
+export interface RpgStatsSummary {
+  maxHp: number;
+  armorPct: number;
+  attackDmg: number;
+  weaponKind: RpgWeaponKind;
+  weaponColor: string;
+  healPower: number;
+}
+
+export interface RpgStateSnapshot {
+  hp: number;
+  maxHp: number;
+  walkStreakSec: number;
+  inventory: RpgItem[];
+  playerEquipped: RpgEquipMap;
+  companionEquipped: RpgEquipMap;
+  playerStats: RpgStatsSummary;
+  companionStats: RpgStatsSummary;
+  gopniksActive: number;
+  rallyActiveCount: number;
+  rallyTotalCount: number;
+  policeWanted: boolean;
+  policeOfficersAlive: number;
+  policeEscapeProgress: number;
+  policeDispatchSec: number;
+  bountyBossActive: boolean;
+  activeThreatLabel: string | null;
+  nearbySaberName: string | null;
+}
+
+export interface RoadsideChatOption {
+  id: string;
+  label: string;
+  reply: string;
+}
+
+export interface RoadsideChatState {
+  npcName: string;
+  prompt: string;
+  options: RoadsideChatOption[];
+  repliedText: string | null;
+}
+
+export interface PassengerQuestState {
+  questId: string;
+  passengerName: string;
+  phase: 'to_pickup' | 'in_rv';
+  dropoffName: string;
+  distanceM: number;
+  canInteract: boolean;
+}
 
 export interface ActiveQuestSnapshot {
   id: string;
@@ -245,6 +328,12 @@ export interface SimulationSnapshot {
   companionRvActivity: string | null;
   pedestriansHitCount: number;
   graphicsQuality: number;
+  roadsideChat: RoadsideChatState | null;
+  passengerQuest: PassengerQuestState | null;
+  nearbyRooftopClubName: string | null;
+  isOnRooftopClub: boolean;
+  canHoverExitOnRooftop: boolean;
+  rpg: RpgStateSnapshot;
   toastMessage: string | null;
   saveMeta: SaveMetaSnapshot;
 }

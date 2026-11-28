@@ -111,17 +111,17 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
         float wiggle = sin(uv.y * 28.0 + n * 14.0 + uSteer * 2.5) * 0.08;
         float dropX = (n - 0.5) * 0.52 + wiggle;
 
-        vec2 d = (gv - vec2(dropX, dropY)) * vec2(1.0, 1.55);
-        float bead = smoothstep(0.16, 0.04, length(d));
+        vec2 d = (gv - vec2(dropX, dropY)) * vec2(1.0, 1.45);
+        float bead = smoothstep(0.18, 0.03, length(d)) * 1.35;
 
-        float aboveMask = smoothstep(dropY - 0.02, dropY + 0.05, gv.y) * smoothstep(0.49, 0.25, gv.y);
+        float aboveMask = smoothstep(dropY - 0.02, dropY + 0.06, gv.y) * smoothstep(0.49, 0.22, gv.y);
         float trailDist = abs(gv.x - dropX);
-        float trailWidth = mix(0.06, 0.015, clamp((gv.y - dropY) * 1.6, 0.0, 1.0));
-        float trail = smoothstep(trailWidth, 0.0, trailDist) * aboveMask * 0.65;
+        float trailWidth = mix(0.065, 0.016, clamp((gv.y - dropY) * 1.5, 0.0, 1.0));
+        float trail = smoothstep(trailWidth, 0.0, trailDist) * aboveMask * 0.78;
 
-        float spec = smoothstep(0.11, 0.02, length(d - vec2(-0.02, -0.04))) * 0.75;
+        float spec = smoothstep(0.12, 0.01, length(d - vec2(-0.025, -0.045))) * 1.25;
 
-        float vis = step(0.32, n);
+        float vis = step(0.30, n);
         return vec2((bead + trail) * vis, spec * vis);
       }
 
@@ -132,8 +132,8 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
         vec2 gv = fract(st) - 0.5;
         float n = hash21(floor(st));
         vec2 off = vec2(n - 0.5, fract(n * 17.3) - 0.5) * 0.48;
-        float flake = smoothstep(0.22, 0.04, length(gv - off));
-        return flake * step(0.48, n);
+        float flake = smoothstep(0.24, 0.03, length(gv - off));
+        return flake * step(0.46, n);
       }
 
       void main() {
@@ -142,7 +142,7 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
         vec2 uv = vUv;
         uv.x += (1.0 - uv.y) * uSteer * 0.045;
 
-        float t = uTime * (0.9 + clamp(uSpeed / 180.0, 0.0, 0.85));
+        float t = uTime * (0.95 + clamp(uSpeed / 180.0, 0.0, 0.85));
         float rainMask = 0.0;
         float highlight = 0.0;
         if (uRain > 0.005) {
@@ -154,24 +154,24 @@ function createWindshieldWeatherShader(): THREE.ShaderMaterial {
             vec2 mst = uv * vec2(52.0, 28.0);
             vec2 mgv = fract(mst) - 0.5;
             float mn = hash21(floor(mst));
-            micro = smoothstep(0.19, 0.05, length(mgv)) * step(0.62, mn) * 0.35;
+            micro = smoothstep(0.20, 0.04, length(mgv)) * step(0.58, mn) * 0.45;
           }
 
-          rainMask = clamp((l1.x * 0.85 + l2.x * 0.65 + micro) * uRain, 0.0, 0.82);
-          highlight = clamp((l1.y + l2.y * 0.7) * uRain, 0.0, 0.9);
+          rainMask = clamp((l1.x * 0.9 + l2.x * 0.7 + micro) * uRain, 0.0, 0.88);
+          highlight = clamp((l1.y + l2.y * 0.8) * uRain, 0.0, 1.0);
         }
 
         float snowMask = 0.0;
         if (uSnow > 0.005) {
           float sn1 = snowLayer(vUv, 14.0, uTime * (0.5 + clamp(uSpeed / 220.0, 0.0, 0.6)));
           float sn2 = snowLayer(vUv + vec2(0.41, 0.23), 24.0, uTime * 0.65);
-          float edgeFrost = smoothstep(0.35, 0.0, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y))) * 0.22;
-          snowMask = clamp((sn1 * 0.75 + sn2 * 0.55 + edgeFrost) * uSnow, 0.0, 0.78);
+          float edgeFrost = smoothstep(0.35, 0.0, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y))) * 0.25;
+          snowMask = clamp((sn1 * 0.8 + sn2 * 0.6 + edgeFrost) * uSnow, 0.0, 0.82);
         }
 
-        float totalAlpha = clamp(rainMask + snowMask, 0.0, 0.86);
-        vec3 rainCol = mix(uTint * 0.72, vec3(1.0), highlight * 0.75);
-        vec3 snowCol = vec3(0.92, 0.97, 1.0);
+        float totalAlpha = clamp(rainMask + snowMask, 0.0, 0.90);
+        vec3 rainCol = mix(uTint * 0.82 + vec3(0.08), vec3(1.0), highlight * 0.85);
+        vec3 snowCol = vec3(0.94, 0.98, 1.0);
         vec3 col = mix(rainCol, snowCol, snowMask / max(0.001, totalAlpha));
         gl_FragColor = vec4(col, totalAlpha);
       }
@@ -194,6 +194,7 @@ export interface CockpitCabinOptions {
   rvFridgeOpen?: boolean;
   rvSunroofOpen?: boolean;
   isInRvCabin?: boolean;
+  rvPassengerActive?: boolean;
 }
 
 interface ShowerDropMeta {
@@ -256,6 +257,7 @@ export class CockpitRig {
   private toiletFlushTimer = 0;
   private rvFridgeDoorPivot = new THREE.Group();
   private rvSunroofShutter!: THREE.Mesh;
+  private rvPassengerGroup = new THREE.Group();
 
   private vehicleModel: VehicleTypeId = 'coupe';
   private disposables: { dispose: () => void }[] = [];
@@ -774,57 +776,68 @@ export class CockpitRig {
       this.group.add(ig);
     }
 
-    // Watertight sloped aero roof bridge sealing cab roof (z=0.48, y=1.515) to RV roof (z=0.68..0.80, y=2.04..2.14)
-    const fairingProfile = new THREE.Shape();
-    fairingProfile.moveTo(0.42, 1.49);
-    fairingProfile.lineTo(0.42, 1.56);
-    fairingProfile.lineTo(0.74, 2.14);
-    fairingProfile.lineTo(0.80, 2.14);
-    fairingProfile.lineTo(0.80, 2.02);
-    fairingProfile.lineTo(0.72, 2.02);
-    fairingProfile.lineTo(0.48, 1.49);
-    fairingProfile.closePath();
-    const fairingGeo = new THREE.ExtrudeGeometry(fairingProfile, {
-      depth: 2.14,
+    // Watertight sloped aero roof bridge sealing cab roof to RV roof (z = -0.14 .. 0.72, y = 1.52 .. 2.09)
+    const aeroSlopeLen = Math.sqrt(0.86 * 0.86 + 0.57 * 0.57); // ~1.03m
+    const aeroSlopeAngle = -Math.atan2(0.57, 0.86);
+    const aeroRoofGeo = new THREE.BoxGeometry(2.14, 0.08, aeroSlopeLen);
+    const aeroRoof = new THREE.Mesh(aeroRoofGeo, hullPaintMat);
+    aeroRoof.position.set(0, 1.805, 0.29);
+    aeroRoof.rotation.x = aeroSlopeAngle;
+    this.group.add(aeroRoof);
+
+    // Front visor cap over windshield header sealing the nose
+    const browVisorGeo = new THREE.BoxGeometry(1.96, 0.09, 0.24);
+    const browVisorMesh = new THREE.Mesh(browVisorGeo, carbonMat);
+    browVisorMesh.position.set(0, 1.545, -0.16);
+    this.group.add(browVisorMesh);
+
+    // Overcab aero brow lightbar
+    const browLightGeo = new THREE.BoxGeometry(1.64, 0.028, 0.04);
+    const browLight = new THREE.Mesh(browLightGeo, headlightMat);
+    browLight.position.set(0, 1.545, -0.275);
+    this.group.add(browLight);
+
+    // Side triangular cheek walls closing cab-to-RV flanks (z = -0.14 .. 0.72, y = 1.48 .. 2.09)
+    const cheekProfile = new THREE.Shape();
+    cheekProfile.moveTo(-0.16, 1.48);
+    cheekProfile.lineTo(0.72, 1.48);
+    cheekProfile.lineTo(0.72, 2.09);
+    cheekProfile.lineTo(-0.16, 1.54);
+    cheekProfile.closePath();
+    const cheekGeo = new THREE.ExtrudeGeometry(cheekProfile, {
+      depth: 0.12,
       bevelEnabled: false,
       curveSegments: 1,
     });
-    fairingGeo.translate(0, 0, -1.07);
-    fairingGeo.rotateY(-Math.PI / 2);
-    const fairingMesh = new THREE.Mesh(fairingGeo, hullPaintMat);
-    this.group.add(fairingMesh);
+    cheekGeo.translate(0, 0, -0.06);
+    cheekGeo.rotateY(-Math.PI / 2);
 
-    // Side triangular cheek seals & B-pillar shoulder seals closing every cab-to-RV corner
-    const sideCheekProfile = new THREE.Shape();
-    sideCheekProfile.moveTo(0.46, 1.50);
-    sideCheekProfile.lineTo(0.76, 1.50);
-    sideCheekProfile.lineTo(0.76, 2.10);
-    sideCheekProfile.closePath();
-    const sideCheekGeo = new THREE.ExtrudeGeometry(sideCheekProfile, {
-      depth: 0.14,
-      bevelEnabled: false,
-      curveSegments: 1,
-    });
-    sideCheekGeo.translate(0, 0, -0.07);
-    sideCheekGeo.rotateY(-Math.PI / 2);
-
-    const gussetGeo = new THREE.BoxGeometry(0.36, 0.76, 0.16);
     for (const side of [-1, 1]) {
-      const cheek = new THREE.Mesh(sideCheekGeo, hullPaintMat);
+      const cheek = new THREE.Mesh(cheekGeo, hullPaintMat);
       cheek.position.set(side * 1.01, 0, 0);
       this.group.add(cheek);
 
-      const gus = new THREE.Mesh(gussetGeo, hullPaintMat);
-      gus.position.set(side * 0.88, 1.18, 0.50);
-      this.group.add(gus);
+      const bPillarFillGeo = new THREE.BoxGeometry(0.18, 0.72, 0.24);
+      const bPillarFill = new THREE.Mesh(bPillarFillGeo, carbonMat);
+      bPillarFill.position.set(side * 0.94, 1.16, 0.52);
+      this.group.add(bPillarFill);
     }
 
-    // RV Roof Cap (z = 0.72 .. 4.86, y = 2.09) with real Panoramic Skylight Opening (x ∈ [-0.54, 0.54], z ∈ [2.35, 3.65])
     const rvCeilingMat = new THREE.MeshStandardMaterial({
       color: 0xd8dee9,
       roughness: 0.76,
       metalness: 0.08,
     });
+
+    // Interior headliner ceiling sealing the cab overhead into RV living room
+    const cabHeadlinerGeo = new THREE.BoxGeometry(1.62, 0.035, 0.68);
+    const cabHeadliner = new THREE.Mesh(cabHeadlinerGeo, rvCeilingMat);
+    cabHeadliner.position.set(0, 1.515, 0.18);
+    this.group.add(cabHeadliner);
+
+    this.disposables.push(aeroRoofGeo, browVisorGeo, browLightGeo, cheekGeo, cabHeadlinerGeo, rvCeilingMat);
+
+    // RV Roof Cap (z = 0.72 .. 4.86, y = 2.09) with real Panoramic Skylight Opening (x ∈ [-0.54, 0.54], z ∈ [2.35, 3.65])
     const rvRoofFrontGeo = new THREE.BoxGeometry(2.14, 0.1, 1.67);
     const rvRoofFront = new THREE.Mesh(rvRoofFrontGeo, hullPaintMat);
     rvRoofFront.position.set(0, 2.09, 1.515);
@@ -1010,9 +1023,6 @@ export class CockpitRig {
       sideBodyFrontGeo,
       sideSkirtGeo,
       sideIntakeGlowGeo,
-      fairingGeo,
-      sideCheekGeo,
-      gussetGeo,
       rvRoofFrontGeo,
       rvRoofRearGeo,
       rvRoofSideGeo,
@@ -1325,6 +1335,28 @@ export class CockpitRig {
     const loungeBench = new THREE.Mesh(loungeBenchGeo, seatBolsterMat);
     loungeBench.position.set(0.76, 0.37, 1.52);
     this.group.add(loungeBench);
+
+    // Seated RV passenger NPC rig (shown during passenger_transport quests)
+    const pCoatMat = new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.65 });
+    const pPantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.78 });
+    const pSkinMat = new THREE.MeshStandardMaterial({ color: 0xf1c2a0, roughness: 0.6 });
+    const pTorsoGeo = new THREE.BoxGeometry(0.32, 0.44, 0.2);
+    const pHeadGeo = new THREE.SphereGeometry(0.115, 10, 8);
+    const pLegGeo = new THREE.BoxGeometry(0.12, 0.12, 0.36);
+    const pCoat = new THREE.Mesh(pTorsoGeo, pCoatMat);
+    pCoat.position.set(0, 0.26, 0);
+    const pHead = new THREE.Mesh(pHeadGeo, pSkinMat);
+    pHead.position.set(0, 0.61, 0);
+    const pLegL = new THREE.Mesh(pLegGeo, pPantsMat);
+    pLegL.position.set(-0.08, 0.04, 0.14);
+    const pLegR = new THREE.Mesh(pLegGeo, pPantsMat);
+    pLegR.position.set(0.08, 0.04, 0.14);
+    this.rvPassengerGroup.add(pCoat, pHead, pLegL, pLegR);
+    this.rvPassengerGroup.position.set(0.7, 0.56, 1.24);
+    this.rvPassengerGroup.rotation.y = -Math.PI / 2;
+    this.rvPassengerGroup.visible = false;
+    this.group.add(this.rvPassengerGroup);
+    this.disposables.push(pCoatMat, pPantsMat, pSkinMat, pTorsoGeo, pHeadGeo, pLegGeo);
 
     // 3) Corner Glass Shower Stall (left mid: x = -0.66, z = 2.46)
     const trayGeo = new THREE.BoxGeometry(0.68, 0.08, 0.82);
@@ -1739,6 +1771,7 @@ export class CockpitRig {
       .copy(_rvWarmTint)
       .lerp(_tvLightTint, rvTvOn && !rvLightsOn ? 0.65 : rvTvOn ? 0.18 : 0);
     this.rvCabinLight.visible = Boolean(cabinOpts?.isInRvCabin) || rvLightsOn || rvTvOn;
+    this.rvPassengerGroup.visible = Boolean(cabinOpts?.rvPassengerActive);
 
     this.rvCoffeeCupsGroup.visible = rvCoffeeBrewed;
     this.rvCoffeeLedMat.emissiveIntensity = rvCoffeeBrewed ? 1.65 : 0.3;
@@ -1874,6 +1907,11 @@ export class CockpitRig {
       planetName,
       !cabinOpts?.isInRvCabin,
     );
+  }
+
+  public applyCompanionOutfit(torsoHex: string, trimHex: string, legsHex: string, accentHex: string): void {
+    this.companion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex);
+    this.rvCompanion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex);
   }
 
   public dispose(): void {

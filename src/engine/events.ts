@@ -47,6 +47,15 @@ interface InternalQuest {
   targetX?: number;
   targetZ?: number;
   targetName?: string;
+  pickupPlanet?: PlanetId;
+  pickupX?: number;
+  pickupZ?: number;
+  dropoffPlanet?: PlanetId;
+  dropoffX?: number;
+  dropoffZ?: number;
+  dropoffName?: string;
+  passengerName?: string;
+  passengerPhase?: 'to_pickup' | 'in_rv';
   goalValue: number;
   progressValue: number;
 }
@@ -929,8 +938,86 @@ export class QuestManager {
     }
   }
 
+  public onRallyProtesterDispersed(remaining: number, total: number): void {
+    if (this.activeQuest?.kind === 'rally_dispersal') {
+      this.activeQuest.progressValue = Math.max(0, total - remaining);
+      if (remaining <= 0) {
+        this.completeActiveQuest();
+      }
+    }
+  }
+
+  public onLightsaberClaimed(planetId: PlanetId): void {
+    if (
+      this.activeQuest?.kind === 'lightsaber_hunt' &&
+      (!this.activeQuest.targetPlanet || this.activeQuest.targetPlanet === planetId)
+    ) {
+      this.completeActiveQuest();
+    }
+  }
+
+  public onBountyBossDefeated(): boolean {
+    if (this.activeQuest?.kind === 'bounty_hunt') {
+      this.completeActiveQuest();
+      return true;
+    }
+    return false;
+  }
+
+  public getPassengerQuestState(): {
+    questId: string;
+    passengerName: string;
+    phase: 'to_pickup' | 'in_rv';
+    pickupPlanet: PlanetId;
+    pickupX: number;
+    pickupZ: number;
+    dropoffPlanet: PlanetId;
+    dropoffX: number;
+    dropoffZ: number;
+    dropoffName: string;
+  } | null {
+    const q = this.activeQuest;
+    if (!q || q.kind !== 'passenger_transport') return null;
+    return {
+      questId: q.id,
+      passengerName: q.passengerName ?? 'Пассажир',
+      phase: q.passengerPhase === 'in_rv' ? 'in_rv' : 'to_pickup',
+      pickupPlanet: q.pickupPlanet ?? q.targetPlanet ?? 'coruscant',
+      pickupX: q.pickupX ?? q.targetX ?? 24,
+      pickupZ: q.pickupZ ?? q.targetZ ?? -120,
+      dropoffPlanet: q.dropoffPlanet ?? 'coruscant',
+      dropoffX: q.dropoffX ?? 280,
+      dropoffZ: q.dropoffZ ?? -320,
+      dropoffName: q.dropoffName ?? 'Терминал высадки',
+    };
+  }
+
+  public advancePassengerToRv(): boolean {
+    const q = this.activeQuest;
+    if (!q || q.kind !== 'passenger_transport' || q.passengerPhase === 'in_rv') return false;
+    q.passengerPhase = 'in_rv';
+    q.progressValue = 0.5;
+    const pName = q.passengerName ?? 'Пассажир';
+    const dPlanet = q.dropoffPlanet ? getPlanetConfig(q.dropoffPlanet).name : '';
+    const dLabel = q.dropoffName ?? 'пункт назначения';
+    this.showToast(`${pName} в салоне автодома · Курс: ${dLabel}${dPlanet ? ` (${dPlanet})` : ''}`, 4.0);
+    this.setCompanionNote(`«${pName} удобно устроился в мини-доме сзади. Поехали к точке высадки!»`, 5.0);
+    return true;
+  }
+
+  public completePassengerTransport(): boolean {
+    const q = this.activeQuest;
+    if (!q || q.kind !== 'passenger_transport' || q.passengerPhase !== 'in_rv') return false;
+    this.completeActiveQuest();
+    return true;
+  }
+
   public getActiveQuestId(): string | null {
     return this.activeQuest?.id ?? null;
+  }
+
+  public getActiveQuestKind(): QuestKind | null {
+    return this.activeQuest?.kind ?? null;
   }
 
   public hasPassedRoadGate(id: string): boolean {
@@ -1028,6 +1115,58 @@ export class QuestManager {
         targetX: tx ?? pos.x + 220,
         targetZ: tz ?? pos.z - 220,
         targetName: q.targetName ?? q.title,
+      };
+    }
+
+    if (q.kind === 'rally_dispersal') {
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: planetId,
+        targetX: q.targetX ?? 64,
+        targetZ: q.targetZ ?? -384,
+        targetName: q.targetName ?? 'Парк · Митинг',
+        requiresWalk: true,
+      };
+    }
+
+    if (q.kind === 'lightsaber_hunt') {
+      const tp = q.targetPlanet ?? 'kryos';
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetX: q.targetX ?? 120,
+        targetZ: q.targetZ ?? -120,
+        targetName: q.targetName ?? `Тайник меча · ${getPlanetConfig(tp).name}`,
+      };
+    }
+
+    if (q.kind === 'bounty_hunt') {
+      const tp = q.targetPlanet ?? planetId;
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetX: q.targetX ?? pos.x + 190,
+        targetZ: q.targetZ ?? pos.z - 170,
+        targetName: q.targetName ?? 'Главарь синдиката (Босс)',
+        requiresWalk: true,
+      };
+    }
+
+    if (q.kind === 'passenger_transport') {
+      const inRv = q.passengerPhase === 'in_rv';
+      const tp = inRv ? (q.dropoffPlanet ?? planetId) : (q.pickupPlanet ?? planetId);
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetX: inRv ? (q.dropoffX ?? 280) : (q.pickupX ?? 24),
+        targetZ: inRv ? (q.dropoffZ ?? -320) : (q.pickupZ ?? -120),
+        targetName: inRv
+          ? `${q.dropoffName ?? 'Высадка'}`
+          : `Посадка: ${q.passengerName ?? 'Пассажир'}`,
       };
     }
 
@@ -1280,6 +1419,99 @@ export class QuestManager {
         progressValue: 0,
       };
     });
+
+    ensureKind('rally_dispersal', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'rally_dispersal',
+      title: 'Разгон митинга Навального в парке',
+      subtitle: 'Приезжайте в городской парк и разгоните митинг световым мечом или бластером',
+      reward: 260,
+      targetX: 64,
+      targetZ: -384,
+      targetName: 'Парковый митинг',
+      goalValue: 10,
+      progressValue: 0,
+    }));
+
+    ensureKind('lightsaber_hunt', () => {
+      const saberPlanets: PlanetId[] = ['kryos', 'verdant', 'solaris', 'amethyst', 'crimson'];
+      const pickId = saberPlanets[this.questSeq % saberPlanets.length] ?? 'kryos';
+      const pName = getPlanetConfig(pickId).name;
+      return {
+        id: `q_${this.questSeq++}`,
+        kind: 'lightsaber_hunt',
+        title: `Световой меч · ${pName}`,
+        subtitle: `Приземлитесь на планету ${pName} и найдите сияющий тайник со световым мечом`,
+        reward: 310,
+        targetPlanet: pickId,
+        targetX: 96,
+        targetZ: -124,
+        targetName: `Тайник меча · ${pName}`,
+        goalValue: 1,
+        progressValue: 0,
+      };
+    });
+
+    ensureKind('bounty_hunt', () => {
+      const angle = ((this.questSeq * 1.37) % (Math.PI * 2));
+      const bx = Math.round(pos.x + Math.cos(angle) * 210);
+      const bz = Math.round(pos.z + Math.sin(angle) * 210);
+      const bossNames = ['Барон Вольт', 'Капитан Карн', 'Ксено-Главарь', 'Дон Грант'];
+      const bName = bossNames[this.questSeq % bossNames.length] ?? 'Главарь синдиката';
+      return {
+        id: `q_${this.questSeq++}`,
+        kind: 'bounty_hunt',
+        title: `Заказ на босса · ${bName}`,
+        subtitle: 'Победите сильного босса с охраной и заберите уникальную вещь из фиолетового лута',
+        reward: 340,
+        targetPlanet: planetId,
+        targetX: bx,
+        targetZ: bz,
+        targetName: bName,
+        goalValue: 1,
+        progressValue: 0,
+      };
+    });
+
+    ensureKind('passenger_transport', () => {
+      const pNames = ['Алина', 'Максим', 'Дамир', 'София'];
+      const passengerName = pNames[this.questSeq % pNames.length] ?? 'Пассажир';
+      const px = Math.round(pos.x / 320) * 320 + 21;
+      const pz = Math.round(pos.z / 320) * 320 - 110;
+      const interplanetary = this.questSeq % 2 === 0;
+      const candidates = getActiveSpacePlanets(spacePos, 16).filter((p) => p.id !== planetId);
+      const destPlanet = interplanetary
+        ? (candidates[this.questSeq % Math.max(1, candidates.length)]?.id ?? 'earth')
+        : planetId;
+      const destCfg = getPlanetConfig(destPlanet);
+      const dx = interplanetary ? 16 : Math.round(pos.x / 320) * 320 + 320;
+      const dz = interplanetary ? -48 : Math.round(pos.z / 320) * 320 - 340;
+      const dropoffName = interplanetary
+        ? `Проспект ${destCfg.name}`
+        : (landmarks[0]?.name ?? 'Центральный квартал');
+      return {
+        id: `q_${this.questSeq++}`,
+        kind: 'passenger_transport',
+        title: `Подвезти пассажира · ${passengerName}`,
+        subtitle: `Подберите ${passengerName} у дороги, посадите в мини-дом и довезите до: ${dropoffName}`,
+        reward: interplanetary ? 360 : 240,
+        pickupPlanet: planetId,
+        pickupX: px,
+        pickupZ: pz,
+        dropoffPlanet: destPlanet,
+        dropoffX: dx,
+        dropoffZ: dz,
+        dropoffName,
+        passengerName,
+        passengerPhase: 'to_pickup',
+        targetPlanet: planetId,
+        targetX: px,
+        targetZ: pz,
+        targetName: passengerName,
+        goalValue: 1,
+        progressValue: 0,
+      };
+    });
   }
 
   public exportSaveState() {
@@ -1347,27 +1579,40 @@ export class QuestManager {
       let markerY = 0;
       let markerInFront = true;
 
-      if (!inSpace && q.targetX !== undefined && q.targetZ !== undefined) {
-        distanceM = Math.round(Math.hypot(q.targetX - pos.x, q.targetZ - pos.z));
+      const effTargetX =
+        q.kind === 'passenger_transport'
+          ? (q.passengerPhase === 'in_rv' ? q.dropoffX : q.pickupX)
+          : q.targetX;
+      const effTargetZ =
+        q.kind === 'passenger_transport'
+          ? (q.passengerPhase === 'in_rv' ? q.dropoffZ : q.pickupZ)
+          : q.targetZ;
+
+      if (!inSpace && effTargetX !== undefined && effTargetZ !== undefined) {
+        distanceM = Math.round(Math.hypot(effTargetX - pos.x, effTargetZ - pos.z));
         if (computeMarker) {
           hasMarker = true;
-          toTarget.set(q.targetX - pos.x, 8 - pos.y, q.targetZ - pos.z);
+          toTarget.set(effTargetX - pos.x, 8 - pos.y, effTargetZ - pos.z);
           markerInFront = toTarget.dot(camForward) > 0;
-          projVec.set(q.targetX, 8, q.targetZ).project(camera);
+          projVec.set(effTargetX, 8, effTargetZ).project(camera);
           markerX = THREE.MathUtils.clamp(markerInFront ? projVec.x : -projVec.x, -0.9, 0.9);
           markerY = THREE.MathUtils.clamp(markerInFront ? projVec.y : -projVec.y, -0.78, 0.78);
         }
       }
 
       const progressPct =
-        q.kind === 'delivery' ||
-        q.kind === 'planet_visit' ||
-        q.kind === 'serbos_visit' ||
-        q.kind === 'earth_moscow' ||
-        q.kind === 'earth_reptiloids' ||
-        q.kind === 'observatory_scan'
-          ? 0
-          : Math.min(100, Math.round((q.progressValue / Math.max(1, q.goalValue)) * 100));
+        q.kind === 'passenger_transport'
+          ? (q.passengerPhase === 'in_rv' ? 50 : 0)
+          : q.kind === 'delivery' ||
+            q.kind === 'planet_visit' ||
+            q.kind === 'serbos_visit' ||
+            q.kind === 'earth_moscow' ||
+            q.kind === 'earth_reptiloids' ||
+            q.kind === 'observatory_scan' ||
+            q.kind === 'lightsaber_hunt' ||
+            q.kind === 'bounty_hunt'
+            ? 0
+            : Math.min(100, Math.round((q.progressValue / Math.max(1, q.goalValue)) * 100));
 
       return {
         id: q.id,
@@ -1386,7 +1631,7 @@ export class QuestManager {
 
     return {
       active: this.activeQuest ? toSnap(this.activeQuest, true) : null,
-      available: this.questPool.slice(0, 6).map((q) => toSnap(q, false)),
+      available: this.questPool.slice(0, 8).map((q) => toSnap(q, false)),
     };
   }
 }

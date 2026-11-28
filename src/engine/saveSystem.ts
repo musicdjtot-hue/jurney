@@ -4,6 +4,8 @@ import type {
   CompanionLocation,
   PlanetId,
   QuestKind,
+  RpgEquipMap,
+  RpgItem,
   SeasonId,
   SeasonSetting,
   TimePreset,
@@ -42,8 +44,24 @@ export interface QuestSaveItem {
   targetX?: number;
   targetZ?: number;
   targetName?: string;
+  pickupPlanet?: PlanetId;
+  pickupX?: number;
+  pickupZ?: number;
+  dropoffPlanet?: PlanetId;
+  dropoffX?: number;
+  dropoffZ?: number;
+  dropoffName?: string;
+  passengerName?: string;
+  passengerPhase?: 'to_pickup' | 'in_rv';
   goalValue: number;
   progressValue: number;
+}
+
+export interface RpgSaveData {
+  hp: number;
+  inventory: RpgItem[];
+  playerEquipped: RpgEquipMap;
+  companionEquipped: RpgEquipMap;
 }
 
 export interface GameSaveData {
@@ -100,6 +118,7 @@ export interface GameSaveData {
   questSeq: number;
   activeQuest: QuestSaveItem | null;
   questPool: QuestSaveItem[];
+  rpgState?: RpgSaveData;
 }
 
 export function formatSaveTimeLabel(ts: number): string {

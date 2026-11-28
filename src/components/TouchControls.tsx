@@ -73,6 +73,8 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 import type {
   AudioSettings,
   CabinThemeId,
+  RpgOwnerTarget,
+  RpgSlot,
   SeasonSetting,
   SimulationSnapshot,
   SteeringMode,
@@ -155,6 +157,15 @@ interface TouchControlsProps {
   onExitVehicle: () => void;
   onEnterVehicle: () => void;
   onToggleCompanion: () => void;
+  inventoryOpen: boolean;
+  onToggleInventory: () => void;
+  onEquipItem: (uid: string, target: RpgOwnerTarget) => void;
+  onUnequipSlot: (target: RpgOwnerTarget, slot: RpgSlot) => void;
+  onDeleteItem: (uid: string) => void;
+  onPerformAttack: () => void;
+  onReplyRoadsideChat: (optionId: string) => void;
+  onDismissRoadsideChat: () => void;
+  onInteractPassenger: () => void;
   timePreset: TimePreset;
   onSelectTimePreset: (preset: TimePreset) => void;
   onScrubTime: (value: number) => void;
@@ -289,6 +300,15 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onExitVehicle,
   onEnterVehicle,
   onToggleCompanion,
+  inventoryOpen,
+  onToggleInventory,
+  onEquipItem: _onEquipItem,
+  onUnequipSlot: _onUnequipSlot,
+  onDeleteItem: _onDeleteItem,
+  onPerformAttack,
+  onReplyRoadsideChat,
+  onDismissRoadsideChat,
+  onInteractPassenger,
   timePreset,
   onSelectTimePreset,
   onScrubTime,
@@ -1018,10 +1038,24 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             type="button"
             onClick={onExitVehicle}
             onPointerDown={(e) => e.stopPropagation()}
-            className={`${btnCls} bg-emerald-500/25 border-emerald-400/55 text-emerald-100`}
+            className={`${btnCls} ${
+              snapshot.canHoverExitOnRooftop
+                ? 'bg-cyan-500/30 border-cyan-300 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.35)]'
+                : 'bg-emerald-500/25 border-emerald-400/55 text-emerald-100'
+            }`}
           >
-            <Footprints className={`${iconCls} text-emerald-300`} />
-            <span>Выйти</span>
+            <Footprints
+              className={`${iconCls} ${
+                snapshot.canHoverExitOnRooftop ? 'text-cyan-200' : 'text-emerald-300'
+              }`}
+            />
+            <span>
+              {snapshot.canHoverExitOnRooftop
+                ? compact
+                  ? 'На крышу'
+                  : 'На крышу клуба'
+                : 'Выйти'}
+            </span>
           </button>
         )}
 
@@ -1054,6 +1088,25 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           >
             <Heart className={`${iconCls} text-rose-300`} />
             <span>{snapshot.holdHands ? 'За руку ✓' : 'За руку'}</span>
+          </button>
+        )}
+
+        {isWalking && (
+          <button
+            type="button"
+            onClick={onPerformAttack}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`${btnCls} bg-rose-500/35 border-rose-400/60 text-rose-100 active:scale-95 shadow-[0_0_14px_rgba(244,63,94,0.35)]`}
+            aria-label="Атаковать"
+          >
+            <Zap className={`${iconCls} text-rose-300`} />
+            <span>
+              {snapshot.rpg?.playerStats?.weaponKind === 'lightsaber'
+                ? 'Меч (Удар)'
+                : snapshot.rpg?.playerStats?.weaponKind === 'blaster'
+                ? 'Бластер (Огонь)'
+                : 'Атака (Удар)'}
+            </span>
           </button>
         )}
 
@@ -1286,6 +1339,24 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
+      {/* Center Blaster Aim Crosshair (on foot with blaster equipped) */}
+      {!hudHidden &&
+        isWalking &&
+        !insideInterior &&
+        !inRvCabin &&
+        snapshot.rpg?.playerStats?.weaponKind === 'blaster' && (
+          <div className="pointer-events-none fixed inset-0 z-10 flex items-center justify-center">
+            <div className="relative w-7 h-7 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border border-cyan-300/75 shadow-[0_0_8px_rgba(34,211,238,0.45)]" />
+              <div className="absolute left-1/2 -top-1.5 -translate-x-1/2 w-[1.5px] h-2 bg-cyan-300/90" />
+              <div className="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-[1.5px] h-2 bg-cyan-300/90" />
+              <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 h-[1.5px] w-2 bg-cyan-300/90" />
+              <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 h-[1.5px] w-2 bg-cyan-300/90" />
+              <div className="w-1.5 h-1.5 rounded-full bg-cyan-200 shadow-[0_0_6px_rgba(165,243,252,0.95)]" />
+            </div>
+          </div>
+        )}
+
       {/* Subtle Quest Waypoint Marker */}
       {!inAnySpace && !inRvCabin && !insideInterior && !hudHidden && snapshot.activeQuest?.hasMarker && (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -1306,6 +1377,83 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Passenger Transport Quest & Roadside Car Window Chat Stack */}
+      {!hudHidden && !settingsOpen && !journalOpen && (snapshot.passengerQuest || (snapshot.roadsideChat && !cabinOpen)) && (
+        <div className="pointer-events-none fixed bottom-28 sm:bottom-24 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 max-w-[92vw]">
+          {snapshot.passengerQuest && (
+            <div
+              className="pointer-events-auto w-fit max-w-full px-3.5 py-2 rounded-2xl bg-[#090d14]/92 border border-emerald-400/45 shadow-2xl flex items-center gap-3"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold text-emerald-200 truncate">
+                  {snapshot.passengerQuest.phase === 'to_pickup'
+                    ? `Пассажир ждёт: ${snapshot.passengerQuest.passengerName}`
+                    : `В салоне: ${snapshot.passengerQuest.passengerName} → ${snapshot.passengerQuest.dropoffName}`}
+                </div>
+                <div className="text-[10px] text-slate-300">
+                  {snapshot.passengerQuest.phase === 'to_pickup'
+                    ? `До посадки: ${snapshot.passengerQuest.distanceM} м`
+                    : `До высадки: ${snapshot.passengerQuest.distanceM} м`}
+                </div>
+              </div>
+              {snapshot.passengerQuest.canInteract && (
+                <button
+                  type="button"
+                  onClick={onInteractPassenger}
+                  className="min-h-[34px] px-3 rounded-xl bg-emerald-500/35 hover:bg-emerald-500/45 border border-emerald-300/75 text-xs font-semibold text-white whitespace-nowrap shrink-0 active:scale-95 transition-transform"
+                >
+                  {snapshot.passengerQuest.phase === 'to_pickup'
+                    ? 'Посадить в автодом'
+                    : 'Высадить пассажира'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {snapshot.roadsideChat && !cabinOpen && (
+            <div
+              className="pointer-events-auto w-[min(410px,92vw)] rounded-2xl bg-[#090d14]/95 border border-sky-400/45 shadow-2xl p-3 flex flex-col gap-2"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <MessageCircle className="w-4 h-4 text-sky-300 shrink-0" />
+                  <span className="text-xs font-semibold text-sky-200 truncate">
+                    Разговор у окна · {snapshot.roadsideChat.npcName}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onDismissRoadsideChat}
+                  className="w-7 h-7 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 inline-flex items-center justify-center shrink-0"
+                  aria-label="Закрыть диалог у окна"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-xs text-slate-100 leading-snug">
+                {snapshot.roadsideChat.repliedText ?? snapshot.roadsideChat.prompt}
+              </p>
+              {!snapshot.roadsideChat.repliedText && (
+                <div className="flex flex-wrap gap-1.5">
+                  {snapshot.roadsideChat.options.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onReplyRoadsideChat(opt.id)}
+                      className="min-h-[34px] px-2.5 py-1 rounded-xl bg-sky-500/20 hover:bg-sky-500/35 border border-sky-400/45 text-[11px] font-medium text-sky-100 text-left active:scale-95 transition-transform"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1440,15 +1588,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   Под крышей · {snapshot.insideHangarName}
                 </span>
               )}
+              {snapshot.isOnRooftopClub && snapshot.nearbyRooftopClubName && (
+                <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 border border-cyan-400/45 text-[11px] font-medium text-cyan-200">
+                  {snapshot.nearbyRooftopClubName}
+                </span>
+              )}
             </div>
           )}
 
           {!hudHidden && (
-            <div className="mt-1.5 pointer-events-auto inline-flex max-w-full" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="mt-1.5 pointer-events-auto flex items-center gap-1.5 flex-wrap max-w-full" onPointerDown={(e) => e.stopPropagation()}>
               <button
                 type="button"
                 onClick={onToggleJournal}
-                className={`min-h-[34px] max-w-[230px] sm:max-w-[340px] px-2.5 py-1 rounded-xl border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                className={`min-h-[34px] max-w-[210px] sm:max-w-[320px] px-2.5 py-1 rounded-xl border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
                   journalOpen
                     ? 'bg-amber-500/25 border-amber-400/55 text-amber-100'
                     : 'bg-[#090d14]/84 border-white/15 text-slate-200 hover:bg-[#111824]'
@@ -1472,6 +1625,74 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                   </>
                 )}
               </button>
+
+              <button
+                type="button"
+                onClick={onToggleInventory}
+                className={`min-h-[34px] px-2.5 py-1 rounded-xl border text-[11px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                  inventoryOpen
+                    ? 'bg-purple-500/30 border-purple-400/60 text-purple-100 shadow-[0_0_12px_rgba(168,85,247,0.35)]'
+                    : 'bg-[#090d14]/84 border-white/15 text-slate-200 hover:bg-[#111824]'
+                }`}
+                title="Инвентарь и снаряжение"
+              >
+                <Package className="w-3.5 h-3.5 text-purple-300 shrink-0" />
+                <span className="font-mono-tabular text-purple-200 shrink-0">
+                  Инвентарь {snapshot.rpg?.inventory?.length ? `(${snapshot.rpg.inventory.length})` : ''}
+                </span>
+              </button>
+
+              {snapshot.rpg && (
+                <div className="min-h-[34px] px-2.5 py-1 rounded-xl bg-[#090d14]/84 border border-white/15 inline-flex items-center gap-1.5 text-[11px]">
+                  <Heart
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      snapshot.rpg.hp < snapshot.rpg.maxHp * 0.5
+                        ? 'text-rose-400 animate-pulse'
+                        : 'text-emerald-400'
+                    }`}
+                  />
+                  <div className="w-14 sm:w-20 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        snapshot.rpg.hp > snapshot.rpg.maxHp * 0.5
+                          ? 'bg-emerald-400'
+                          : snapshot.rpg.hp > snapshot.rpg.maxHp * 0.25
+                          ? 'bg-amber-400'
+                          : 'bg-rose-500'
+                      }`}
+                      style={{
+                        width: `${Math.round(
+                          (snapshot.rpg.hp / (snapshot.rpg.maxHp || 100)) * 100,
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="font-mono-tabular text-[10px] text-slate-300">
+                    {Math.round(snapshot.rpg.hp)}/{snapshot.rpg.maxHp}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!hudHidden && snapshot.rpg?.activeThreatLabel && (
+            <div className="mt-1 pointer-events-auto inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-rose-950/85 border border-rose-500/60 text-xs font-semibold text-rose-200 shadow-lg animate-pulse">
+              <span>⚔️</span>
+              <span>{snapshot.rpg.activeThreatLabel}</span>
+            </div>
+          )}
+
+          {!hudHidden && (snapshot.rpg?.policeDispatchSec ?? 0) > 0 && (
+            <div className="mt-1 ml-1 pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-950/90 border border-amber-400/65 text-xs font-semibold text-amber-200 shadow-lg">
+              <span>🚨</span>
+              <span>Полиция прибудет через {snapshot.rpg.policeDispatchSec} с</span>
+            </div>
+          )}
+
+          {!hudHidden && snapshot.rpg?.nearbySaberName && (
+            <div className="mt-1 pointer-events-auto inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-purple-950/85 border border-purple-500/60 text-xs font-semibold text-purple-200 shadow-lg">
+              <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+              <span>Рядом световой меч: {snapshot.rpg.nearbySaberName}!</span>
             </div>
           )}
         </header>
@@ -3095,6 +3316,21 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 )}
 
                 <div className="flex items-end gap-1.5 sm:gap-2 shrink-0">
+                  {isWalking && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        onPerformAttack();
+                      }}
+                      className="h-[64px] w-[60px] sm:w-[72px] rounded-2xl border border-rose-400/70 bg-rose-600/40 text-white text-xs font-semibold inline-flex flex-col items-center justify-center gap-1 shadow-xl active:scale-90 transition-transform touch-none shrink-0"
+                      aria-label="Атаковать"
+                    >
+                      <Zap className="w-4 h-4 text-rose-300" />
+                      <span>Атака</span>
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onPointerDown={handleHoldStart('brake')}

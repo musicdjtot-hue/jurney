@@ -432,6 +432,7 @@ export class BlondePassengerRig {
   public readonly group = new THREE.Group();
   private torsoPivot = new THREE.Group();
   private headPivot: THREE.Group;
+  private palette: CompanionPalette;
   private disposables: { dispose: () => void }[] = [];
 
   private nextGlanceTime = 3.2;
@@ -440,6 +441,7 @@ export class BlondePassengerRig {
 
   constructor(maxAnisotropy: number) {
     const p = createCompanionPalette(maxAnisotropy);
+    this.palette = p;
     this.disposables.push(...p.disposables);
 
     const pelvisGeo = new THREE.SphereGeometry(0.144, 16, 12);
@@ -618,6 +620,19 @@ export class BlondePassengerRig {
     );
   }
 
+  public applyRpgOutfit(
+    torsoHex = '#ebe4d7',
+    trimHex = '#d7cebe',
+    legsHex = '#161926',
+    accentHex = '#fde68a',
+  ): void {
+    this.palette.jacketMat.color.set(torsoHex);
+    this.palette.jacketTrimMat.color.set(trimHex);
+    this.palette.skirtMat.color.set(legsHex);
+    this.palette.bootMat.color.set(legsHex).multiplyScalar(0.85);
+    this.palette.jewelryMat.color.set(accentHex);
+  }
+
   public dispose(): void {
     for (const d of this.disposables) {
       d.dispose();
@@ -638,11 +653,16 @@ export class BlondeWalkerRig {
   private rightArmPivot = new THREE.Group();
   private torsoPivot = new THREE.Group();
   private headPivot: THREE.Group;
+  private saberGroup = new THREE.Group();
+  private saberBladeMat: THREE.MeshBasicMaterial;
+  private saberGlowMat: THREE.MeshBasicMaterial;
+  private palette: CompanionPalette;
   private disposables: { dispose: () => void }[] = [];
   private walkCycle = 0;
 
   constructor(maxAnisotropy: number) {
     const p = createCompanionPalette(maxAnisotropy);
+    this.palette = p;
     this.disposables.push(...p.disposables);
 
     this.group.add(this.bodyGroup);
@@ -740,6 +760,28 @@ export class BlondeWalkerRig {
     this.headPivot.position.set(0, 0.482, -0.005);
     this.torsoPivot.add(this.headPivot);
 
+    // Companion Lightsaber sub-rig attached cleanly to right hand
+    const hiltGeo = new THREE.CylinderGeometry(0.018, 0.02, 0.18, 8);
+    const bladeGeo = new THREE.CylinderGeometry(0.011, 0.012, 0.72, 8);
+    const glowGeo = new THREE.CylinderGeometry(0.024, 0.026, 0.74, 8);
+    this.saberBladeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    this.saberGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x7dd3fc,
+      transparent: true,
+      opacity: 0.38,
+      toneMapped: false,
+    });
+    const hiltMesh = new THREE.Mesh(hiltGeo, p.bootMat);
+    const bladeMesh = new THREE.Mesh(bladeGeo, this.saberBladeMat);
+    bladeMesh.position.set(0, 0.44, 0);
+    const glowMesh = new THREE.Mesh(glowGeo, this.saberGlowMat);
+    glowMesh.position.set(0, 0.44, 0);
+    this.saberGroup.add(hiltMesh, bladeMesh, glowMesh);
+    this.saberGroup.position.set(0.026, -0.46, -0.055);
+    this.saberGroup.rotation.set(Math.PI * 0.42, 0, -0.14);
+    this.saberGroup.visible = false;
+    this.rightArmPivot.add(this.saberGroup);
+
     this.disposables.push(
       pelvisGeo,
       skirtGeo,
@@ -752,7 +794,17 @@ export class BlondeWalkerRig {
       cuffGeo,
       forearmGeo,
       handGeo,
+      hiltGeo,
+      bladeGeo,
+      glowGeo,
+      this.saberBladeMat,
+      this.saberGlowMat,
     );
+  }
+
+  public setLightsaberColor(colorHex: string): void {
+    this.saberBladeMat.color.set(colorHex);
+    this.saberGlowMat.color.set(colorHex);
   }
 
   public update(
@@ -761,8 +813,10 @@ export class BlondeWalkerRig {
     moveSpeed: number,
     visible: boolean,
     pose: CompanionPose = 'walk',
+    defending = false,
   ): void {
     this.group.visible = visible;
+    this.saberGroup.visible = visible && defending && pose === 'walk';
     if (!visible) return;
 
     if (pose === 'sit') {
@@ -856,9 +910,14 @@ export class BlondeWalkerRig {
         delta,
       );
       this.leftArmPivot.rotation.x = THREE.MathUtils.damp(this.leftArmPivot.rotation.x, -swing * 0.68, 12, delta);
-      this.rightArmPivot.rotation.x = THREE.MathUtils.damp(this.rightArmPivot.rotation.x, swing * 0.68, 12, delta);
+      this.rightArmPivot.rotation.x = THREE.MathUtils.damp(
+        this.rightArmPivot.rotation.x,
+        defending ? -1.45 + Math.sin(elapsed * 11.5) * 0.52 : swing * 0.68,
+        14,
+        delta,
+      );
       this.bodyGroup.position.y = Math.abs(Math.sin(this.walkCycle)) * 0.032;
-      this.torsoPivot.rotation.x = THREE.MathUtils.damp(this.torsoPivot.rotation.x, 0.04, 8, delta);
+      this.torsoPivot.rotation.x = THREE.MathUtils.damp(this.torsoPivot.rotation.x, defending ? 0.1 : 0.04, 8, delta);
       this.torsoPivot.rotation.z = THREE.MathUtils.damp(
         this.torsoPivot.rotation.z,
         Math.cos(this.walkCycle) * 0.028,
@@ -871,7 +930,12 @@ export class BlondeWalkerRig {
       this.leftKneePivot.rotation.x = THREE.MathUtils.damp(this.leftKneePivot.rotation.x, 0, 10, delta);
       this.rightKneePivot.rotation.x = THREE.MathUtils.damp(this.rightKneePivot.rotation.x, 0, 10, delta);
       this.leftArmPivot.rotation.x = THREE.MathUtils.damp(this.leftArmPivot.rotation.x, 0, 10, delta);
-      this.rightArmPivot.rotation.x = THREE.MathUtils.damp(this.rightArmPivot.rotation.x, 0, 10, delta);
+      this.rightArmPivot.rotation.x = THREE.MathUtils.damp(
+        this.rightArmPivot.rotation.x,
+        defending ? -1.42 + Math.sin(elapsed * 10.5) * 0.6 : 0,
+        12,
+        delta,
+      );
       this.bodyGroup.position.y = THREE.MathUtils.damp(this.bodyGroup.position.y, 0, 10, delta);
       this.torsoPivot.rotation.x = THREE.MathUtils.damp(
         this.torsoPivot.rotation.x,
@@ -894,6 +958,19 @@ export class BlondeWalkerRig {
       8,
       delta,
     );
+  }
+
+  public applyRpgOutfit(
+    torsoHex = '#ebe4d7',
+    trimHex = '#d7cebe',
+    legsHex = '#161926',
+    accentHex = '#fde68a',
+  ): void {
+    this.palette.jacketMat.color.set(torsoHex);
+    this.palette.jacketTrimMat.color.set(trimHex);
+    this.palette.skirtMat.color.set(legsHex);
+    this.palette.bootMat.color.set(legsHex).multiplyScalar(0.85);
+    this.palette.jewelryMat.color.set(accentHex);
   }
 
   public dispose(): void {

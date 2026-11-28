@@ -108,11 +108,14 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node24
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -133,7 +136,7 @@ jobs:
           fi
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
@@ -141,7 +144,7 @@ jobs:
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK for Poco F6
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: CoruscantHorizon-Android17-PocoF6-debug
           path: app/build/outputs/apk/debug/app-debug.apk

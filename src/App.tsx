@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TouchControls } from './components/TouchControls';
+import { RpgInventoryModal } from './components/RpgInventoryModal';
 import { CoruscantEngine } from './engine/CoruscantEngine';
+import { createDefaultRpgState } from './engine/rpgCatalog';
 import { DEFAULT_AUDIO_SETTINGS } from './engine/saveSystem';
 import type {
   AudioSettings,
   CabinThemeId,
+  RpgOwnerTarget,
+  RpgSlot,
   SeasonSetting,
   SimulationSnapshot,
   SteeringMode,
@@ -52,6 +56,9 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   nearbyObservatoryName: null,
   nearbySerbosName: null,
   nearbySpecialSpot: null,
+  nearbyRooftopClubName: null,
+  isOnRooftopClub: false,
+  canHoverExitOnRooftop: false,
   insideHangarName: null,
   interiorMode: 'none',
   interiorPose: 'stand',
@@ -98,6 +105,9 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   leftWindowOpen: false,
   rightWindowOpen: false,
   canOpenWindow: false,
+  rpg: createDefaultRpgState(),
+  roadsideChat: null,
+  passengerQuest: null,
   toastMessage: null,
   saveMeta: {
     hasSave: false,
@@ -126,6 +136,7 @@ export default function App() {
   const [journalOpen, setJournalOpen] = useState(false);
   const [cafeOpen, setCafeOpen] = useState(false);
   const [cafeReply, setCafeReply] = useState<string | null>(null);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [timePreset, setTimePreset] = useState<TimePreset>('auto');
   const [weatherSetting, setWeatherSetting] = useState<WeatherSetting>('auto');
   const [seasonSetting, setSeasonSetting] = useState<SeasonSetting>('auto');
@@ -314,6 +325,20 @@ export default function App() {
         e.preventDefault();
         setHudHidden((prev) => !prev);
         return;
+      }
+
+      if (!e.repeat && e.code === 'KeyI') {
+        e.preventDefault();
+        setInventoryOpen((prev) => !prev);
+        return;
+      }
+
+      if (!e.repeat && (e.code === 'KeyV' || e.code === 'Space')) {
+        if (snapshotRef.current.isWalking && !snapshotRef.current.isInRvCabin && snapshotRef.current.interiorMode === 'none') {
+          e.preventDefault();
+          engineRef.current?.performPlayerAttack();
+          return;
+        }
       }
 
       if (setKeyState(e.code, true)) {
@@ -666,6 +691,46 @@ export default function App() {
     engineRef.current?.triggerBoost();
   }, []);
 
+  const handleToggleInventory = useCallback(() => {
+    hapticTap(10);
+    setInventoryOpen((prev) => !prev);
+  }, []);
+
+  const handleEquipRpgItem = useCallback((uid: string, target: RpgOwnerTarget) => {
+    hapticTap(10);
+    engineRef.current?.equipRpgItem(uid, target);
+  }, []);
+
+  const handleUnequipRpgSlot = useCallback((target: RpgOwnerTarget, slot: RpgSlot) => {
+    hapticTap(10);
+    engineRef.current?.unequipRpgSlot(target, slot);
+  }, []);
+
+  const handleDeleteRpgItem = useCallback((uid: string) => {
+    hapticTap(10);
+    engineRef.current?.deleteRpgItem(uid);
+  }, []);
+
+  const handlePerformPlayerAttack = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.performPlayerAttack();
+  }, []);
+
+  const handleReplyRoadsideChat = useCallback((optionId: string) => {
+    hapticTap(10);
+    engineRef.current?.replyRoadsideChat(optionId);
+  }, []);
+
+  const handleDismissRoadsideChat = useCallback(() => {
+    hapticTap(8);
+    engineRef.current?.dismissRoadsideChat();
+  }, []);
+
+  const handleInteractPassenger = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.interactPassengerQuest();
+  }, []);
+
   const handleOpenCafeMenu = useCallback(() => {
     hapticTap(10);
     setSettingsOpen(false);
@@ -909,6 +974,15 @@ export default function App() {
         onExitVehicle={handleExitVehicle}
         onEnterVehicle={handleEnterVehicle}
         onToggleCompanion={handleToggleCompanion}
+        inventoryOpen={inventoryOpen}
+        onToggleInventory={handleToggleInventory}
+        onEquipItem={handleEquipRpgItem}
+        onUnequipSlot={handleUnequipRpgSlot}
+        onDeleteItem={handleDeleteRpgItem}
+        onPerformAttack={handlePerformPlayerAttack}
+        onReplyRoadsideChat={handleReplyRoadsideChat}
+        onDismissRoadsideChat={handleDismissRoadsideChat}
+        onInteractPassenger={handleInteractPassenger}
         timePreset={timePreset}
         onSelectTimePreset={handleSelectTimePreset}
         onScrubTime={handleScrubTime}
@@ -927,6 +1001,16 @@ export default function App() {
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
       />
+
+      {inventoryOpen && (
+        <RpgInventoryModal
+          rpg={snapshot.rpg}
+          onClose={() => setInventoryOpen(false)}
+          onEquipItem={handleEquipRpgItem}
+          onUnequipSlot={handleUnequipRpgSlot}
+          onDeleteItem={handleDeleteRpgItem}
+        />
+      )}
     </div>
   );
 }

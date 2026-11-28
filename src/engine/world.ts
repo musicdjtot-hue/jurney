@@ -21,6 +21,16 @@ import type {
 export const CHUNK_SIZE = 320;
 const DEFAULT_GRID_RADIUS = 3; // 7x7 chunks = 2240x2240m continuous network
 
+export interface RooftopClubInfo {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  halfW: number;
+  halfD: number;
+}
+
 const MAX_TOWER_INSTANCES = 480;
 const MAX_ACCENT_INSTANCES = 340;
 const MAX_DOME_INSTANCES = 80;
@@ -637,6 +647,11 @@ export class CoruscantWorld {
   private hangars: HangarZone[] = [];
   private skyGates: SkyGateAnchor[] = [];
   private roadGates: RoadGateAnchor[] = [];
+  private rooftopClubs: RooftopClubInfo[] = [];
+  private rooftopPoolGroups: {
+    group: THREE.Group;
+    waterMat: THREE.MeshStandardMaterial;
+  }[] = [];
   private gridRadius = DEFAULT_GRID_RADIUS;
   private trafficScale = 1;
   private fxScale = 1;
@@ -1213,12 +1228,156 @@ export class CoruscantWorld {
     this.group.add(this.rainLines);
     this.disposables.push(rainGeo, this.rainMaterial);
 
+    this.buildPooledRooftopClubs();
+
     this.setPlanetBiome({
       id: 'coruscant',
       biome: 'coruscant',
       seed: 101,
       name: 'Корускант',
     });
+  }
+
+  private buildPooledRooftopClubs(): void {
+    const deckGeo = new THREE.BoxGeometry(36, 0.55, 36);
+    const poolFrameGeo = new THREE.BoxGeometry(19.6, 0.45, 13.4);
+    const poolWaterGeo = new THREE.PlaneGeometry(18.0, 11.8);
+    poolWaterGeo.rotateX(-Math.PI / 2);
+    const barGeo = new THREE.BoxGeometry(7.6, 1.15, 2.2);
+    const neonStripGeo = new THREE.BoxGeometry(7.8, 0.14, 0.18);
+    const umbrellaPoleGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.5, 6);
+    const umbrellaTopGeo = new THREE.ConeGeometry(2.1, 0.85, 8);
+    const loungerGeo = new THREE.BoxGeometry(1.1, 0.38, 2.5);
+    const railLongGeo = new THREE.BoxGeometry(35.6, 0.9, 0.22);
+    const railSideGeo = new THREE.BoxGeometry(0.22, 0.9, 35.6);
+    const beaconPoleGeo = new THREE.CylinderGeometry(0.32, 0.42, 14, 8);
+    const beaconOrbGeo = new THREE.SphereGeometry(1.15, 10, 8);
+
+    const deckMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.62,
+      metalness: 0.22,
+    });
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      roughness: 0.28,
+      metalness: 0.18,
+    });
+    const barMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.4,
+      metalness: 0.55,
+    });
+    const neonPinkMat = new THREE.MeshBasicMaterial({ color: 0xf472b6, toneMapped: false });
+    const neonCyanMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+    const umbrellaMat = new THREE.MeshStandardMaterial({
+      color: 0xfb7185,
+      roughness: 0.65,
+      metalness: 0.05,
+    });
+    const loungerMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.6,
+      metalness: 0.08,
+    });
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.65,
+      transparent: true,
+      opacity: 0.72,
+      roughness: 0.2,
+    });
+
+    this.disposables.push(
+      deckGeo,
+      poolFrameGeo,
+      poolWaterGeo,
+      barGeo,
+      neonStripGeo,
+      umbrellaPoleGeo,
+      umbrellaTopGeo,
+      loungerGeo,
+      railLongGeo,
+      railSideGeo,
+      beaconPoleGeo,
+      beaconOrbGeo,
+      deckMat,
+      frameMat,
+      barMat,
+      neonPinkMat,
+      neonCyanMat,
+      umbrellaMat,
+      loungerMat,
+      railMat,
+    );
+
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Group();
+      g.visible = false;
+
+      const deck = new THREE.Mesh(deckGeo, deckMat);
+      deck.position.y = -0.25;
+      g.add(deck);
+
+      const poolFrame = new THREE.Mesh(poolFrameGeo, frameMat);
+      poolFrame.position.set(0, 0.16, 2.2);
+      g.add(poolFrame);
+
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x22d3ee,
+        emissive: 0x0891b2,
+        emissiveIntensity: 0.58,
+        roughness: 0.08,
+        metalness: 0.35,
+      });
+      this.disposables.push(waterMat);
+      const water = new THREE.Mesh(poolWaterGeo, waterMat);
+      water.position.set(0, 0.41, 2.2);
+      g.add(water);
+
+      const bar = new THREE.Mesh(barGeo, barMat);
+      bar.position.set(0, 0.58, -11.4);
+      g.add(bar);
+
+      const barNeon = new THREE.Mesh(neonStripGeo, neonPinkMat);
+      barNeon.position.set(0, 1.12, -10.3);
+      g.add(barNeon);
+
+      for (const lx of [-12.5, -10.2, 10.2, 12.5]) {
+        const lMesh = new THREE.Mesh(loungerGeo, loungerMat);
+        lMesh.position.set(lx, 0.2, 2.4);
+        g.add(lMesh);
+      }
+
+      for (const ux of [-11.3, 11.3]) {
+        const pole = new THREE.Mesh(umbrellaPoleGeo, frameMat);
+        pole.position.set(ux, 1.25, -2.5);
+        g.add(pole);
+        const top = new THREE.Mesh(umbrellaTopGeo, umbrellaMat);
+        top.position.set(ux, 2.55, -2.5);
+        g.add(top);
+      }
+
+      const rNorth = new THREE.Mesh(railLongGeo, railMat);
+      rNorth.position.set(0, 0.45, -17.7);
+      const rSouth = new THREE.Mesh(railLongGeo, railMat);
+      rSouth.position.set(0, 0.45, 17.7);
+      const rWest = new THREE.Mesh(railSideGeo, railMat);
+      rWest.position.set(-17.7, 0.45, 0);
+      const rEast = new THREE.Mesh(railSideGeo, railMat);
+      rEast.position.set(17.7, 0.45, 0);
+      g.add(rNorth, rSouth, rWest, rEast);
+
+      const bPole = new THREE.Mesh(beaconPoleGeo, barMat);
+      bPole.position.set(-14.5, 7.0, -14.5);
+      const bOrb = new THREE.Mesh(beaconOrbGeo, i % 2 === 0 ? neonCyanMat : neonPinkMat);
+      bOrb.position.set(-14.5, 14.3, -14.5);
+      g.add(bPole, bOrb);
+
+      this.group.add(g);
+      this.rooftopPoolGroups.push({ group: g, waterMat });
+    }
   }
 
   private buildSpecialLandmarks(): void {
@@ -1791,6 +1950,71 @@ export class CoruscantWorld {
     return bestDistSq < Infinity ? { x: bestX, z: bestZ } : null;
   }
 
+  public findNearestParkCenter(x: number, z: number): { x: number; z: number } | null {
+    const biome = BIOMES[this.biomeId];
+    const baseCx = Math.round(x / CHUNK_SIZE);
+    const baseCz = Math.round(z / CHUNK_SIZE);
+    let bestX = 64;
+    let bestZ = -384;
+    let bestDistSq = Infinity;
+    for (let dx = -5; dx <= 5; dx++) {
+      for (let dz = -5; dz <= 5; dz++) {
+        const cx = baseCx + dx;
+        const cz = baseCz + dz;
+        if (getChunkZone(cx, cz, biome.openThreshold, this.worldSeed) !== 'park') continue;
+        // Skip Serbos lake house chunk (-1, 1) so protest rally is placed in a clean park grove
+        if ((this.biomeId === 'earth' || this.biomeId === 'coruscant') && cx === -1 && cz === 1) continue;
+        // Park tree grove quadrant [+92, -92] offset near road edge at (+64, -64)
+        const px = cx * CHUNK_SIZE + 64;
+        const pz = cz * CHUNK_SIZE - 64;
+        const dSq = (px - x) * (px - x) + (pz - z) * (pz - z);
+        if (dSq < bestDistSq) {
+          bestDistSq = dSq;
+          bestX = px;
+          bestZ = pz;
+        }
+      }
+    }
+    return bestDistSq < Infinity ? { x: bestX, z: bestZ } : { x: 64, z: -384 };
+  }
+
+  public hitPedestrianAt(
+    originX: number,
+    originZ: number,
+    dirX: number,
+    dirZ: number,
+    maxRange: number,
+    coneWidth: number,
+  ): { count: number; hitX: number; hitZ: number } {
+    let count = 0;
+    let hitX = originX;
+    let hitZ = originZ;
+    const activePeds = Math.floor(BIOMES[this.biomeId].pedCount * this.trafficScale);
+    for (let i = 0; i < activePeds; i++) {
+      const p = this.pedestrians[i];
+      if (!p || p.knocked) continue;
+      const dx = p.x - originX;
+      const dz = p.z - originZ;
+      const forwardDist = dx * dirX + dz * dirZ;
+      if (forwardDist < -0.5 || forwardDist > maxRange) continue;
+      const sideDist = Math.abs(dx * -dirZ + dz * dirX);
+      if (sideDist > coneWidth) continue;
+
+      p.knocked = true;
+      p.knockedTimer = 3.5;
+      p.vx = dirX * 9.5 + (Math.random() - 0.5) * 3;
+      p.vz = dirZ * 9.5 + (Math.random() - 0.5) * 3;
+      p.vy = 6.5;
+      p.spinX = (Math.random() - 0.5) * 12;
+      p.spinZ = (Math.random() > 0.5 ? 1 : -1) * 10;
+      hitX = p.x;
+      hitZ = p.z;
+      count++;
+      if (count >= 2) break;
+    }
+    return { count, hitX, hitZ };
+  }
+
   public getHangarAt(x: number, y: number, z: number): { id: string; name: string } | null {
     for (let i = 0; i < this.hangars.length; i++) {
       const h = this.hangars[i];
@@ -1866,6 +2090,30 @@ export class CoruscantWorld {
     return true;
   }
 
+  public getRooftopClubs(): RooftopClubInfo[] {
+    return this.rooftopClubs;
+  }
+
+  public getRooftopClubUnder(
+    x: number,
+    z: number,
+    y: number,
+    margin = 4.5,
+  ): RooftopClubInfo | null {
+    for (let i = 0; i < this.rooftopClubs.length; i++) {
+      const c = this.rooftopClubs[i];
+      if (
+        Math.abs(x - c.x) <= c.halfW + margin &&
+        Math.abs(z - c.z) <= c.halfD + margin &&
+        y >= c.y - 4 &&
+        y <= c.y + 38
+      ) {
+        return c;
+      }
+    }
+    return null;
+  }
+
   public getZoneLabel(pos: THREE.Vector3): string {
     const biome = BIOMES[this.biomeId];
     const cx = Math.round(pos.x / CHUNK_SIZE);
@@ -1898,6 +2146,10 @@ export class CoruscantWorld {
     this.hangars.length = 0;
     this.skyGates.length = 0;
     this.roadGates.length = 0;
+    this.rooftopClubs.length = 0;
+    for (let i = 0; i < this.rooftopPoolGroups.length; i++) {
+      this.rooftopPoolGroups[i].group.visible = false;
+    }
 
     const isEarth = this.biomeId === 'earth';
     this.moscowGroup.visible = false;
@@ -1927,6 +2179,7 @@ export class CoruscantWorld {
     let hangarCount = 0;
     let skyGateCount = 0;
     let roadGateCount = 0;
+    let clubCount = 0;
 
     for (let gx = -this.gridRadius; gx <= this.gridRadius; gx++) {
       for (let gz = -this.gridRadius; gz <= this.gridRadius; gz++) {
@@ -2283,8 +2536,27 @@ export class CoruscantWorld {
           const heightMult = isPark ? 0.36 : 1.0;
           const baseW = (isPark ? 48 : 74) + rWidth * (isPark ? 22 : 36);
           const baseD = (isPark ? 48 : 74) + hash2(cx, cz, seedBase + 5) * (isPark ? 22 : 36);
-          const tier1H = (55 + rHeight * 90) * biome.heightScale * heightMult;
-          const tier2H = (35 + rSpire * 75) * biome.heightScale * heightMult;
+          let tier1H = (55 + rHeight * 90) * biome.heightScale * heightMult;
+          let tier2H = (35 + rSpire * 75) * biome.heightScale * heightMult;
+
+          const wantsClub =
+            !isPark &&
+            !isRedSquareChunk &&
+            !isSerbosChunk &&
+            !isReptiloidChunk &&
+            q === 0 &&
+            Math.abs(gx) <= 1 &&
+            Math.abs(gz) <= 1 &&
+            clubCount < this.rooftopPoolGroups.length &&
+            ((cx === 0 && cz === 0) || hash2(cx, cz, sOff + 733) > 0.45);
+
+          if (wantsClub) {
+            const rawTotal = Math.max(1, tier1H + tier2H);
+            const targetH = THREE.MathUtils.clamp(rawTotal, 78, 112);
+            const s = targetH / rawTotal;
+            tier1H *= s;
+            tier2H *= s;
+          }
 
           if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) {
             this.activeBuildings.push({
@@ -2306,9 +2578,9 @@ export class CoruscantWorld {
           }
 
           const upperStyle = (rStyle + 1) % 3;
+          const w2 = baseW * 0.64;
+          const d2 = baseD * 0.64;
           if (towerCounts[upperStyle] < MAX_TOWER_INSTANCES) {
-            const w2 = baseW * 0.64;
-            const d2 = baseD * 0.64;
             _dummy.position.set(bx, tier1H + tier2H * 0.5, bz);
             _dummy.rotation.set(0, 0, 0);
             _dummy.scale.set(w2, tier2H, d2);
@@ -2318,31 +2590,53 @@ export class CoruscantWorld {
 
           const totalH = tier1H + tier2H;
 
-          if (rSpire <= biome.domeChance && domeCount < MAX_DOME_INSTANCES) {
-            const domeR = baseW * 0.27;
-            _dummy.position.set(bx, totalH - 1, bz);
-            _dummy.rotation.set(0, 0, 0);
-            _dummy.scale.set(domeR, domeR * 0.72, domeR);
-            _dummy.updateMatrix();
-            this.domeMesh.setMatrixAt(domeCount++, _dummy.matrix);
-          }
-
-          if (!isPark && rSpire > biome.domeChance && trimCount < MAX_ACCENT_INSTANCES) {
-            const needleH = 18 + rSpire * 34;
-            _dummy.position.set(bx, totalH + needleH * 0.5, bz);
-            _dummy.rotation.set(0, 0, 0);
-            _dummy.scale.set(4.5, needleH, 4.5);
-            _dummy.updateMatrix();
-            this.trimMesh.setMatrixAt(trimCount++, _dummy.matrix);
-
-            if (beaconCount < MAX_BEACON_INSTANCES) {
-              _dummy.position.set(bx, totalH + needleH + 1.2, bz);
-              _dummy.scale.setScalar(1.3);
+          if (wantsClub) {
+            const clubNames = [
+              'Клуб на крыше «Горизонт»',
+              'Скай-бассейн «Оазис»',
+              'Неон-терраса «Мираж»',
+              'Руфтоп-клуб «Зенит»',
+            ];
+            const poolObj = this.rooftopPoolGroups[clubCount];
+            poolObj.group.position.set(bx, totalH, bz);
+            poolObj.group.visible = true;
+            this.rooftopClubs.push({
+              id: `club_${cx}_${cz}`,
+              name: clubNames[(Math.abs(cx * 5 + cz * 3) + clubCount) % clubNames.length],
+              x: bx,
+              y: totalH,
+              z: bz,
+              halfW: Math.max(17, Math.min(w2 * 0.47, 22)),
+              halfD: Math.max(17, Math.min(d2 * 0.47, 22)),
+            });
+            clubCount++;
+          } else {
+            if (rSpire <= biome.domeChance && domeCount < MAX_DOME_INSTANCES) {
+              const domeR = baseW * 0.27;
+              _dummy.position.set(bx, totalH - 1, bz);
+              _dummy.rotation.set(0, 0, 0);
+              _dummy.scale.set(domeR, domeR * 0.72, domeR);
               _dummy.updateMatrix();
-              _color.set(rSpire > 0.7 ? biome.beaconColors[0] : biome.beaconColors[1]);
-              this.beaconMesh.setMatrixAt(beaconCount, _dummy.matrix);
-              this.beaconMesh.setColorAt(beaconCount, _color);
-              beaconCount++;
+              this.domeMesh.setMatrixAt(domeCount++, _dummy.matrix);
+            }
+
+            if (!isPark && rSpire > biome.domeChance && trimCount < MAX_ACCENT_INSTANCES) {
+              const needleH = 18 + rSpire * 34;
+              _dummy.position.set(bx, totalH + needleH * 0.5, bz);
+              _dummy.rotation.set(0, 0, 0);
+              _dummy.scale.set(4.5, needleH, 4.5);
+              _dummy.updateMatrix();
+              this.trimMesh.setMatrixAt(trimCount++, _dummy.matrix);
+
+              if (beaconCount < MAX_BEACON_INSTANCES) {
+                _dummy.position.set(bx, totalH + needleH + 1.2, bz);
+                _dummy.scale.setScalar(1.3);
+                _dummy.updateMatrix();
+                _color.set(rSpire > 0.7 ? biome.beaconColors[0] : biome.beaconColors[1]);
+                this.beaconMesh.setMatrixAt(beaconCount, _dummy.matrix);
+                this.beaconMesh.setColorAt(beaconCount, _color);
+                beaconCount++;
+              }
             }
           }
 
@@ -2735,6 +3029,13 @@ export class CoruscantWorld {
     if (this.reptiloidBeaconRing) {
       this.reptiloidBeaconRing.rotation.y = elapsed * 1.4;
       this.reptiloidBeaconRing.rotation.x = Math.sin(elapsed * 0.9) * 0.45;
+    }
+
+    for (let i = 0; i < this.rooftopPoolGroups.length; i++) {
+      const rp = this.rooftopPoolGroups[i];
+      if (rp.group.visible) {
+        rp.waterMat.emissiveIntensity = 0.55 + Math.sin(elapsed * 2.2 + i) * 0.14;
+      }
     }
 
     const biome = BIOMES[this.biomeId];

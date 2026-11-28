@@ -27,7 +27,16 @@ import {
   type GameSaveData,
 } from './saveSystem';
 import { SkyAtmosphere } from './sky';
-import { CoruscantWorld, getChunkRoadArms } from './world';
+import { CoruscantWorld, getChunkRoadArms, type RooftopClubInfo } from './world';
+import { RpgCombatSystem } from './rpgCombat';
+import {
+  computeRpgStats,
+  createRpgItemFromTemplate,
+  createStarterRpgData,
+  createUniqueBossLoot,
+  getLightsaberForPlanet,
+  rollLootDrop,
+} from './rpgCatalog';
 import type {
   AudioSettings,
   CabinThemeId,
@@ -36,8 +45,15 @@ import type {
   InteriorMode,
   InteriorPose,
   LandingSite,
+  PassengerQuestState,
   PlanetId,
   PlanetMarker,
+  RoadsideChatState,
+  RpgEquipMap,
+  RpgItem,
+  RpgOwnerTarget,
+  RpgSlot,
+  RpgStateSnapshot,
   RvPose,
   RvStationKind,
   SaveMetaSnapshot,
@@ -58,6 +74,10 @@ const _camForward = new THREE.Vector3();
 const _toTarget = new THREE.Vector3();
 const _beaconWorldPos = new THREE.Vector3();
 const _apSpaceVec = new THREE.Vector3();
+const _muzzlePos = new THREE.Vector3();
+const _camPos = new THREE.Vector3();
+const _aimTarget = new THREE.Vector3();
+const _boltDir = new THREE.Vector3();
 
 const SEASON_CYCLE: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
 const SEASON_LABELS: Record<SeasonId, string> = {
@@ -104,6 +124,23 @@ export class CoruscantEngine {
   private space: SpaceSystem;
   private physics = new VehiclePhysics();
   private quests = new QuestManager();
+  private rpgCombat: RpgCombatSystem;
+  private rpgHp = 100;
+  private rpgInventory = createStarterRpgData().inventory;
+  private playerEquipped = createStarterRpgData().playerEquipped;
+  private companionEquipped = createStarterRpgData().companionEquipped;
+  private walkStreakSec = 0;
+  private gopnikCooldown = 35;
+  private healCooldown = 0;
+  private policeCooldown = 0;
+  private policeDispatchTimer = 0;
+  private companionAttackCooldown = 0;
+  private roadsideChat: RoadsideChatState | null = null;
+  private roadsideCooldown = 9;
+  private passengerFarewellTimer = 0;
+  private passengerFarewellX = 0;
+  private passengerFarewellZ = 0;
+  private passengerFarewellName = '';
   private graphicsQuality = readGraphicsQuality();
   private audioSettings: AudioSettings = readAudioSettings();
   private audio = new AmbientCabinAudio(this.audioSettings);
@@ -364,6 +401,8 @@ export class CoruscantEngine {
     this.cockpit = new CockpitRig(maxAnisotropy, this.isSoftwareGl || this.isLowTierGpu);
     this.walkerCompanion = new BlondeWalkerRig(maxAnisotropy);
     this.walkerCompanion.group.visible = false;
+    this.rpgCombat = new RpgCombatSystem(this.scene);
+    this.camera.add(this.rpgCombat.heldWeaponGroup);
     this.applyGraphicsQuality(this.graphicsQuality, false);
 
     this.physics.setOnPlanetSwitch((planetId: PlanetId, centerX = 0, centerZ = 0) => {
@@ -390,6 +429,9 @@ export class CoruscantEngine {
         this.weatherTimer = 0;
         this.weatherBlend = 0.25;
       }
+      this.policeDispatchTimer = 0;
+      this.roadsideChat = null;
+      this.rpgCombat.setRoadsideNpc(false);
       this.quests.onPlanetEntered(planetId);
     });
 
@@ -412,6 +454,8 @@ export class CoruscantEngine {
     const existingSave = readGameSave();
     if (existingSave) {
       this.applySaveData(existingSave, false);
+    } else {
+      this.syncRpgAppearance();
     }
 
     if (!this.isSoftwareGl) {
@@ -461,6 +505,198 @@ export class CoruscantEngine {
     } else {
       this.physics.launchToSpace();
     }
+  }
+
+  private syncRpgAppearance(): void {
+    const stats = computeRpgStats(this.playerEquipped, this.companionEquipped);
+    this.rpgCombat.syncPlayerWeapon(stats.weaponKind, stats.weaponColor);
+    this.walkerCompanion.applyRpgOutfit(
+      this.companionEquipped.torso?.colorHex ?? '#ebe4d7',
+      this.companionEquipped.torso?.accentHex ?? '#d7cebe',
+      this.companionEquipped.legs?.colorHex ?? '#1e293b',
+      this.companionEquipped.head?.colorHex ?? '#334155',
+    );
+    this.cockpit.applyCompanionOutfit(
+      this.companionEquipped.torso?.colorHex ?? '#ebe4d7',
+      this.companionEquipped.torso?.accentHex ?? '#d7cebe',
+      this.companionEquipped.legs?.colorHex ?? '#1e293b',
+      this.companionEquipped.head?.colorHex ?? '#334155',
+    );
+  }
+
+  private handleEnemyDefeated = (
+    kind: 'gopnik' | 'rally' | 'police' | 'boss',
+    x: number,
+    y: number,
+    z: number,
+  ): void => {
+    const coinGain =
+      kind === 'boss'
+        ? Math.round(90 + Math.random() * 50)
+        : kind === 'police'
+          ? Math.round(30 + Math.random() * 15)
+          : kind === 'gopnik'
+            ? Math.round(15 + Math.random() * 12)
+            : 10;
+    const dropped = kind === 'boss' ? createUniqueBossLoot() : rollLootDrop(kind);
+    this.rpgCombat.spawnLootPouch(x, z, dropped, coinGain, y);
+    this.audio.playLootDrop(kind === 'boss' || dropped?.rarity === 'legendary' || dropped?.rarity === 'epic');
+
+    if (kind === 'boss') {
+      this.quests.onBountyBossDefeated();
+      this.quests.showToast('Босс повержен! На земле светится уникальный фиолетовый мешочек!', 4.0);
+    } else {
+      this.quests.showToast('Враг повержен · На земле выпал мешочек с лутом и монетами', 2.8);
+    }
+    if (kind === 'rally') {
+      this.quests.onRallyProtesterDispersed(
+        this.rpgCombat.getRallyActiveCount(),
+        this.rpgCombat.rallyTotalCount,
+      );
+    }
+  };
+
+  private schedulePoliceDispatch(): void {
+    if (this.rpgCombat.policeWanted || this.policeDispatchTimer > 0 || this.policeCooldown > 0) {
+      return;
+    }
+    this.policeDispatchTimer = 30.0;
+    this.audio.playPoliceBeep();
+    this.quests.showToast('Тревога! Патруль полиции прибудет через 30 сек.', 3.6);
+  }
+
+  public performPlayerAttack(): void {
+    if (
+      this.interiorMode !== 'none' ||
+      this.isInRvCabin ||
+      !this.physics.isWalking ||
+      this.physics.spaceFactor > 0.1
+    ) {
+      return;
+    }
+    const stats = computeRpgStats(this.playerEquipped, this.companionEquipped);
+    if (stats.weaponKind === 'lightsaber') {
+      this.audio.playSaberSwing(stats.weaponColor === '#a855f7');
+    } else if (stats.weaponKind === 'blaster') {
+      this.audio.playBlasterShot();
+    } else {
+      this.audio.playPunchHit();
+    }
+
+    this.camera.getWorldPosition(_camPos);
+    this.camera.getWorldDirection(_camForward);
+
+    let originX = this.physics.walkerPos.x;
+    let originY = this.physics.walkerPos.y + 1.4;
+    let originZ = this.physics.walkerPos.z;
+    let dirX = _camForward.x;
+    let dirY = _camForward.y;
+    let dirZ = _camForward.z;
+    let exactOrigin = false;
+
+    if (stats.weaponKind === 'blaster') {
+      _aimTarget.copy(_camPos).addScaledVector(_camForward, 44);
+      if (this.rpgCombat.getBlasterMuzzleWorldPos(_muzzlePos)) {
+        originX = _muzzlePos.x;
+        originY = _muzzlePos.y;
+        originZ = _muzzlePos.z;
+        _boltDir.copy(_aimTarget).sub(_muzzlePos).normalize();
+        dirX = _boltDir.x;
+        dirY = _boltDir.y;
+        dirZ = _boltDir.z;
+        exactOrigin = true;
+      } else {
+        originX = _camPos.x;
+        originY = _camPos.y - 0.12;
+        originZ = _camPos.z;
+        exactOrigin = true;
+      }
+    }
+
+    const atkRes = this.rpgCombat.performPlayerAttack(
+      originX,
+      originY,
+      originZ,
+      dirX,
+      dirY,
+      dirZ,
+      stats.attackDmg,
+      stats.weaponKind,
+      {
+        onPlayerDamaged: (_rawDmg: number, _attackerLabel: string) => {},
+        onEnemyDefeated: this.handleEnemyDefeated,
+        onPoliceCleared: (_reason: 'defeated' | 'escaped' | 'hidden') => {},
+        onSaberPickupClaimed: () => {},
+        onGopnikTaunt: (_line: string) => {},
+      },
+      exactOrigin,
+    );
+
+    if (atkRes.hitEnemy && stats.weaponKind !== 'blaster') {
+      this.audio.playPunchHit();
+    }
+
+    if (this.physics.activeFloorY < 1) {
+      const horizLen = Math.hypot(dirX, dirZ) || 1;
+      const pedDirX = dirX / horizLen;
+      const pedDirZ = dirZ / horizLen;
+      const hitRes = this.world.hitPedestrianAt(
+        this.physics.walkerPos.x,
+        this.physics.walkerPos.z,
+        pedDirX,
+        pedDirZ,
+        stats.weaponKind === 'blaster' ? 26 : 3.8,
+        1.85,
+      );
+      if (hitRes.count > 0) {
+        this.quests.onPedestrianHit(hitRes.count);
+        const coinGain = Math.round(10 + Math.random() * 15);
+        const dropped = rollLootDrop('pedestrian');
+        this.rpgCombat.spawnLootPouch(hitRes.hitX, hitRes.hitZ, dropped, coinGain, 0);
+        this.audio.playLootDrop(dropped?.rarity === 'epic' || dropped?.rarity === 'legendary');
+        this.quests.showToast('Удар по прохожему · На земле остался мешочек', 2.8);
+        this.schedulePoliceDispatch();
+      }
+    }
+  }
+
+  public attackCombat(): void {
+    this.performPlayerAttack();
+  }
+
+  public equipRpgItem(uid: string, target: RpgOwnerTarget): void {
+    const idx = this.rpgInventory.findIndex((i) => i.uid === uid);
+    if (idx < 0) return;
+    const item = this.rpgInventory[idx];
+    const targetEquipped = target === 'player' ? this.playerEquipped : this.companionEquipped;
+    const prev = targetEquipped[item.slot];
+    targetEquipped[item.slot] = item;
+    this.rpgInventory.splice(idx, 1);
+    if (prev) {
+      this.rpgInventory.push(prev);
+    }
+    this.syncRpgAppearance();
+    this.quests.showToast(`Экипировано: ${item.name} (${target === 'player' ? 'Игрок' : 'Спутница'})`, 2.6);
+    this.saveGame(false);
+  }
+
+  public unequipRpgSlot(target: RpgOwnerTarget, slot: RpgSlot): void {
+    const targetEquipped = target === 'player' ? this.playerEquipped : this.companionEquipped;
+    const item = targetEquipped[slot];
+    if (!item) return;
+    targetEquipped[slot] = null;
+    this.rpgInventory.push(item);
+    this.syncRpgAppearance();
+    this.quests.showToast(`Снято: ${item.name}`, 2.2);
+    this.saveGame(false);
+  }
+
+  public deleteRpgItem(uid: string): void {
+    const idx = this.rpgInventory.findIndex((i) => i.uid === uid);
+    if (idx < 0) return;
+    const removed = this.rpgInventory.splice(idx, 1)[0];
+    this.quests.showToast(`Удалено: ${removed.name}`, 2.0);
+    this.saveGame(false);
   }
 
   public startQuestAutopilot(questId?: string): void {
@@ -551,6 +787,10 @@ export class CoruscantEngine {
 
   public toggleCabinTint(): void {
     this.cabinTintDark = !this.cabinTintDark;
+    if (this.cabinTintDark) {
+      this.roadsideChat = null;
+      this.rpgCombat.setRoadsideNpc(false);
+    }
     this.quests.showToast(
       this.cabinTintDark ? 'Полная тонировка для сна включена' : 'Стёкла салона снова прозрачные',
       2.4,
@@ -634,6 +874,8 @@ export class CoruscantEngine {
     if (this.physics.flightState === 'ascending') {
       this.physics.targetFlightAltitude = Math.max(76, this.physics.position.y);
     }
+    this.roadsideChat = null;
+    this.rpgCombat.setRoadsideNpc(false);
     this.isInRvCabin = true;
     this.rvPose = 'stand';
     this.rvPlayerLocalPos.set(0, 0.195, 1.05);
@@ -741,6 +983,10 @@ export class CoruscantEngine {
 
   public toggleRvWindowTint(): void {
     this.rvWindowTinted = !this.rvWindowTinted;
+    if (this.rvWindowTinted) {
+      this.roadsideChat = null;
+      this.rpgCombat.setRoadsideNpc(false);
+    }
     this.quests.showToast(
       this.rvWindowTinted ? 'Окна мини-дома затонированы' : 'Окна мини-дома снова прозрачные',
       2.4,
@@ -1063,6 +1309,12 @@ export class CoruscantEngine {
       rvWindowTinted: this.rvWindowTinted,
       rvSunroofOpen: this.rvSunroofOpen,
       companionLocation: this.companionLocation,
+      rpgState: {
+        hp: this.rpgHp,
+        inventory: this.rpgInventory,
+        playerEquipped: this.playerEquipped,
+        companionEquipped: this.companionEquipped,
+      },
     };
     const ok = writeGameSave(data);
     if (ok) {
@@ -1098,6 +1350,19 @@ export class CoruscantEngine {
       this.interiorLabel = null;
     }
     this.quests = new QuestManager();
+    const defRpg = createStarterRpgData();
+    this.rpgHp = defRpg.hp;
+    this.rpgInventory = [...defRpg.inventory];
+    this.playerEquipped = { ...defRpg.playerEquipped };
+    this.companionEquipped = { ...defRpg.companionEquipped };
+    this.syncRpgAppearance();
+    this.rpgCombat.clearAllEncounters(true);
+    this.policeDispatchTimer = 0;
+    this.policeCooldown = 0;
+    this.companionAttackCooldown = 0;
+    this.roadsideChat = null;
+    this.roadsideCooldown = 9;
+    this.passengerFarewellTimer = 0;
     this.hasCompanion = true;
     this.autopilotActive = false;
     this.autopilotArrivingStop = false;
@@ -1183,6 +1448,13 @@ export class CoruscantEngine {
     this.serbosCoffeeServed = false;
     this.serbosDialogLine = null;
     this.serbosDialogTimer = 0;
+    this.rpgCombat.clearAllEncounters(true);
+    this.policeDispatchTimer = 0;
+    this.policeCooldown = 0;
+    this.companionAttackCooldown = 0;
+    this.roadsideChat = null;
+    this.roadsideCooldown = 9;
+    this.passengerFarewellTimer = 0;
     this.cabinTintDark = Boolean(save.cabinTintDark);
     this.cabinRoofLight = Boolean(save.cabinRoofLight);
     this.cabinSeatsReclined = Boolean(save.cabinSeatsReclined);
@@ -1205,6 +1477,18 @@ export class CoruscantEngine {
     this.activeSeason = save.activeSeason ?? 'summer';
     this.quests.importSaveState(save);
     this.physics.applySaveState(save);
+    const initRpg = createStarterRpgData();
+    const rpgData = save.rpgState ?? {
+      hp: 100,
+      inventory: initRpg.inventory,
+      playerEquipped: initRpg.playerEquipped,
+      companionEquipped: initRpg.companionEquipped,
+    };
+    this.rpgHp = rpgData.hp;
+    this.rpgInventory = [...rpgData.inventory];
+    this.playerEquipped = { ...rpgData.playerEquipped };
+    this.companionEquipped = { ...rpgData.companionEquipped };
+    this.syncRpgAppearance();
     this.cockpit.setVehicleModel('coupe');
     this.prevFlightState = this.physics.flightState;
 
@@ -1305,16 +1589,96 @@ export class CoruscantEngine {
     this.saveGame(false);
   }
 
+  public replyRoadsideChat(optionId: string): void {
+    if (!this.roadsideChat) return;
+    const opt = this.roadsideChat.options.find((o) => o.id === optionId);
+    if (!opt) return;
+    this.roadsideChat = {
+      ...this.roadsideChat,
+      repliedText: opt.reply,
+    };
+    this.quests.credits += 10;
+    this.quests.showToast('Приятная беседа у дороги · +10 ✦', 2.6);
+  }
+
+  public dismissRoadsideChat(): void {
+    this.roadsideChat = null;
+    this.rpgCombat.setRoadsideNpc(false);
+  }
+
+  public interactPassengerQuest(): void {
+    const pq = this.quests.getPassengerQuestState();
+    if (!pq) return;
+    if (pq.phase === 'to_pickup') {
+      if (this.quests.advancePassengerToRv()) {
+        this.audio.playDoorLatch(false);
+        this.rpgCombat.setPassengerNpc(false);
+        this.saveGame(false);
+      }
+    } else if (pq.phase === 'in_rv') {
+      const pName = pq.passengerName;
+      const dX = pq.dropoffX;
+      const dZ = pq.dropoffZ;
+      if (this.quests.completePassengerTransport()) {
+        this.audio.playDoorLatch(true);
+        this.passengerFarewellTimer = 4.6;
+        this.passengerFarewellX = this.physics.position.x + 2.2;
+        this.passengerFarewellZ = this.physics.position.z + 1.2;
+        this.passengerFarewellName = pName;
+        this.quests.setCompanionNote(
+          `«${pName} поблагодарил нас и пошёл по своим делам! Отличный рейс к ${Math.round(Math.hypot(dX, dZ)) > 0 ? pq.dropoffName : 'цели'}!»`,
+          5.0,
+        );
+        this.saveGame(false);
+      }
+    }
+  }
+
   public exitVehicle(): void {
     if (this.interiorMode !== 'none') return;
-    if (this.isInRvCabin && (this.autopilotActive || Math.abs(this.physics.forwardSpeed) * 3.6 >= 18)) {
+    const speedKmh = Math.abs(this.physics.forwardSpeed) * 3.6;
+    if (this.isInRvCabin && (this.autopilotActive || speedKmh >= 18)) {
       this.quests.showToast('Остановите автодом перед выходом на улицу', 2.8);
       return;
     }
+
+    let rooftopClub: RooftopClubInfo | null = null;
+    if (this.physics.flightState === 'flight') {
+      rooftopClub = this.world.getRooftopClubUnder(
+        this.physics.position.x,
+        this.physics.position.z,
+        this.physics.position.y,
+        4.5,
+      );
+      if (!rooftopClub) {
+        this.quests.showToast('Зависните над крышей клуба с бассейном, чтобы выйти в небе', 2.8);
+        return;
+      }
+      if (speedKmh >= 16) {
+        this.quests.showToast('Притормозите автодом над крышей перед выходом', 2.6);
+        return;
+      }
+    }
+
+    this.roadsideChat = null;
+    this.rpgCombat.setRoadsideNpc(false);
     this.autopilotActive = false;
     this.isInRvCabin = false;
     this.rvPose = 'stand';
-    if (!this.physics.exitVehicle()) return;
+    const exited = rooftopClub
+      ? this.physics.exitVehicle({
+          allowHoverExit: true,
+          floorY: rooftopClub.y,
+          clampRect: {
+            x: rooftopClub.x,
+            z: rooftopClub.z,
+            halfW: rooftopClub.halfW,
+            halfD: rooftopClub.halfD,
+          },
+        })
+      : this.physics.exitVehicle();
+    if (!exited) return;
+
     this.audio.playDoorLatch(true);
     this.walkerGroup.position.copy(this.physics.walkerPos);
     this.walkerGroup.rotation.set(0, this.physics.walkerHeading, 0);
@@ -1325,6 +1689,12 @@ export class CoruscantEngine {
     this.lookPitch = 0;
     this.targetLookYaw = 0;
     this.targetLookPitch = 0;
+    if (rooftopClub) {
+      this.quests.showToast(
+        `Вы на крыше: ${rooftopClub.name} · Автодом парит рядом`,
+        3.4,
+      );
+    }
   }
 
   public enterVehicle(): void {
@@ -2030,9 +2400,266 @@ export class CoruscantEngine {
     }
 
     const insideInterior = this.interiorMode !== 'none';
+    const isWalking = this.physics.isWalking;
+    const inSpace = this.physics.flightState === 'space';
+    const inOrbitMode = this.physics.flightState === 'orbit';
+    const inSpaceView = inSpace || inOrbitMode;
+
+    if (isWalking && !insideInterior && !this.isInRvCabin && !inSpaceView) {
+      this.walkStreakSec += delta;
+    } else {
+      this.walkStreakSec = 0;
+    }
+
+    if (this.gopnikCooldown > 0) this.gopnikCooldown = Math.max(0, this.gopnikCooldown - delta);
+    if (this.healCooldown > 0) this.healCooldown = Math.max(0, this.healCooldown - delta);
+    if (this.policeCooldown > 0) this.policeCooldown = Math.max(0, this.policeCooldown - delta);
+    if (this.companionAttackCooldown > 0) {
+      this.companionAttackCooldown = Math.max(0, this.companionAttackCooldown - delta);
+    }
+
+    const playerStats = computeRpgStats(this.playerEquipped, this.companionEquipped);
+    const maxHp = playerStats.maxHp;
+    if (this.rpgHp > maxHp) this.rpgHp = maxHp;
+
+    if (
+      this.hasCompanion &&
+      !insideInterior &&
+      !inSpaceView &&
+      this.rpgHp > 0 &&
+      this.rpgHp < maxHp * 0.5 &&
+      this.healCooldown <= 0
+    ) {
+      this.healCooldown = 6.5;
+      const healAmt = Math.max(32, playerStats.healPower);
+      this.rpgHp = Math.min(maxHp, this.rpgHp + healAmt);
+      this.audio.playHealChime();
+      this.quests.setCompanionNote(
+        '«Я подлечила тебя, держись! Не позволяй им портить наше путешествие».',
+        5.0,
+      );
+      this.quests.showToast(`Спутница подлечила вас (+${healAmt} HP)`, 3.0);
+    }
+
+    if (this.rpgHp < maxHp && this.rpgCombat.getGopniksActiveCount() === 0 && !this.rpgCombat.policeWanted && !this.rpgCombat.isBountyBossAlive()) {
+      this.rpgHp = Math.min(maxHp, this.rpgHp + delta * 2.2);
+    }
+
+    let activePos = insideInterior
+      ? this.savedOutdoorWalkPos
+      : isWalking
+        ? this.physics.walkerPos
+        : (inSpaceView ? this.physics.spacePos : this.physics.position);
+
+    if (this.policeDispatchTimer > 0) {
+      if (inSpaceView || insideInterior) {
+        if (inSpaceView) this.policeDispatchTimer = 0;
+      } else {
+        this.policeDispatchTimer = Math.max(0, this.policeDispatchTimer - delta);
+        if (this.policeDispatchTimer === 0) {
+          this.rpgCombat.triggerPoliceAlert(activePos.x, activePos.z);
+          this.audio.playPoliceBeep();
+          this.quests.showToast('Прибыл патруль полиции (2–3 офицера)! Открыт огонь!', 3.8);
+        }
+      }
+    }
+
+    if (
+      this.walkStreakSec >= 60 &&
+      this.gopnikCooldown <= 0 &&
+      this.rpgCombat.getGopniksActiveCount() === 0 &&
+      !this.rpgCombat.policeWanted &&
+      isWalking &&
+      !insideInterior &&
+      !this.isInRvCabin &&
+      !inSpaceView &&
+      this.physics.activeFloorY < 1
+    ) {
+      this.rpgCombat.spawnGopnikTrio(activePos.x, activePos.z, this.physics.walkerHeading);
+      this.gopnikCooldown = 110;
+      this.quests.showToast('На улице подошли 3 гопника! Требуется бой или уход', 3.6);
+    }
+
+    const activeQKind = this.quests.getActiveQuestKind();
+    const guidanceForTick = this.quests.getActiveQuestGuidance(
+      this.physics.activePlanetId,
+      activePos,
+      this.world.getLandmarks(),
+    );
+
+    if (activeQKind === 'rally_dispersal' && !inSpaceView) {
+      const park = this.world.findNearestParkCenter(activePos.x, activePos.z);
+      if (park) {
+        this.rpgCombat.ensureRallyAt(park.x, park.z);
+      }
+    } else {
+      this.rpgCombat.resetRallyForNewQuest();
+    }
+
+    if (
+      activeQKind === 'bounty_hunt' &&
+      !inSpaceView &&
+      guidanceForTick &&
+      guidanceForTick.targetPlanet === this.physics.activePlanetId
+    ) {
+      this.rpgCombat.ensureBountyBossAt(
+        guidanceForTick.questId,
+        guidanceForTick.targetX ?? activePos.x + 190,
+        guidanceForTick.targetZ ?? activePos.z - 170,
+      );
+    } else {
+      this.rpgCombat.clearBountyBoss();
+    }
+
+    if (activeQKind === 'lightsaber_hunt' && !inSpaceView) {
+      const saberCfg = getLightsaberForPlanet(this.physics.activePlanetId);
+      this.rpgCombat.setSaberBeacon(true, 96, -124, saberCfg.colorHex);
+    } else {
+      this.rpgCombat.setSaberBeacon(false);
+    }
+
+    // Passenger NPC visual marker at pickup or farewell walk after dropoff
+    const pQuest = this.quests.getPassengerQuestState();
+    if (this.passengerFarewellTimer > 0) {
+      this.passengerFarewellTimer = Math.max(0, this.passengerFarewellTimer - delta);
+      this.passengerFarewellX += delta * 1.45;
+      this.passengerFarewellZ += delta * 0.85;
+      if (this.passengerFarewellTimer > 0 && !inSpaceView && !insideInterior) {
+        this.rpgCombat.setPassengerNpc(
+          true,
+          this.passengerFarewellX,
+          0,
+          this.passengerFarewellZ,
+          Math.atan2(1.45, 0.85),
+          1.65,
+          elapsed,
+        );
+      } else {
+        this.rpgCombat.setPassengerNpc(false);
+      }
+    } else if (
+      pQuest &&
+      pQuest.phase === 'to_pickup' &&
+      pQuest.pickupPlanet === this.physics.activePlanetId &&
+      !inSpaceView &&
+      !insideInterior
+    ) {
+      const dxP = this.physics.position.x - pQuest.pickupX;
+      const dzP = this.physics.position.z - pQuest.pickupZ;
+      this.rpgCombat.setPassengerNpc(
+        true,
+        pQuest.pickupX,
+        0,
+        pQuest.pickupZ,
+        Math.atan2(dxP, dzP),
+        0,
+        elapsed,
+      );
+    } else {
+      this.rpgCombat.setPassengerNpc(false);
+    }
+
     const walkObstacles = insideInterior
       ? this.interior.getObstacles(this.interiorMode)
       : this.world.getNearbyBuildings();
+
+    this.rpgCombat.update(
+      delta,
+      elapsed,
+      isWalking,
+      isWalking ? Math.abs(this.physics.forwardSpeed) : 0,
+      insideInterior || this.isInRvCabin,
+      inSpaceView,
+      activePos.x,
+      activePos.y,
+      activePos.z,
+      this.physics.position.x,
+      this.physics.position.z,
+      playerStats.armorPct,
+      walkObstacles,
+      {
+        onPlayerDamaged: (rawDmg: number, attackerLabel: string) => {
+          const reduced = Math.max(1, Math.round(rawDmg * (1 - playerStats.armorPct / 140)));
+          this.rpgHp = Math.max(0, this.rpgHp - reduced);
+          this.audio.playPunchHit();
+
+          if (
+            this.hasCompanion &&
+            this.rpgHp < maxHp * 0.5 &&
+            this.healCooldown <= 0 &&
+            this.rpgHp > 0
+          ) {
+            this.healCooldown = 6.5;
+            const healAmt = Math.max(32, playerStats.healPower);
+            this.rpgHp = Math.min(maxHp, this.rpgHp + healAmt);
+            this.audio.playHealChime();
+            this.quests.setCompanionNote(
+              '«Я подлечила тебя, держись! Не позволяй им портить наше путешествие».',
+              5.2,
+            );
+            this.quests.showToast('Спутница применила мед-набор и подлечила вас!', 3.4);
+          }
+
+          if (this.rpgHp <= 0) {
+            this.rpgHp = Math.round(maxHp * 0.7);
+            this.rpgCombat.clearAllEncounters(true);
+            this.policeDispatchTimer = 0;
+            this.audio.playHealChime();
+            this.quests.setCompanionNote(
+              '«Ой! Я вовремя успела увести тебя в укрытие. Отдохни немного».',
+              5.5,
+            );
+            this.quests.showToast('Спутница оказала первую помощь и спасла вас!', 4.0);
+          } else {
+            this.quests.showToast(`Урон от ${attackerLabel}: -${reduced} HP`, 2.2);
+          }
+        },
+        onEnemyDefeated: this.handleEnemyDefeated,
+        onPoliceCleared: (reason: 'defeated' | 'escaped' | 'hidden') => {
+          this.policeCooldown = 18;
+          this.policeDispatchTimer = 0;
+          const msg =
+            reason === 'defeated'
+              ? 'Полиция побеждена · Подберите ценный лут на земле!'
+              : reason === 'escaped'
+                ? 'Вы успешно оторвались от погони полиции!'
+                : 'Полиция потеряла вас из виду в укрытии.';
+          this.quests.showToast(msg, 3.8);
+        },
+        onSaberPickupClaimed: () => {
+          const saberItem = createRpgItemFromTemplate(getLightsaberForPlanet(this.physics.activePlanetId).templateId);
+          this.rpgInventory.push(saberItem);
+          this.audio.playLootDrop(true);
+          this.quests.onLightsaberClaimed(this.physics.activePlanetId);
+          this.quests.setCompanionNote(
+            `«Световой меч (${saberItem.name}) у нас! Настоящая легенда!»`,
+            5.2,
+          );
+          this.quests.showToast(`Найден легендарный световой меч: ${saberItem.name}!`, 4.2);
+          this.saveGame(false);
+        },
+        onGopnikTaunt: (line: string) => {
+          this.quests.showToast(line, 3.0);
+        },
+        onRallyShout: (line: string) => {
+          this.quests.showToast(line, 2.8);
+        },
+        onLootCollected: (item: RpgItem | null, coins: number) => {
+          this.quests.credits += coins;
+          if (item) {
+            this.rpgInventory.push(item);
+          }
+          this.audio.playLootDrop(Boolean(item && (item.rarity === 'legendary' || item.rarity === 'epic')));
+          this.quests.showToast(
+            item
+              ? `Подобрано: ${item.name}${item.isUnique ? ' [Уникальный]' : ''} · +${coins} ✦`
+              : `Подобран мешочек: +${coins} ✦`,
+            3.0,
+          );
+          this.saveGame(false);
+        },
+      },
+    );
 
     // Cancel autopilot ONLY on manual driver controls, walking outside, or entering interior
     // NOTE: Flying, entering orbit/space, and walking around the rear RV mini-home NEVER cancel autopilot!
@@ -2097,11 +2724,6 @@ export class CoruscantEngine {
             engineRunning: this.engineRunning,
           },
     );
-
-    const isWalking = this.physics.isWalking;
-    const inSpace = this.physics.flightState === 'space';
-    const inOrbitMode = this.physics.flightState === 'orbit';
-    const inSpaceView = inSpace || inOrbitMode;
 
     if ((inSpaceView || this.physics.spaceFactor > 0.25) && (this.leftWindowOpen || this.rightWindowOpen)) {
       this.leftWindowOpen = false;
@@ -2283,6 +2905,62 @@ export class CoruscantEngine {
           ? 'sit'
           : 'walk';
 
+    let companionDefending = false;
+    if (
+      this.hasCompanion &&
+      isWalking &&
+      !insideInterior &&
+      !this.isInRvCabin &&
+      !inSpaceView
+    ) {
+      const threat = this.rpgCombat.getNearestHostileThreat(
+        this.physics.companionPos.x,
+        this.physics.companionPos.z,
+      );
+      if (threat && threat.dist < 26) {
+        companionDefending = true;
+        const dxT = threat.x - this.physics.companionPos.x;
+        const dzT = threat.z - this.physics.companionPos.z;
+        const dT = Math.max(0.001, Math.hypot(dxT, dzT));
+        const desiredH = Math.atan2(-dxT, -dzT);
+        let hDiff = ((desiredH - this.physics.companionHeading + Math.PI) % (Math.PI * 2)) - Math.PI;
+        if (hDiff < -Math.PI) hDiff += Math.PI * 2;
+        this.physics.companionHeading += hDiff * Math.min(1, delta * 10);
+
+        if (dT > 1.75) {
+          const rush = Math.min(dT - 1.65, 5.8 * delta);
+          this.physics.companionPos.x += (dxT / dT) * rush;
+          this.physics.companionPos.z += (dzT / dT) * rush;
+          this.physics.companionMoveSpeed = 5.6;
+        } else {
+          this.physics.companionMoveSpeed = 0;
+        }
+        this.physics.companionPos.y = this.physics.activeFloorY;
+        if (this.physics.walkClampRect) {
+          const r = this.physics.walkClampRect;
+          this.physics.companionPos.x = THREE.MathUtils.clamp(this.physics.companionPos.x, r.x - r.halfW, r.x + r.halfW);
+          this.physics.companionPos.z = THREE.MathUtils.clamp(this.physics.companionPos.z, r.z - r.halfD, r.z + r.halfD);
+        }
+
+        if (dT <= 2.45 && this.companionAttackCooldown <= 0) {
+          this.companionAttackCooldown = 0.72;
+          const compStats = computeRpgStats(this.companionEquipped);
+          const compDmg = Math.max(20, compStats.attackDmg);
+          this.audio.playSaberSwing(true);
+          this.rpgCombat.damageThreatAt(threat.x, threat.z, 2.6, compDmg, {
+            onPlayerDamaged: () => {},
+            onEnemyDefeated: this.handleEnemyDefeated,
+            onPoliceCleared: () => {},
+            onSaberPickupClaimed: () => {},
+            onGopnikTaunt: () => {},
+          });
+        }
+      }
+    }
+
+    this.walkerCompanion.setLightsaberColor(
+      this.companionEquipped.weapon?.colorHex ?? '#38bdf8',
+    );
     this.walkerCompanion.group.position.copy(this.physics.companionPos);
     this.walkerCompanion.group.rotation.y = this.physics.companionHeading;
     this.walkerCompanion.update(
@@ -2291,6 +2969,7 @@ export class CoruscantEngine {
       this.physics.companionMoveSpeed,
       isWalking && this.hasCompanion,
       companionPose,
+      companionDefending,
     );
 
     const speedKmh = insideInterior ? 0 : Math.abs(this.physics.forwardSpeed) * 3.6;
@@ -2308,7 +2987,7 @@ export class CoruscantEngine {
       this.camera.updateProjectionMatrix();
     }
 
-    const activePos = insideInterior
+    activePos = insideInterior
       ? this.savedOutdoorWalkPos
       : isWalking
         ? this.physics.walkerPos
@@ -2408,6 +3087,14 @@ export class CoruscantEngine {
     if (knockedPeds > 0) {
       this.quests.onPedestrianHit(knockedPeds);
       this.physics.suspensionHeave = -0.09;
+      this.rpgCombat.spawnLootPouch(
+        this.physics.position.x + 2.4,
+        this.physics.position.z + 1.8,
+        rollLootDrop('pedestrian'),
+        Math.round(10 + Math.random() * 14),
+        0,
+      );
+      this.schedulePoliceDispatch();
     }
 
     if (insideInterior) {
@@ -2454,11 +3141,84 @@ export class CoruscantEngine {
       !isWalking &&
       (this.physics.flightState === 'flight' || this.physics.flightState === 'ascending');
     const canLaunchToSpace = !insideInterior && !isWalking && inOrbitMode;
+    const speedKmhHover = insideInterior ? 0 : Math.abs(this.physics.forwardSpeed) * 3.6;
+    const hoverClubUnder =
+      !insideInterior && !isWalking && !inSpaceView && this.physics.flightState === 'flight'
+        ? this.world.getRooftopClubUnder(
+            this.physics.position.x,
+            this.physics.position.z,
+            this.physics.position.y,
+            4.5,
+          )
+        : null;
+    const canHoverExitOnRooftop = Boolean(hoverClubUnder && speedKmhHover < 16);
     const canExitVehicle =
       !insideInterior &&
       !isWalking &&
       !inSpaceView &&
-      this.physics.flightState === 'road';
+      (this.physics.flightState === 'road' || canHoverExitOnRooftop);
+
+    // Roadside car window conversation (ONLY on road when stationary, in front cab, and windows NOT tinted)
+    const canRoadsideTalk =
+      !insideInterior &&
+      !isWalking &&
+      !this.isInRvCabin &&
+      !inSpaceView &&
+      this.physics.flightState === 'road' &&
+      speedKmhHover < 3.0 &&
+      !this.cabinTintDark &&
+      !this.rvWindowTinted &&
+      !this.rpgCombat.policeWanted &&
+      this.world.isInCityAt(this.physics.position.x, this.physics.position.z);
+
+    if (!canRoadsideTalk) {
+      this.roadsideChat = null;
+      this.rpgCombat.setRoadsideNpc(false);
+    } else {
+      const cosC = Math.cos(this.physics.heading);
+      const sinC = Math.sin(this.physics.heading);
+      const winX = this.physics.position.x - cosC * 1.65;
+      const winZ = this.physics.position.z + sinC * 1.65;
+      if (!this.roadsideChat) {
+        this.roadsideCooldown -= delta;
+        if (this.roadsideCooldown <= 0) {
+          this.roadsideCooldown = 28 + Math.random() * 14;
+          const prompts: Omit<RoadsideChatState, 'repliedText'>[] = [
+            {
+              npcName: 'Прохожий Артём',
+              prompt: '«Привет! Ого, какой крутой автодом! Подскажите, вы далеко направляетесь?»',
+              options: [
+                { id: 'space', label: 'На орбиту и другие планеты!', reply: '«Круто! Передавайте привет звёздам и удачной дороги!»' },
+                { id: 'coffee', label: 'Просто катаемся по городу', reply: '«Правильный настрой! Загляните на крышу клуба с бассейном!»' },
+              ],
+            },
+            {
+              npcName: 'Горожанка Лера',
+              prompt: '«Извините, а внутри сзади правда полноценный мини-дом с душем и кроватью?»',
+              options: [
+                { id: 'yes', label: 'Да, и даже панорамный люк!', reply: '«Фантастика! Настоящая квартира с крыльями!»' },
+                { id: 'wave', label: 'Хотите пожелать хорошего пути?', reply: '«Счастливого пути вам обоим! Берегите друг друга!»' },
+              ],
+            },
+            {
+              npcName: 'Механик Кирилл',
+              prompt: `«На ${activePlanetCfg.name} сегодня атмосферно! Проверить давление репульсоров?»`,
+              options: [
+                { id: 'ok', label: 'Всё в норме, спасибо!', reply: '«Тогда счастливого полёта, кэп!»' },
+                { id: 'club', label: 'Где тут можно отдохнуть?', reply: '«Зависни над плоской крышей высотки — там клубы с бассейнами!»' },
+              ],
+            },
+          ];
+          const picked = prompts[Math.floor(Math.random() * prompts.length)];
+          this.roadsideChat = { ...picked, repliedText: null };
+        }
+      }
+      if (this.roadsideChat) {
+        this.rpgCombat.setRoadsideNpc(true, winX, 0, winZ, this.physics.heading + Math.PI / 2, 0, elapsed);
+      } else {
+        this.rpgCombat.setRoadsideNpc(false);
+      }
+    }
 
     const zoneType = this.world.getZoneTypeAt(activePos.x, activePos.z);
     this.quests.update(
@@ -2556,6 +3316,7 @@ export class CoruscantEngine {
           rvFridgeOpen: this.rvFridgeOpen,
           rvSunroofOpen: this.rvSunroofOpen,
           isInRvCabin: this.isInRvCabin,
+          rvPassengerActive: Boolean(pQuest && pQuest.phase === 'in_rv'),
         },
       );
     }
@@ -2726,6 +3487,56 @@ export class CoruscantEngine {
         planetName: this.lastSavedPlanetName,
       };
 
+      const walkClub =
+        !insideInterior && !inSpaceView && isWalking && this.physics.activeFloorY > 5
+          ? this.world.getRooftopClubUnder(
+              this.physics.walkerPos.x,
+              this.physics.walkerPos.z,
+              this.physics.walkerPos.y,
+              6,
+            )
+          : null;
+      const nearbyRooftopClubName = walkClub?.name ?? hoverClubUnder?.name ?? null;
+      const isOnRooftopClub = Boolean(walkClub);
+
+      let passengerQuestSnap: PassengerQuestState | null = null;
+      if (pQuest && !insideInterior && !inSpaceView) {
+        const refP = isWalking ? this.physics.walkerPos : this.physics.position;
+        if (pQuest.phase === 'to_pickup') {
+          const distM =
+            pQuest.pickupPlanet === this.physics.activePlanetId
+              ? Math.round(Math.hypot(refP.x - pQuest.pickupX, refP.z - pQuest.pickupZ))
+              : 9999;
+          passengerQuestSnap = {
+            questId: pQuest.questId,
+            passengerName: pQuest.passengerName,
+            phase: 'to_pickup',
+            dropoffName: pQuest.dropoffName,
+            distanceM: distM,
+            canInteract:
+              pQuest.pickupPlanet === this.physics.activePlanetId &&
+              distM <= 16 &&
+              speedKmh < 15,
+          };
+        } else {
+          const distM =
+            pQuest.dropoffPlanet === this.physics.activePlanetId
+              ? Math.round(Math.hypot(refP.x - pQuest.dropoffX, refP.z - pQuest.dropoffZ))
+              : 9999;
+          passengerQuestSnap = {
+            questId: pQuest.questId,
+            passengerName: pQuest.passengerName,
+            phase: 'in_rv',
+            dropoffName: pQuest.dropoffName,
+            distanceM: distM,
+            canInteract:
+              pQuest.dropoffPlanet === this.physics.activePlanetId &&
+              distM <= 20 &&
+              speedKmh < 15,
+          };
+        }
+      }
+
       this.onSnapshot({
         speedKmh: Math.round(speedKmh),
         altitudeM: inSpaceView ? 12000 : Math.max(0, Math.round(this.physics.position.y)),
@@ -2767,11 +3578,13 @@ export class CoruscantEngine {
               : 'Бесконечный космос'
             : insideInterior
               ? `${activePlanetCfg.name} · ${this.interiorLabel ?? 'Интерьер'}`
-              : this.isInRvCabin
-                ? `${activePlanetCfg.name} · Мини-дом на колёсах`
-                : isWalking
-                  ? `${activePlanetCfg.name} · Пешая прогулка`
-                  : this.world.getZoneLabel(this.physics.position),
+              : isOnRooftopClub && walkClub
+                ? `${activePlanetCfg.name} · ${walkClub.name}`
+                : this.isInRvCabin
+                  ? `${activePlanetCfg.name} · Мини-дом на колёсах`
+                  : isWalking
+                    ? `${activePlanetCfg.name} · Пешая прогулка`
+                    : this.world.getZoneLabel(this.physics.position),
         headingDeg: Math.round(deg),
         isWalking,
         canExitVehicle,
@@ -2786,6 +3599,9 @@ export class CoruscantEngine {
         nearbyObservatoryName,
         nearbySerbosName,
         nearbySpecialSpot,
+        nearbyRooftopClubName,
+        isOnRooftopClub,
+        canHoverExitOnRooftop,
         insideHangarName: hangarHit ? hangarHit.name : null,
         interiorMode: this.interiorMode,
         interiorPose: this.interiorPose,
@@ -2832,8 +3648,30 @@ export class CoruscantEngine {
         leftWindowOpen: this.leftWindowOpen,
         rightWindowOpen: this.rightWindowOpen,
         canOpenWindow,
+        roadsideChat: this.roadsideChat,
+        passengerQuest: passengerQuestSnap,
         toastMessage: this.quests.getToast(),
         saveMeta,
+        rpg: {
+          hp: Math.round(this.rpgHp),
+          maxHp: playerStats.maxHp,
+          walkStreakSec: Math.round(this.walkStreakSec),
+          inventory: this.rpgInventory,
+          playerEquipped: this.playerEquipped,
+          companionEquipped: this.companionEquipped,
+          playerStats,
+          companionStats: computeRpgStats(this.companionEquipped),
+          gopniksActive: this.rpgCombat.getGopniksActiveCount(),
+          rallyActiveCount: this.rpgCombat.getRallyActiveCount(),
+          rallyTotalCount: this.rpgCombat.rallyTotalCount,
+          policeWanted: this.rpgCombat.policeWanted,
+          policeOfficersAlive: this.rpgCombat.getPoliceAliveCount(),
+          policeEscapeProgress: this.rpgCombat.getPoliceEscapeProgress(),
+          policeDispatchSec: Math.ceil(this.policeDispatchTimer),
+          bountyBossActive: this.rpgCombat.isBountyBossAlive(),
+          activeThreatLabel: this.rpgCombat.getActiveThreatLabel(),
+          nearbySaberName: this.rpgCombat.getNearbySaberName(),
+        },
       });
     }
 
