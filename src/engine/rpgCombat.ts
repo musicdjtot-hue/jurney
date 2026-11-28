@@ -1386,11 +1386,16 @@ export class RpgCombatSystem {
       }
 
       const canAutoCollect = !p.item || !lootAutoCollect || lootAutoCollect[p.item.rarity];
-      if (canAutoCollect && isWalking && Math.abs(playerY - p.floorY) < 3.5) {
-        const dx = playerX - p.x;
-        const dz = playerZ - p.z;
+      const checkActive = isWalking || Math.hypot(carX - p.x, carZ - p.z) < 24;
+      if (canAutoCollect && checkActive && Math.abs(playerY - p.floorY) < 6.0) {
+        const targetX = isWalking ? playerX : carX;
+        const targetZ = isWalking ? playerZ : carZ;
+        const dx = targetX - p.x;
+        const dz = targetZ - p.z;
         const dist = Math.hypot(dx, dz);
-        if (dist < 2.15) {
+        const collectRadius = isWalking ? 2.15 : 12.0;
+        const magnetRadius = isWalking ? 5.5 : 24.0;
+        if (dist < collectRadius) {
           p.active = false;
           p.group.visible = false;
           const colItem = p.item;
@@ -1398,8 +1403,8 @@ export class RpgCombatSystem {
           p.item = null;
           callbacks.onLootCollected?.(colItem, colCoins);
           continue;
-        } else if (dist < 4.4) {
-          const pull = 6.2 * delta;
+        } else if (dist < magnetRadius) {
+          const pull = 14.0 * delta;
           p.x += (dx / dist) * pull;
           p.z += (dz / dist) * pull;
         }

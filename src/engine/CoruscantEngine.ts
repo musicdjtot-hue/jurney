@@ -2746,16 +2746,23 @@ export class CoruscantEngine {
       this.rpgCombat.resetRallyForNewQuest();
     }
 
+    const walkObstaclesForSpawn = insideInterior
+      ? this.interior.getObstacles(this.interiorMode)
+      : this.world.getNearbyBuildings();
+
     if (
       activeQKind === 'bounty_hunt' &&
       !inSpaceView &&
       guidanceForTick &&
       guidanceForTick.targetPlanet === this.physics.activePlanetId
     ) {
+      const rawBx = guidanceForTick.targetX ?? activePos.x + 190;
+      const rawBz = guidanceForTick.targetZ ?? activePos.z - 170;
+      const safeB = getSafeSpawnCoords(rawBx, rawBz, walkObstaclesForSpawn);
       this.rpgCombat.ensureBountyBossAt(
         guidanceForTick.questId,
-        guidanceForTick.targetX ?? activePos.x + 190,
-        guidanceForTick.targetZ ?? activePos.z - 170,
+        safeB.x,
+        safeB.z,
       );
     } else {
       this.rpgCombat.clearBountyBoss();
@@ -2782,31 +2789,33 @@ export class CoruscantEngine {
         guidanceForTick.targetPlanet === this.physics.activePlanetId
       ) {
         if (!this.planetMonsterCoord) {
-          const mx = guidanceForTick.targetX ?? Math.round(activePos.x / 320) * 320 + 225;
-          const mz = guidanceForTick.targetZ ?? Math.round(activePos.z / 320) * 320 - 215;
+          const rawMx = guidanceForTick.targetX ?? Math.round(activePos.x / 320) * 320 + 225;
+          const rawMz = guidanceForTick.targetZ ?? Math.round(activePos.z / 320) * 320 - 215;
+          const safeM = getSafeSpawnCoords(rawMx, rawMz, walkObstaclesForSpawn);
           this.planetMonsterCoord = {
             planetId: this.physics.activePlanetId,
             key: guidanceForTick.questId,
-            x: mx,
-            z: mz,
+            x: safeM.x,
+            z: safeM.z,
           };
-          this.rpgCombat.ensurePlanetMonsterAt(guidanceForTick.questId, mx, mz);
+          this.rpgCombat.ensurePlanetMonsterAt(guidanceForTick.questId, safeM.x, safeM.z);
         }
       } else if (!this.planetMonsterCoord) {
         this.planetMonsterCooldown -= delta;
         if (this.planetMonsterCooldown <= 0) {
           this.planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
-          const mx = Math.round(activePos.x / 320) * 320 + 225;
-          const mz = Math.round(activePos.z / 320) * 320 - 215;
+          const rawMx = Math.round(activePos.x / 320) * 320 + 225;
+          const rawMz = Math.round(activePos.z / 320) * 320 - 215;
+          const safeM = getSafeSpawnCoords(rawMx, rawMz, walkObstaclesForSpawn);
           const key = `monster_${this.physics.activePlanetId}_${Math.round(elapsed)}`;
           this.planetMonsterCoord = {
             planetId: this.physics.activePlanetId,
             key,
-            x: mx,
-            z: mz,
+            x: safeM.x,
+            z: safeM.z,
           };
-          this.rpgCombat.ensurePlanetMonsterAt(key, mx, mz);
-          this.quests.activateMonsterHuntQuest(this.physics.activePlanetId, mx, mz);
+          this.rpgCombat.ensurePlanetMonsterAt(key, safeM.x, safeM.z);
+          this.quests.activateMonsterHuntQuest(this.physics.activePlanetId, safeM.x, safeM.z);
           this.audio.playPoliceBeep();
           this.quests.showToast('⚠️ ТРЕВОГА НА ПЛАНЕТЕ: Появился гигантский монстр!', 5.0);
         }
@@ -4503,3 +4512,26 @@ export class CoruscantEngine {
     }
   }
 }
+
+function getSafeSpawnCoords(tx: number, tz: number, obstacles: BuildingFootprint[]): { x: number; z: number } {
+  let cx = tx;
+  let cz = tz;
+  for (let iter = 0; iter < 6; iter++) {
+    let collided = false;
+    for (let i = 0; i < obstacles.length; i++) {
+      const b = obstacles[i];
+      if (Math.abs(cx - b.x) < b.halfW + 6.0 && Math.abs(cz - b.z) < b.halfD + 6.0) {
+        collided = true;
+        const dx = cx - b.x;
+        const dz = cz - b.z;
+        const len = Math.hypot(dx, dz) || 1;
+        cx = b.x + (dx / len) * (b.halfW + 14.0);
+        cz = b.z + (dz / len) * (b.halfD + 14.0);
+        break;
+      }
+    }
+    if (!collided) break;
+  }
+  return { x: cx, z: cz };
+}
+
