@@ -289,10 +289,17 @@ export class QuestManager {
   private companionNote: string | null = null;
   private companionNoteTimer = 0;
   private talkSeq = 0;
+  private lastCompletedSpecialKind: QuestKind | null = null;
 
   constructor() {
     this.refillPool('coruscant', new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0), []);
     this.activeQuest = this.questPool.shift() ?? null;
+  }
+
+  public consumeLastCompletedSpecialQuest(): QuestKind | null {
+    const k = this.lastCompletedSpecialKind;
+    this.lastCompletedSpecialKind = null;
+    return k;
   }
 
   public showToast(msg: string, duration = 4.2): void {
@@ -935,6 +942,127 @@ export class QuestManager {
           return;
         }
       }
+    } else if (q.kind === 'cafe_special' && q.targetX !== undefined && q.targetZ !== undefined) {
+      const dist = Math.hypot(pos.x - q.targetX, pos.z - q.targetZ);
+      if (dist <= 30 && (flightState === 'road' || isWalking)) {
+        this.completeActiveQuest();
+        return;
+      }
+    } else if (q.kind === 'serbos_mission' && q.targetX !== undefined && q.targetZ !== undefined) {
+      const dist = Math.hypot(pos.x - q.targetX, pos.z - q.targetZ);
+      if (dist <= 30 && (flightState === 'road' || isWalking)) {
+        this.completeActiveQuest();
+        return;
+      }
+    }
+  }
+
+  public startCafeSpecialQuest(planetId: PlanetId, pos: THREE.Vector3): void {
+    const tx = Math.round(pos.x / 320) * 320 + 285;
+    const tz = Math.round(pos.z / 320) * 320 - 295;
+    if (this.activeQuest) {
+      this.questPool.unshift(this.activeQuest);
+    }
+    this.activeQuest = {
+      id: `q_${this.questSeq++}`,
+      kind: 'cafe_special',
+      title: 'Особый заказ кофейни',
+      subtitle: 'Доставьте горячий VIP-напиток к панорамной площадке за редкий оранжевый приз!',
+      reward: 260,
+      targetPlanet: planetId,
+      targetX: tx,
+      targetZ: tz,
+      targetName: 'VIP-доставка из кофейни',
+      goalValue: 1,
+      progressValue: 0,
+    };
+    this.showToast('Взято особое задание в кафе!', 3.2);
+  }
+
+  public startSerbosMission(planetId: PlanetId, pos: THREE.Vector3): void {
+    const tx = Math.round(pos.x / 320) * 320 - 320;
+    const tz = Math.round(pos.z / 320) * 320 - 310;
+    if (this.activeQuest) {
+      this.questPool.unshift(this.activeQuest);
+    }
+    this.activeQuest = {
+      id: `q_${this.questSeq++}`,
+      kind: 'serbos_mission',
+      title: 'Тайный маяк Сербоса',
+      subtitle: 'Доставьте энергоядро Адамчика ИИ к удалённому маяку и получите редкий оранжевый лут!',
+      reward: 320,
+      targetPlanet: planetId,
+      targetX: tx,
+      targetZ: tz,
+      targetName: 'Маяк Адамчика ИИ',
+      goalValue: 1,
+      progressValue: 0,
+    };
+    this.showToast('Сербос выдал особое поручение!', 3.2);
+    this.setCompanionNote(
+      '«Сербос попросил нас отвезти энергоядро на маяк — обещает редкую оранжевую награду!»',
+      5.0,
+    );
+  }
+
+  public activateMonsterHuntQuest(planetId: PlanetId, mx: number, mz: number): void {
+    if (this.activeQuest?.kind === 'monster_hunt') {
+      this.activeQuest.targetPlanet = planetId;
+      this.activeQuest.targetX = mx;
+      this.activeQuest.targetZ = mz;
+      return;
+    }
+    const existingIdx = this.questPool.findIndex((q) => q.kind === 'monster_hunt');
+    let mQuest: InternalQuest;
+    if (existingIdx >= 0) {
+      mQuest = this.questPool.splice(existingIdx, 1)[0];
+    } else {
+      mQuest = {
+        id: `q_${this.questSeq++}`,
+        kind: 'monster_hunt',
+        title: 'Охота на монстра планеты',
+        subtitle: 'Победите гигантского монстра планеты ради редкой оранжевой вещи с эффектами!',
+        reward: 550,
+        goalValue: 8400,
+        progressValue: 0,
+      };
+    }
+    mQuest.targetPlanet = planetId;
+    mQuest.targetX = mx;
+    mQuest.targetZ = mz;
+    mQuest.targetName = 'Гигантский монстр планеты';
+    if (this.activeQuest) {
+      this.questPool.unshift(this.activeQuest);
+    }
+    this.activeQuest = mQuest;
+  }
+
+  public updateMonsterProgress(hp: number, maxHp: number): void {
+    if (this.activeQuest?.kind === 'monster_hunt') {
+      this.activeQuest.goalValue = maxHp;
+      this.activeQuest.progressValue = Math.max(0, maxHp - hp);
+    }
+  }
+
+  public onPlanetMonsterDefeated(): boolean {
+    if (this.activeQuest?.kind === 'monster_hunt') {
+      this.completeActiveQuest();
+      return true;
+    }
+    this.questPool = this.questPool.filter((q) => q.kind !== 'monster_hunt');
+    return false;
+  }
+
+  public onRooftopClubVisited(clubName: string): void {
+    if (this.activeQuest?.kind === 'rooftop_club') {
+      this.completeActiveQuest();
+      return;
+    }
+    const key = `club_${clubName}`;
+    if (!this.visitedSpecialSpots.has(key)) {
+      this.visitedSpecialSpots.add(key);
+      this.credits += 75;
+      this.showToast(`Вы на крыше клуба «${clubName}» (+75 ✦)`, 3.4);
     }
   }
 
@@ -1155,6 +1283,32 @@ export class QuestManager {
       };
     }
 
+    if (q.kind === 'monster_hunt') {
+      const tp = q.targetPlanet ?? planetId;
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetX: q.targetX ?? pos.x + 240,
+        targetZ: q.targetZ ?? pos.z - 220,
+        targetName: q.targetName ?? 'Гигантский монстр планеты',
+        requiresWalk: true,
+      };
+    }
+
+    if (q.kind === 'cafe_special' || q.kind === 'serbos_mission' || q.kind === 'rooftop_club') {
+      const tp = q.targetPlanet ?? planetId;
+      return {
+        questId: q.id,
+        kind: q.kind,
+        targetPlanet: tp,
+        targetX: q.targetX ?? pos.x + 260,
+        targetZ: q.targetZ ?? pos.z - 240,
+        targetName: q.targetName ?? q.title,
+        requiresWalk: q.kind === 'rooftop_club',
+      };
+    }
+
     if (q.kind === 'passenger_transport') {
       const inRv = q.passengerPhase === 'in_rv';
       const tp = inRv ? (q.dropoffPlanet ?? planetId) : (q.pickupPlanet ?? planetId);
@@ -1184,6 +1338,13 @@ export class QuestManager {
     const q = this.activeQuest;
     if (!q) return;
     this.credits += q.reward;
+    if (
+      q.kind === 'cafe_special' ||
+      q.kind === 'serbos_mission' ||
+      q.kind === 'rooftop_club'
+    ) {
+      this.lastCompletedSpecialKind = q.kind;
+    }
     this.showToast(`${q.title} завершено · +${q.reward} ✦`, 4.4);
     this.activeQuest = null;
   }
@@ -1462,7 +1623,7 @@ export class QuestManager {
         id: `q_${this.questSeq++}`,
         kind: 'bounty_hunt',
         title: `Заказ на босса · ${bName}`,
-        subtitle: 'Победите сильного босса с охраной и заберите уникальную вещь из фиолетового лута',
+        subtitle: 'Победите сильного босса с охраной и заберите уникальную вещь из лута',
         reward: 340,
         targetPlanet: planetId,
         targetX: bx,
@@ -1472,6 +1633,38 @@ export class QuestManager {
         progressValue: 0,
       };
     });
+
+    ensureKind('monster_hunt', () => {
+      const mx = Math.round(pos.x / 320) * 320 + 225;
+      const mz = Math.round(pos.z / 320) * 320 - 215;
+      return {
+        id: `q_${this.questSeq++}`,
+        kind: 'monster_hunt',
+        title: 'Охота на монстра планеты',
+        subtitle: 'Сразитесь с гигантским титаном (~1 мин бой) ради редкой оранжевой вещи с эффектами',
+        reward: 550,
+        targetPlanet: planetId,
+        targetX: mx,
+        targetZ: mz,
+        targetName: 'Гигантский монстр планеты',
+        goalValue: 8400,
+        progressValue: 0,
+      };
+    });
+
+    ensureKind('rooftop_club', () => ({
+      id: `q_${this.questSeq++}`,
+      kind: 'rooftop_club',
+      title: 'Вечеринка на крыше клуба',
+      subtitle: 'Подлетите к высотке и высадитесь на крышу с бассейном — награда редкая вещь!',
+      reward: 280,
+      targetPlanet: planetId,
+      targetX: 0,
+      targetZ: -320,
+      targetName: 'Крыша клуба с бассейном',
+      goalValue: 1,
+      progressValue: 0,
+    }));
 
     ensureKind('passenger_transport', () => {
       const pNames = ['Алина', 'Максим', 'Дамир', 'София'];

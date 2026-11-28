@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { RpgEquipMap } from '../types/simulation';
 
 const FACE_PHOTO_URL =
   (typeof window !== 'undefined' &&
@@ -428,10 +429,44 @@ function buildTailoredTorso(
   disposables.push(waistGeo, chestGeo, jacketBackGeo, collarGeo, lapelGeo, zipGeo, neckGeo, chainGeo, pendantGeo);
 }
 
+function buildDanglingEarrings(disposables: { dispose: () => void }[]): {
+  group: THREE.Group;
+  ringMat: THREE.MeshStandardMaterial;
+  gemMat: THREE.MeshBasicMaterial;
+} {
+  const group = new THREE.Group();
+  const ringMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.22, metalness: 0.85 });
+  const gemMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+  const hoopGeo = new THREE.TorusGeometry(0.012, 0.0026, 6, 14);
+  const dropGeo = new THREE.OctahedronGeometry(0.011, 0);
+  dropGeo.scale(0.78, 1.35, 0.78);
+
+  for (const side of [-1, 1]) {
+    const hoop = new THREE.Mesh(hoopGeo, ringMat);
+    hoop.position.set(side * 0.098, -0.026, 0.003);
+    hoop.rotation.y = Math.PI / 2;
+    const drop = new THREE.Mesh(dropGeo, gemMat);
+    drop.position.set(side * 0.1, -0.044, 0.003);
+    group.add(hoop, drop);
+  }
+  group.visible = false;
+  disposables.push(ringMat, gemMat, hoopGeo, dropGeo);
+  return { group, ringMat, gemMat };
+}
+
 export class BlondePassengerRig {
   public readonly group = new THREE.Group();
   private torsoPivot = new THREE.Group();
   private headPivot: THREE.Group;
+  private headGearGroup = new THREE.Group();
+  private headGearMat!: THREE.MeshStandardMaterial;
+  private headGemMat!: THREE.MeshBasicMaterial;
+  private earringsGroup!: THREE.Group;
+  private earringRingMat!: THREE.MeshStandardMaterial;
+  private earringGemMat!: THREE.MeshBasicMaterial;
+  private mythicOrbsGroup = new THREE.Group();
+  private mythicOrbMat!: THREE.MeshBasicMaterial;
+  private hasMythicEffect = false;
   private palette: CompanionPalette;
   private disposables: { dispose: () => void }[] = [];
 
@@ -538,7 +573,46 @@ export class BlondePassengerRig {
     this.headPivot = buildHeadAndHair(p);
     this.headPivot.position.set(0, 0.482, -0.005);
     this.headPivot.rotation.x = -0.14;
+
+    this.headGearMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.25, metalness: 0.8 });
+    this.headGemMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const pTiaraGeo = new THREE.TorusGeometry(0.098, 0.011, 8, 20, Math.PI * 1.15);
+    const pGemGeo = new THREE.OctahedronGeometry(0.019, 0);
+    const pTiara = new THREE.Mesh(pTiaraGeo, this.headGearMat);
+    pTiara.position.set(0, 0.088, -0.018);
+    pTiara.rotation.x = Math.PI * 0.42;
+    pTiara.rotation.z = -Math.PI * 0.075;
+    const pGem = new THREE.Mesh(pGemGeo, this.headGemMat);
+    pGem.position.set(0, 0.115, -0.092);
+    this.headGearGroup.add(pTiara, pGem);
+    this.headGearGroup.visible = false;
+    this.headPivot.add(this.headGearGroup);
+    const pEarrings = buildDanglingEarrings(this.disposables);
+    this.earringsGroup = pEarrings.group;
+    this.earringRingMat = pEarrings.ringMat;
+    this.earringGemMat = pEarrings.gemMat;
+    this.headPivot.add(this.earringsGroup);
     this.torsoPivot.add(this.headPivot);
+
+    this.mythicOrbMat = new THREE.MeshBasicMaterial({ color: 0xf97316, toneMapped: false });
+    const pOrbGeo = new THREE.SphereGeometry(0.018, 8, 8);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2;
+      const orb = new THREE.Mesh(pOrbGeo, this.mythicOrbMat);
+      orb.position.set(Math.cos(a) * 0.22, 0.24 + (i % 2) * 0.1, Math.sin(a) * 0.16);
+      this.mythicOrbsGroup.add(orb);
+    }
+    this.mythicOrbsGroup.visible = false;
+    this.torsoPivot.add(this.mythicOrbsGroup);
+
+    this.disposables.push(
+      this.headGearMat,
+      this.headGemMat,
+      pTiaraGeo,
+      pGemGeo,
+      this.mythicOrbMat,
+      pOrbGeo,
+    );
   }
 
   public update(
@@ -618,6 +692,12 @@ export class BlondePassengerRig {
       headSpeed,
       delta,
     );
+    if (this.hasMythicEffect) {
+      this.mythicOrbsGroup.visible = true;
+      this.mythicOrbsGroup.rotation.y = elapsed * 2.1;
+    } else {
+      this.mythicOrbsGroup.visible = false;
+    }
   }
 
   public applyRpgOutfit(
@@ -625,12 +705,55 @@ export class BlondePassengerRig {
     trimHex = '#d7cebe',
     legsHex = '#161926',
     accentHex = '#fde68a',
+    equip?: RpgEquipMap,
   ): void {
     this.palette.jacketMat.color.set(torsoHex);
     this.palette.jacketTrimMat.color.set(trimHex);
     this.palette.skirtMat.color.set(legsHex);
     this.palette.bootMat.color.set(legsHex).multiplyScalar(0.85);
     this.palette.jewelryMat.color.set(accentHex);
+
+    if (equip) {
+      if (equip.head) {
+        this.headGearGroup.visible = true;
+        this.headGearMat.color.set(equip.head.colorHex);
+        this.headGemMat.color.set(equip.head.accentHex);
+      } else {
+        this.headGearGroup.visible = false;
+      }
+      if (equip.earrings) {
+        this.earringsGroup.visible = true;
+        this.earringRingMat.color.set(equip.earrings.colorHex);
+        this.earringGemMat.color.set(equip.earrings.accentHex);
+      } else {
+        this.earringsGroup.visible = false;
+      }
+      this.hasMythicEffect = Boolean(
+        equip.head?.rarity === 'mythic' ||
+        equip.torso?.rarity === 'mythic' ||
+        equip.legs?.rarity === 'mythic' ||
+        equip.earrings?.rarity === 'mythic' ||
+        equip.weapon?.rarity === 'mythic' ||
+        equip.gadget?.rarity === 'mythic',
+      );
+      if (this.hasMythicEffect) {
+        const mythicItem =
+          equip.torso?.rarity === 'mythic'
+            ? equip.torso
+            : equip.head?.rarity === 'mythic'
+              ? equip.head
+              : equip.earrings?.rarity === 'mythic'
+                ? equip.earrings
+                : equip.gadget?.rarity === 'mythic'
+                  ? equip.gadget
+                  : equip.weapon?.rarity === 'mythic'
+                    ? equip.weapon
+                    : equip.legs;
+        if (mythicItem) {
+          this.mythicOrbMat.color.set(mythicItem.accentHex || '#f97316');
+        }
+      }
+    }
   }
 
   public dispose(): void {
@@ -656,6 +779,27 @@ export class BlondeWalkerRig {
   private saberGroup = new THREE.Group();
   private saberBladeMat: THREE.MeshBasicMaterial;
   private saberGlowMat: THREE.MeshBasicMaterial;
+
+  // Dynamic equipped gear visuals
+  private headGearGroup = new THREE.Group();
+  private headGearMat!: THREE.MeshStandardMaterial;
+  private headGemMat!: THREE.MeshBasicMaterial;
+  private earringsGroup!: THREE.Group;
+  private earringRingMat!: THREE.MeshStandardMaterial;
+  private earringGemMat!: THREE.MeshBasicMaterial;
+  private cloakGroup = new THREE.Group();
+  private cloakMat!: THREE.MeshStandardMaterial;
+  private cloakTrimMat!: THREE.MeshBasicMaterial;
+  private bootTrimMeshes: THREE.Mesh[] = [];
+  private bootTrimMat!: THREE.MeshBasicMaterial;
+  private gadgetHaloGroup = new THREE.Group();
+  private gadgetHaloMat!: THREE.MeshBasicMaterial;
+  private mythicFloorRing!: THREE.Mesh;
+  private mythicRingMat!: THREE.MeshBasicMaterial;
+  private mythicOrbsGroup = new THREE.Group();
+  private mythicOrbMat!: THREE.MeshBasicMaterial;
+  private hasMythicEffect = false;
+
   private palette: CompanionPalette;
   private disposables: { dispose: () => void }[] = [];
   private walkCycle = 0;
@@ -710,14 +854,104 @@ export class BlondeWalkerRig {
       foot.position.set(0, -0.455, -0.04);
       kp.add(foot);
 
+      if (!this.bootTrimMat) {
+        this.bootTrimMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, toneMapped: false });
+      }
+      const bootTrimGeo = new THREE.TorusGeometry(0.052, 0.008, 6, 14);
+      bootTrimGeo.rotateX(Math.PI / 2);
+      const bootTrim = new THREE.Mesh(bootTrimGeo, this.bootTrimMat);
+      bootTrim.position.set(0, -0.24, 0);
+      bootTrim.visible = false;
+      kp.add(bootTrim);
+      this.bootTrimMeshes.push(bootTrim);
+      this.disposables.push(bootTrimGeo);
+
       lp.add(kp);
       this.bodyGroup.add(lp);
     }
+    this.disposables.push(this.bootTrimMat);
 
     this.torsoPivot.position.set(0, 0.94, 0);
     this.bodyGroup.add(this.torsoPivot);
 
     buildTailoredTorso(p, this.torsoPivot, this.disposables);
+
+    // Sculpted Shoulder Pauldrons & Flowing Back Cloak (for equipped armor/dresses)
+    this.cloakMat = new THREE.MeshStandardMaterial({
+      color: 0x7e22ce,
+      roughness: 0.4,
+      metalness: 0.25,
+      side: THREE.DoubleSide,
+    });
+    this.cloakTrimMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const pauldronGeo = new THREE.SphereGeometry(0.068, 12, 10);
+    pauldronGeo.scale(1.15, 0.65, 1.05);
+    const capeGeo = new THREE.CylinderGeometry(0.145, 0.26, 0.72, 14, 1, true, -Math.PI * 0.4, Math.PI * 0.8);
+    const cape = new THREE.Mesh(capeGeo, this.cloakMat);
+    cape.position.set(0, -0.02, 0.14);
+    cape.rotation.x = 0.14;
+    this.cloakGroup.add(cape);
+    for (const side of [-1, 1]) {
+      const pauldron = new THREE.Mesh(pauldronGeo, this.cloakMat);
+      pauldron.position.set(side * 0.175, 0.34, 0);
+      pauldron.rotation.z = side * -0.25;
+      const trim = new THREE.Mesh(new THREE.TorusGeometry(0.056, 0.008, 6, 14), this.cloakTrimMat);
+      trim.position.set(side * 0.178, 0.33, 0);
+      trim.rotation.x = Math.PI / 2;
+      this.cloakGroup.add(pauldron, trim);
+      this.disposables.push(trim.geometry);
+    }
+    this.cloakGroup.visible = false;
+    this.torsoPivot.add(this.cloakGroup);
+
+    // Gadget Angelic Halo / Energy Wings behind back
+    this.gadgetHaloMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.85,
+      toneMapped: false,
+    });
+    const haloRingGeo = new THREE.TorusGeometry(0.19, 0.014, 8, 24);
+    const haloRing = new THREE.Mesh(haloRingGeo, this.gadgetHaloMat);
+    haloRing.position.set(0, 0.32, 0.16);
+    const wingBladeGeo = new THREE.BoxGeometry(0.28, 0.028, 0.018);
+    for (const side of [-1, 1]) {
+      const wTop = new THREE.Mesh(wingBladeGeo, this.gadgetHaloMat);
+      wTop.position.set(side * 0.22, 0.38, 0.15);
+      wTop.rotation.z = side * 0.42;
+      const wLow = new THREE.Mesh(wingBladeGeo, this.gadgetHaloMat);
+      wLow.position.set(side * 0.19, 0.25, 0.15);
+      wLow.rotation.z = side * 0.18;
+      this.gadgetHaloGroup.add(wTop, wLow);
+    }
+    this.gadgetHaloGroup.add(haloRing);
+    this.gadgetHaloGroup.visible = false;
+    this.torsoPivot.add(this.gadgetHaloGroup);
+
+    // Rare Orange Mythic Visual Effects (ground fiery aura ring + orbiting ember spheres)
+    this.mythicRingMat = new THREE.MeshBasicMaterial({
+      color: 0xf97316,
+      transparent: true,
+      opacity: 0.82,
+      toneMapped: false,
+    });
+    const mythicRingGeo = new THREE.TorusGeometry(0.46, 0.028, 8, 28);
+    mythicRingGeo.rotateX(Math.PI / 2);
+    this.mythicFloorRing = new THREE.Mesh(mythicRingGeo, this.mythicRingMat);
+    this.mythicFloorRing.position.set(0, 0.05, 0);
+    this.mythicFloorRing.visible = false;
+    this.bodyGroup.add(this.mythicFloorRing);
+
+    this.mythicOrbMat = new THREE.MeshBasicMaterial({ color: 0xfdba74, toneMapped: false });
+    const mythicOrbGeo = new THREE.SphereGeometry(0.026, 8, 8);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const orb = new THREE.Mesh(mythicOrbGeo, this.mythicOrbMat);
+      orb.position.set(Math.cos(a) * 0.29, 0.2 + (i % 2) * 0.16, Math.sin(a) * 0.24);
+      this.mythicOrbsGroup.add(orb);
+    }
+    this.mythicOrbsGroup.visible = false;
+    this.torsoPivot.add(this.mythicOrbsGroup);
 
     const shoulderGeo = new THREE.SphereGeometry(0.048, 10, 10);
     const upperArmGeo = new THREE.CapsuleGeometry(0.039, 0.21, 8, 10);
@@ -758,9 +992,28 @@ export class BlondeWalkerRig {
 
     this.headPivot = buildHeadAndHair(p);
     this.headPivot.position.set(0, 0.482, -0.005);
+
+    this.headGearMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.25, metalness: 0.8 });
+    this.headGemMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const wTiaraGeo = new THREE.TorusGeometry(0.098, 0.012, 8, 22, Math.PI * 1.15);
+    const wGemGeo = new THREE.OctahedronGeometry(0.021, 0);
+    const wTiara = new THREE.Mesh(wTiaraGeo, this.headGearMat);
+    wTiara.position.set(0, 0.09, -0.018);
+    wTiara.rotation.x = Math.PI * 0.42;
+    wTiara.rotation.z = -Math.PI * 0.075;
+    const wGem = new THREE.Mesh(wGemGeo, this.headGemMat);
+    wGem.position.set(0, 0.118, -0.092);
+    this.headGearGroup.add(wTiara, wGem);
+    this.headGearGroup.visible = false;
+    this.headPivot.add(this.headGearGroup);
+    const wEarrings = buildDanglingEarrings(this.disposables);
+    this.earringsGroup = wEarrings.group;
+    this.earringRingMat = wEarrings.ringMat;
+    this.earringGemMat = wEarrings.gemMat;
+    this.headPivot.add(this.earringsGroup);
     this.torsoPivot.add(this.headPivot);
 
-    // Companion Lightsaber sub-rig attached cleanly to right hand
+    // Companion Lightsaber sub-rig attached cleanly to right hand pointing UP & FORWARD (-Z)
     const hiltGeo = new THREE.CylinderGeometry(0.018, 0.02, 0.18, 8);
     const bladeGeo = new THREE.CylinderGeometry(0.011, 0.012, 0.72, 8);
     const glowGeo = new THREE.CylinderGeometry(0.024, 0.026, 0.74, 8);
@@ -777,8 +1030,8 @@ export class BlondeWalkerRig {
     const glowMesh = new THREE.Mesh(glowGeo, this.saberGlowMat);
     glowMesh.position.set(0, 0.44, 0);
     this.saberGroup.add(hiltMesh, bladeMesh, glowMesh);
-    this.saberGroup.position.set(0.026, -0.46, -0.055);
-    this.saberGroup.rotation.set(Math.PI * 0.42, 0, -0.14);
+    this.saberGroup.position.set(0.026, -0.455, -0.05);
+    this.saberGroup.rotation.set(-Math.PI * 0.44, 0, -0.14);
     this.saberGroup.visible = false;
     this.rightArmPivot.add(this.saberGroup);
 
@@ -799,6 +1052,21 @@ export class BlondeWalkerRig {
       glowGeo,
       this.saberBladeMat,
       this.saberGlowMat,
+      this.cloakMat,
+      this.cloakTrimMat,
+      pauldronGeo,
+      capeGeo,
+      this.gadgetHaloMat,
+      haloRingGeo,
+      wingBladeGeo,
+      this.mythicRingMat,
+      mythicRingGeo,
+      this.mythicOrbMat,
+      mythicOrbGeo,
+      this.headGearMat,
+      this.headGemMat,
+      wTiaraGeo,
+      wGemGeo,
     );
   }
 
@@ -817,7 +1085,18 @@ export class BlondeWalkerRig {
   ): void {
     this.group.visible = visible;
     this.saberGroup.visible = visible && defending && pose === 'walk';
+    this.mythicFloorRing.visible = visible && this.hasMythicEffect && pose === 'walk';
+    this.mythicOrbsGroup.visible = visible && this.hasMythicEffect;
     if (!visible) return;
+
+    if (this.gadgetHaloGroup.visible) {
+      this.gadgetHaloGroup.rotation.z = Math.sin(elapsed * 2.2) * 0.08;
+    }
+    if (this.hasMythicEffect) {
+      this.mythicFloorRing.rotation.z = elapsed * 2.4;
+      this.mythicFloorRing.scale.setScalar(1 + Math.sin(elapsed * 5.0) * 0.08);
+      this.mythicOrbsGroup.rotation.y = elapsed * 2.6;
+    }
 
     if (pose === 'sit') {
       this.bodyGroup.rotation.x = THREE.MathUtils.damp(this.bodyGroup.rotation.x, 0, 10, delta);
@@ -912,7 +1191,7 @@ export class BlondeWalkerRig {
       this.leftArmPivot.rotation.x = THREE.MathUtils.damp(this.leftArmPivot.rotation.x, -swing * 0.68, 12, delta);
       this.rightArmPivot.rotation.x = THREE.MathUtils.damp(
         this.rightArmPivot.rotation.x,
-        defending ? -1.45 + Math.sin(elapsed * 11.5) * 0.52 : swing * 0.68,
+        defending ? 1.26 + Math.sin(elapsed * 11.5) * 0.46 : swing * 0.68,
         14,
         delta,
       );
@@ -932,7 +1211,7 @@ export class BlondeWalkerRig {
       this.leftArmPivot.rotation.x = THREE.MathUtils.damp(this.leftArmPivot.rotation.x, 0, 10, delta);
       this.rightArmPivot.rotation.x = THREE.MathUtils.damp(
         this.rightArmPivot.rotation.x,
-        defending ? -1.42 + Math.sin(elapsed * 10.5) * 0.6 : 0,
+        defending ? 1.24 + Math.sin(elapsed * 10.5) * 0.52 : 0,
         12,
         delta,
       );
@@ -965,12 +1244,81 @@ export class BlondeWalkerRig {
     trimHex = '#d7cebe',
     legsHex = '#161926',
     accentHex = '#fde68a',
+    equip?: RpgEquipMap,
   ): void {
     this.palette.jacketMat.color.set(torsoHex);
     this.palette.jacketTrimMat.color.set(trimHex);
     this.palette.skirtMat.color.set(legsHex);
     this.palette.bootMat.color.set(legsHex).multiplyScalar(0.85);
     this.palette.jewelryMat.color.set(accentHex);
+
+    if (equip) {
+      if (equip.head) {
+        this.headGearGroup.visible = true;
+        this.headGearMat.color.set(equip.head.colorHex);
+        this.headGemMat.color.set(equip.head.accentHex);
+      } else {
+        this.headGearGroup.visible = false;
+      }
+
+      const showCloak = Boolean(
+        equip.torso && (equip.torso.templateId !== 'jacket_cream' || equip.torso.rarity !== 'common'),
+      );
+      this.cloakGroup.visible = showCloak;
+      if (showCloak && equip.torso) {
+        this.cloakMat.color.set(equip.torso.colorHex);
+        this.cloakTrimMat.color.set(equip.torso.accentHex);
+      }
+
+      const showBootTrim = Boolean(equip.legs && equip.legs.rarity !== 'common');
+      for (const m of this.bootTrimMeshes) {
+        m.visible = showBootTrim;
+      }
+      if (showBootTrim && equip.legs) {
+        this.bootTrimMat.color.set(equip.legs.accentHex);
+      }
+
+      const showHalo = Boolean(equip.gadget && equip.gadget.rarity !== 'common');
+      this.gadgetHaloGroup.visible = showHalo;
+      if (showHalo && equip.gadget) {
+        this.gadgetHaloMat.color.set(equip.gadget.accentHex);
+      }
+
+      if (equip.earrings) {
+        this.earringsGroup.visible = true;
+        this.earringRingMat.color.set(equip.earrings.colorHex);
+        this.earringGemMat.color.set(equip.earrings.accentHex);
+      } else {
+        this.earringsGroup.visible = false;
+      }
+
+      this.hasMythicEffect = Boolean(
+        equip.head?.rarity === 'mythic' ||
+        equip.torso?.rarity === 'mythic' ||
+        equip.legs?.rarity === 'mythic' ||
+        equip.earrings?.rarity === 'mythic' ||
+        equip.weapon?.rarity === 'mythic' ||
+        equip.gadget?.rarity === 'mythic',
+      );
+      if (this.hasMythicEffect) {
+        const mythicItem =
+          equip.torso?.rarity === 'mythic'
+            ? equip.torso
+            : equip.head?.rarity === 'mythic'
+              ? equip.head
+              : equip.earrings?.rarity === 'mythic'
+                ? equip.earrings
+                : equip.gadget?.rarity === 'mythic'
+                  ? equip.gadget
+                  : equip.weapon?.rarity === 'mythic'
+                    ? equip.weapon
+                    : equip.legs;
+        if (mythicItem) {
+          this.mythicRingMat.color.set(mythicItem.colorHex || '#f97316');
+          this.mythicOrbMat.color.set(mythicItem.accentHex || '#fdba74');
+        }
+      }
+    }
   }
 
   public dispose(): void {

@@ -9,8 +9,10 @@ import {
   Camera,
   Car,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Cloud,
   CloudLightning,
   CloudRain,
@@ -73,6 +75,8 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 import type {
   AudioSettings,
   CabinThemeId,
+  GameplaySettings,
+  LootAutoCollectSettings,
   RpgOwnerTarget,
   RpgSlot,
   SeasonSetting,
@@ -114,6 +118,9 @@ interface TouchControlsProps {
   onCuddleCompanion: () => void;
   onScanObservatory: () => void;
   onSetGraphicsQuality: (quality: number) => void;
+  onUpdateGameplaySettings: (
+    partial: Partial<GameplaySettings> & { lootAutoCollect?: Partial<LootAutoCollectSettings> },
+  ) => void;
   onToggleHoldHands: () => void;
   onSelectQuest: (id: string) => void;
   onSkipQuest: () => void;
@@ -163,6 +170,10 @@ interface TouchControlsProps {
   onUnequipSlot: (target: RpgOwnerTarget, slot: RpgSlot) => void;
   onDeleteItem: (uid: string) => void;
   onPerformAttack: () => void;
+  onToggleWeaponHolstered: () => void;
+  onStartCafeQuest: () => void;
+  onStartSerbosMission: () => void;
+  onStartMonsterAutopilot: () => void;
   onReplyRoadsideChat: (optionId: string) => void;
   onDismissRoadsideChat: () => void;
   onInteractPassenger: () => void;
@@ -257,6 +268,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onCuddleCompanion,
   onScanObservatory,
   onSetGraphicsQuality,
+  onUpdateGameplaySettings,
   onToggleHoldHands,
   onSelectQuest,
   onSkipQuest,
@@ -306,6 +318,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onUnequipSlot: _onUnequipSlot,
   onDeleteItem: _onDeleteItem,
   onPerformAttack,
+  onToggleWeaponHolstered,
+  onStartCafeQuest,
+  onStartSerbosMission,
+  onStartMonsterAutopilot,
   onReplyRoadsideChat,
   onDismissRoadsideChat,
   onInteractPassenger,
@@ -351,6 +367,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [showGithubGuide, setShowGithubGuide] = useState(false);
   const [exportBusy, setExportBusy] = useState<'apk' | 'html' | 'copy' | null>(null);
+  const [bossBannerCollapsed, setBossBannerCollapsed] = useState(false);
 
   const isBundledStandalone =
     typeof window !== 'undefined' &&
@@ -733,6 +750,16 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 <MessageCircle className={`${iconCls} text-emerald-300`} />
                 <span>{compact ? 'Сербос' : 'Спросить Сербоса'}</span>
               </button>
+
+              <button
+                type="button"
+                onClick={onStartSerbosMission}
+                onPointerDown={(e) => e.stopPropagation()}
+                className={`${btnCls} bg-orange-500/30 border-orange-400/65 text-orange-100`}
+              >
+                <Sparkles className={`${iconCls} text-orange-300`} />
+                <span>{compact ? 'Задание' : 'Задание Сербоса'}</span>
+              </button>
             </>
           )}
 
@@ -1101,11 +1128,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           >
             <Zap className={`${iconCls} text-rose-300`} />
             <span>
-              {snapshot.rpg?.playerStats?.weaponKind === 'lightsaber'
-                ? 'Меч (Удар)'
-                : snapshot.rpg?.playerStats?.weaponKind === 'blaster'
-                ? 'Бластер (Огонь)'
-                : 'Атака (Удар)'}
+              {snapshot.rpg?.weaponHolstered
+                ? 'Кулаки (Удар)'
+                : snapshot.rpg?.playerStats?.weaponKind === 'lightsaber'
+                  ? 'Меч (Удар)'
+                  : snapshot.rpg?.playerStats?.weaponKind === 'blaster'
+                    ? 'Бластер (Огонь)'
+                    : 'Атака (Удар)'}
             </span>
           </button>
         )}
@@ -1339,11 +1368,12 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
-      {/* Center Blaster Aim Crosshair (on foot with blaster equipped) */}
+      {/* Center Blaster Aim Crosshair (on foot with blaster equipped & unholstered) */}
       {!hudHidden &&
         isWalking &&
         !insideInterior &&
         !inRvCabin &&
+        !snapshot.rpg?.weaponHolstered &&
         snapshot.rpg?.playerStats?.weaponKind === 'blaster' && (
           <div className="pointer-events-none fixed inset-0 z-10 flex items-center justify-center">
             <div className="relative w-7 h-7 flex items-center justify-center">
@@ -1457,14 +1487,105 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         </div>
       )}
 
-      {/* Gentle Meditative Event Toast */}
-      {!hudHidden && snapshot.toastMessage && (
-        <div className="pointer-events-none fixed top-20 sm:top-16 left-1/2 -translate-x-1/2 z-20 max-w-[90vw]">
-          <div className="px-3.5 py-1.5 rounded-xl bg-[#090d14]/92 border border-amber-400/35 text-xs font-medium text-amber-100 shadow-lg text-center truncate">
-            {snapshot.toastMessage}
+      {/* Top Boss / Planet Monster Alert (Collapsible) + Live HP + Autopilot & Toast */}
+      {!hudHidden &&
+        (snapshot.rpg?.planetMonsterActive ||
+          snapshot.rpg?.bountyBossActive ||
+          snapshot.toastMessage) && (
+          <div className="pointer-events-none fixed top-16 sm:top-14 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] flex flex-col items-center gap-1.5">
+            {(snapshot.rpg?.planetMonsterActive || snapshot.rpg?.bountyBossActive) &&
+              (() => {
+                const isPlanetMonster = Boolean(snapshot.rpg?.planetMonsterActive);
+                const curHp = isPlanetMonster
+                  ? snapshot.rpg.planetMonsterHp
+                  : snapshot.rpg.bountyBossHp;
+                const maxHp = Math.max(
+                  1,
+                  isPlanetMonster
+                    ? snapshot.rpg.planetMonsterMaxHp
+                    : snapshot.rpg.bountyBossMaxHp,
+                );
+                const pct = Math.max(0, Math.min(100, Math.round((curHp / maxHp) * 100)));
+                const title = isPlanetMonster
+                  ? 'Гигантский монстр на планете!'
+                  : 'Босс-цель контракта';
+
+                if (bossBannerCollapsed) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setBossBannerCollapsed(false)}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className="pointer-events-auto rounded-xl bg-[#1a0d05]/92 border border-orange-400/65 shadow-lg px-3 py-1.5 flex items-center gap-2 text-[11px] font-semibold text-orange-100 hover:bg-[#241308] active:scale-95 transition-transform"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+                      <span>{isPlanetMonster ? 'Монстр' : 'Босс'}</span>
+                      <span className="font-mono-tabular text-orange-200">{pct}%</span>
+                      <div className="w-12 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-orange-500 to-amber-300"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <ChevronDown className="w-3.5 h-3.5 text-orange-300 shrink-0" />
+                    </button>
+                  );
+                }
+
+                return (
+                  <div
+                    className="pointer-events-auto w-[min(450px,92vw)] rounded-2xl bg-[#1a0d05]/94 border border-orange-400/70 shadow-[0_0_24px_rgba(249,115,22,0.35)] px-3 py-2 flex items-center justify-between gap-2"
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-orange-200">
+                        <span className="truncate flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+                          <span>{title}</span>
+                        </span>
+                        <span className="font-mono-tabular text-orange-100 shrink-0">
+                          {Math.round(curHp)}/{Math.round(maxHp)}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-1">
+                        <div
+                          className="h-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-200"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {isPlanetMonster && (
+                      <button
+                        type="button"
+                        onClick={onStartMonsterAutopilot}
+                        className="min-h-[34px] px-2.5 py-1 rounded-xl bg-orange-500/35 hover:bg-orange-500/45 border border-orange-300/75 text-[11px] font-semibold text-white whitespace-nowrap shrink-0 active:scale-95 transition-transform inline-flex items-center gap-1"
+                      >
+                        <Bot className="w-3.5 h-3.5 text-orange-200" />
+                        <span>Автопилот</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setBossBannerCollapsed(true)}
+                      aria-label="Свернуть уведомление о боссе"
+                      title="Свернуть"
+                      className="min-h-[34px] px-2 rounded-xl bg-white/5 hover:bg-white/15 border border-white/15 text-orange-200 inline-flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })()}
+
+            {snapshot.toastMessage && (
+              <div className="px-3.5 py-1.5 rounded-xl bg-[#090d14]/92 border border-amber-400/35 text-xs font-medium text-amber-100 shadow-lg text-center truncate max-w-full">
+                {snapshot.toastMessage}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
       {/* Serbos House Dialog Banner */}
       {!hudHidden && snapshot.interiorMode === 'serbos' && snapshot.serbosDialogLine && (
@@ -1638,7 +1759,14 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               >
                 <Package className="w-3.5 h-3.5 text-purple-300 shrink-0" />
                 <span className="font-mono-tabular text-purple-200 shrink-0">
-                  Инвентарь {snapshot.rpg?.inventory?.length ? `(${snapshot.rpg.inventory.length})` : ''}
+                  Инвентарь{' '}
+                  {((snapshot.rpg?.playerInventory?.length ?? 0) +
+                    (snapshot.rpg?.companionInventory?.length ?? 0)) > 0
+                    ? `(${
+                        (snapshot.rpg?.playerInventory?.length ?? 0) +
+                        (snapshot.rpg?.companionInventory?.length ?? 0)
+                      })`
+                    : ''}
                 </span>
               </button>
 
@@ -2440,6 +2568,25 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              onStartCafeQuest();
+              onCloseCafe();
+            }}
+            className="w-full p-2.5 rounded-xl bg-orange-500/25 hover:bg-orange-500/35 border border-orange-400/55 transition-colors flex items-center justify-between gap-2 text-left"
+          >
+            <div>
+              <div className="text-xs font-semibold text-orange-100">
+                Взять особое задание кофейни
+              </div>
+              <div className="text-[11px] text-orange-200/80">
+                VIP-доставка по городу · Награда: редкая оранжевая вещь с эффектами
+              </div>
+            </div>
+            <Sparkles className="w-4 h-4 text-orange-300 shrink-0" />
+          </button>
         </div>
       )}
 
@@ -2634,6 +2781,98 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               <span>Экономия FPS</span>
               <span>Средняя (баланс)</span>
               <span>Максимум</span>
+            </div>
+          </div>
+
+          {/* Boss Spawn Interval & Auto-Loot Rarity Filter */}
+          <div className="flex flex-col gap-2.5 pt-2 border-t border-white/10">
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-white truncate">
+                  Частота появления боссов
+                </span>
+                <span className="text-[11px] font-mono-tabular text-orange-200 shrink-0">
+                  {snapshot.gameplaySettings.bossSpawnIntervalMin >= 60
+                    ? '1 час (60 мин)'
+                    : `${snapshot.gameplaySettings.bossSpawnIntervalMin} мин`}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={5}
+                max={60}
+                step={5}
+                value={snapshot.gameplaySettings.bossSpawnIntervalMin}
+                onChange={(e) =>
+                  onUpdateGameplaySettings({
+                    bossSpawnIntervalMin: parseInt(e.target.value, 10),
+                  })
+                }
+                aria-label="Частота появления боссов"
+                className="horizon-slider w-full py-1.5"
+              />
+              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                <span>5 мин</span>
+                <span>30 мин</span>
+                <span>60 мин (1 час)</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-white">Автосбор лута по качеству</span>
+                <span className="text-[10px] text-slate-400">Выкл — не подбирается</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {(
+                  [
+                    {
+                      key: 'common',
+                      label: 'Белые',
+                      activeCls: 'bg-slate-500/30 border-slate-300/65 text-slate-100',
+                    },
+                    {
+                      key: 'epic',
+                      label: 'Синие',
+                      activeCls: 'bg-sky-500/30 border-sky-400/70 text-sky-100',
+                    },
+                    {
+                      key: 'legendary',
+                      label: 'Фиолетовые',
+                      activeCls: 'bg-purple-500/30 border-purple-400/70 text-purple-100',
+                    },
+                    {
+                      key: 'mythic',
+                      label: 'Оранжевые',
+                      activeCls: 'bg-orange-500/30 border-orange-400/75 text-orange-100',
+                    },
+                  ] as const
+                ).map((item) => {
+                  const enabled = snapshot.gameplaySettings.lootAutoCollect[item.key];
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() =>
+                        onUpdateGameplaySettings({
+                          lootAutoCollect: {
+                            ...snapshot.gameplaySettings.lootAutoCollect,
+                            [item.key]: !enabled,
+                          },
+                        })
+                      }
+                      className={`min-h-[38px] px-2 rounded-xl border text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors ${
+                        enabled
+                          ? item.activeCls
+                          : 'bg-black/45 border-white/10 text-slate-500'
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      <span>{enabled ? '✓' : '✕'}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -3316,18 +3555,22 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 )}
 
                 <div className="flex items-end gap-1.5 sm:gap-2 shrink-0">
-                  {isWalking && (
+                  {isWalking && Boolean(snapshot.rpg?.playerEquipped?.weapon) && (
                     <button
                       type="button"
                       onPointerDown={(e) => {
                         e.stopPropagation();
-                        onPerformAttack();
+                        onToggleWeaponHolstered();
                       }}
-                      className="h-[64px] w-[60px] sm:w-[72px] rounded-2xl border border-rose-400/70 bg-rose-600/40 text-white text-xs font-semibold inline-flex flex-col items-center justify-center gap-1 shadow-xl active:scale-90 transition-transform touch-none shrink-0"
-                      aria-label="Атаковать"
+                      className={`h-[64px] w-[66px] sm:w-[76px] rounded-2xl border text-xs font-semibold inline-flex flex-col items-center justify-center gap-1 shadow-xl active:scale-90 transition-transform touch-none shrink-0 ${
+                        snapshot.rpg?.weaponHolstered
+                          ? 'border-cyan-400/70 bg-cyan-600/35 text-cyan-50'
+                          : 'border-amber-400/65 bg-amber-600/35 text-amber-50'
+                      }`}
+                      aria-label={snapshot.rpg?.weaponHolstered ? 'Достать оружие' : 'Убрать оружие'}
                     >
-                      <Zap className="w-4 h-4 text-rose-300" />
-                      <span>Атака</span>
+                      <Zap className="w-4 h-4 text-amber-200" />
+                      <span>{snapshot.rpg?.weaponHolstered ? 'Достать' : 'Убрать'}</span>
                     </button>
                   )}
 

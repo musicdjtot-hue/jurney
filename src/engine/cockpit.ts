@@ -3,6 +3,7 @@ import { BlondePassengerRig, BlondeWalkerRig } from './companion';
 import { DashboardDisplay, MovieScreenDisplay } from './textures';
 import type {
   CabinThemeId,
+  RpgEquipMap,
   RvStationKind,
   VehicleFlightState,
   VehicleTypeId,
@@ -242,6 +243,7 @@ export class CockpitRig {
   private rightDoorWindowMesh!: THREE.Mesh;
   private seatBackPivots: THREE.Group[] = [];
   private movieMonitorPivot = new THREE.Group();
+  private wheelPivots: { pivot: THREE.Group; core: THREE.Mesh; ring: THREE.Mesh; side: number }[] = [];
 
   // RV Mini-Home interactive fixtures
   private rvCabinLight!: THREE.PointLight;
@@ -1002,17 +1004,22 @@ export class CockpitRig {
       [1.08, 0.36, 3.65],
     ];
     for (const [wx, wy, wz] of podCoords) {
+      const side = Math.sign(wx);
+      const pivot = new THREE.Group();
+      pivot.position.set(wx, wy, wz);
+
       const shroud = new THREE.Mesh(podShroudGeo, carbonMat);
-      shroud.position.set(wx, wy, wz);
-      this.group.add(shroud);
+      pivot.add(shroud);
 
       const core = new THREE.Mesh(podCoreGeo, titaniumMat);
-      core.position.set(wx, wy, wz);
-      this.group.add(core);
+      pivot.add(core);
 
       const ring = new THREE.Mesh(podGlowRingGeo, accentMat);
-      ring.position.set(wx + Math.sign(wx) * 0.138, wy, wz);
-      this.group.add(ring);
+      ring.position.set(side * 0.138, 0, 0);
+      pivot.add(ring);
+
+      this.group.add(pivot);
+      this.wheelPivots.push({ pivot, core, ring, side });
     }
 
     this.disposables.push(
@@ -1816,6 +1823,25 @@ export class CockpitRig {
     const isOrbitState = flightState === 'orbit' || flightState === 'launching_orbit';
     const isSpaceMode = inSpace || flightState === 'launching' || flightState === 'entering';
     const isAir = flightState !== 'road';
+
+    // Back-to-the-Future repulsor wheel tilt on takeoff/hover
+    const targetWheelY = isAir ? 0.28 : 0.36;
+    const roadWheelSpin = !isAir ? (speedKmh / 3.6) * delta * 2.4 : 0;
+    const hoverPulse = isAir ? 1 + Math.sin(elapsed * 8.5) * 0.08 : 1;
+    for (let i = 0; i < this.wheelPivots.length; i++) {
+      const wp = this.wheelPivots[i];
+      const targetRotZ = isAir ? -wp.side * (Math.PI * 0.5) : 0;
+      wp.pivot.rotation.z = THREE.MathUtils.damp(wp.pivot.rotation.z, targetRotZ, 6.5, delta);
+      wp.pivot.position.y = THREE.MathUtils.damp(wp.pivot.position.y, targetWheelY, 6.5, delta);
+      if (!isAir) {
+        wp.core.rotation.x -= roadWheelSpin;
+      } else {
+        wp.ring.scale.setScalar(hoverPulse);
+      }
+      if (!isAir) {
+        wp.ring.scale.setScalar(1);
+      }
+    }
     let targetAccent = isOrbitState
       ? this.accentColorAir
       : isSpaceMode
@@ -1909,9 +1935,15 @@ export class CockpitRig {
     );
   }
 
-  public applyCompanionOutfit(torsoHex: string, trimHex: string, legsHex: string, accentHex: string): void {
-    this.companion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex);
-    this.rvCompanion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex);
+  public applyCompanionOutfit(
+    torsoHex: string,
+    trimHex: string,
+    legsHex: string,
+    accentHex: string,
+    equip?: RpgEquipMap,
+  ): void {
+    this.companion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex, equip);
+    this.rvCompanion.applyRpgOutfit(torsoHex, trimHex, legsHex, accentHex, equip);
   }
 
   public dispose(): void {

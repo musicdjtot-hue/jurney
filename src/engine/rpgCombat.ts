@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import type { BuildingFootprint } from './physics';
-import type { RpgItem, RpgRarity, RpgWeaponKind } from '../types/simulation';
+import type { LootAutoCollectSettings, RpgItem, RpgRarity, RpgWeaponKind } from '../types/simulation';
 
 export interface CombatCallbacks {
   onPlayerDamaged: (rawDamage: number, attackerLabel: string) => void;
-  onEnemyDefeated: (kind: 'gopnik' | 'rally' | 'police' | 'boss', x: number, y: number, z: number) => void;
+  onEnemyDefeated: (kind: 'gopnik' | 'rally' | 'police' | 'boss' | 'monster', x: number, y: number, z: number) => void;
   onPoliceCleared: (reason: 'defeated' | 'escaped' | 'hidden') => void;
   onSaberPickupClaimed: () => void;
   onGopnikTaunt: (line: string) => void;
@@ -19,6 +19,7 @@ interface HumanNpcActor {
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
   signMesh?: THREE.Mesh;
+  signPivot?: THREE.Group;
   active: boolean;
   hp: number;
   maxHp: number;
@@ -93,6 +94,7 @@ export class RpgCombatSystem {
   private saberGlowMat: THREE.MeshBasicMaterial;
   private attackSwingTimer = 0;
   private activeWeaponKind: RpgWeaponKind = 'blaster';
+  private weaponHolstered = false;
 
   private gopniks: HumanNpcActor[] = [];
   private rallyCrowd: HumanNpcActor[] = [];
@@ -102,6 +104,33 @@ export class RpgCombatSystem {
   private bossRingMat!: THREE.MeshBasicMaterial;
   private bossSpawnedKey: string | null = null;
   private bossDefeated = false;
+
+  // Giant Planet Monster Boss (3400 HP, ~4.6m tall)
+  private planetMonster!: {
+    group: THREE.Group;
+    leftArm: THREE.Group;
+    rightArm: THREE.Group;
+    head: THREE.Group;
+    coreMesh: THREE.Mesh;
+    coreMat: THREE.MeshBasicMaterial;
+    auraRing: THREE.Mesh;
+    auraMat: THREE.MeshBasicMaterial;
+    active: boolean;
+    hp: number;
+    maxHp: number;
+    x: number;
+    y: number;
+    z: number;
+    floorY: number;
+    attackCooldown: number;
+    knockedOut: boolean;
+    knockTimer: number;
+    vx: number;
+    vy: number;
+    vz: number;
+    key: string | null;
+    defeated: boolean;
+  };
 
   private passengerNpc!: HumanNpcActor;
   private roadsideNpc!: HumanNpcActor;
@@ -211,8 +240,8 @@ export class RpgCombatSystem {
     const capGeo = new THREE.CylinderGeometry(0.14, 0.155, 0.075, 10);
     const armGeo = new THREE.BoxGeometry(0.13, 0.46, 0.13);
     const legGeo = new THREE.BoxGeometry(0.17, 0.62, 0.17);
-    const signPoleGeo = new THREE.CylinderGeometry(0.018, 0.018, 1.15, 6);
-    const signBoardGeo = new THREE.BoxGeometry(0.68, 0.42, 0.04);
+    const signPoleGeo = new THREE.CylinderGeometry(0.018, 0.018, 1.05, 6);
+    const signBoardGeo = new THREE.BoxGeometry(0.78, 0.44, 0.045);
 
     const skinMat = new THREE.MeshStandardMaterial({ color: 0xdcb49a, roughness: 0.6 });
     const darkTrackMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.72 });
@@ -305,17 +334,45 @@ export class RpgCombatSystem {
       rightArm.add(raMesh);
 
       let signMesh: THREE.Mesh | undefined;
+      let signPivot: THREE.Group | undefined;
       if (style === 'rally') {
-        const signMat = new THREE.MeshStandardMaterial({
-          color: index % 3 === 0 ? 0xfef3c7 : index % 3 === 1 ? 0xfee2e2 : 0xe0f2fe,
-          roughness: 0.78,
-        });
-        this.disposables.push(signMat);
+        const bgColors = ['#fef3c7', '#fee2e2', '#e0f2fe'];
+        const slogans = ['СВОБОДУ!', 'МЫ ВМЕСТЕ!', 'ПРАВДА!'];
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 144;
+        const ctx = canvas.getContext('2d');
+        let signMat: THREE.MeshStandardMaterial;
+        if (ctx) {
+          ctx.fillStyle = bgColors[index % bgColors.length];
+          ctx.fillRect(0, 0, 256, 144);
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 10;
+          ctx.strokeRect(5, 5, 246, 134);
+          ctx.fillStyle = '#991b1b';
+          ctx.font = 'bold 34px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(slogans[index % slogans.length], 128, 72);
+          const signTex = new THREE.CanvasTexture(canvas);
+          signTex.colorSpace = THREE.SRGBColorSpace;
+          signMat = new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.72 });
+          this.disposables.push(signTex, signMat);
+        } else {
+          signMat = new THREE.MeshStandardMaterial({
+            color: index % 3 === 0 ? 0xfef3c7 : index % 3 === 1 ? 0xfee2e2 : 0xe0f2fe,
+            roughness: 0.78,
+          });
+          this.disposables.push(signMat);
+        }
+        signPivot = new THREE.Group();
+        signPivot.position.set(0, -0.42, -0.02);
         const pole = new THREE.Mesh(signPoleGeo, darkPantsMat);
-        pole.position.set(0, 0.25, -0.06);
+        pole.position.set(0, 0.44, 0);
         const board = new THREE.Mesh(signBoardGeo, signMat);
-        board.position.set(0, 0.85, -0.06);
-        rightArm.add(pole, board);
+        board.position.set(0, 1.05, 0);
+        signPivot.add(pole, board);
+        rightArm.add(signPivot);
         signMesh = board;
       }
       g.add(rightArm);
@@ -342,6 +399,7 @@ export class RpgCombatSystem {
         leftLeg,
         rightLeg,
         signMesh,
+        signPivot,
         active: false,
         hp: 45,
         maxHp: 45,
@@ -367,6 +425,99 @@ export class RpgCombatSystem {
     this.passengerNpc = createActor('passenger', 0);
     this.roadsideNpc = createActor('roadside', 0);
 
+    // 2a. Build Giant Planet Monster Boss (pooled once)
+    const mGroup = new THREE.Group();
+    mGroup.visible = false;
+    const mArmorMat = new THREE.MeshStandardMaterial({ color: 0x1e1b24, roughness: 0.42, metalness: 0.68 });
+    const mPlateMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.35, metalness: 0.45 });
+    const mCoreMat = new THREE.MeshBasicMaterial({ color: 0xf97316, toneMapped: false });
+    const mEyeMat = new THREE.MeshBasicMaterial({ color: 0xfde047, toneMapped: false });
+    const mAuraMat = new THREE.MeshBasicMaterial({ color: 0xfb923c, transparent: true, opacity: 0.8, toneMapped: false });
+
+    const mTorsoGeo = new THREE.BoxGeometry(1.9, 2.0, 1.25);
+    const mTorso = new THREE.Mesh(mTorsoGeo, mArmorMat);
+    mTorso.position.set(0, 2.35, 0);
+    const mChestPlateGeo = new THREE.BoxGeometry(2.12, 0.72, 1.38);
+    const mChestPlate = new THREE.Mesh(mChestPlateGeo, mPlateMat);
+    mChestPlate.position.set(0, 2.75, 0);
+    const mCoreGeo = new THREE.SphereGeometry(0.42, 14, 12);
+    const mCoreMesh = new THREE.Mesh(mCoreGeo, mCoreMat);
+    mCoreMesh.position.set(0, 2.48, -0.56);
+
+    const mLegGeo = new THREE.BoxGeometry(0.62, 1.45, 0.68);
+    for (const side of [-1, 1]) {
+      const mLeg = new THREE.Mesh(mLegGeo, mArmorMat);
+      mLeg.position.set(side * 0.56, 0.72, 0);
+      mGroup.add(mLeg);
+    }
+
+    const mHeadPivot = new THREE.Group();
+    mHeadPivot.position.set(0, 3.65, -0.08);
+    const mHeadGeo = new THREE.BoxGeometry(0.92, 0.82, 0.88);
+    const mHeadMesh = new THREE.Mesh(mHeadGeo, mArmorMat);
+    const mHornGeo = new THREE.ConeGeometry(0.18, 0.78, 8);
+    const mEyeGeo = new THREE.SphereGeometry(0.1, 8, 8);
+    for (const side of [-1, 1]) {
+      const horn = new THREE.Mesh(mHornGeo, mPlateMat);
+      horn.position.set(side * 0.42, 0.55, 0);
+      horn.rotation.z = side * -0.38;
+      const eye = new THREE.Mesh(mEyeGeo, mEyeMat);
+      eye.position.set(side * 0.22, 0.08, -0.44);
+      mHeadPivot.add(horn, eye);
+    }
+    mHeadPivot.add(mHeadMesh);
+
+    const mArmGeo = new THREE.BoxGeometry(0.56, 1.78, 0.58);
+    const mClawGeo = new THREE.ConeGeometry(0.24, 0.55, 6);
+    const buildMonsterArm = (side: number) => {
+      const ap = new THREE.Group();
+      ap.position.set(side * 1.32, 3.05, 0);
+      const armMesh = new THREE.Mesh(mArmGeo, mPlateMat);
+      armMesh.position.set(0, -0.78, 0);
+      const clawMesh = new THREE.Mesh(mClawGeo, mCoreMat);
+      clawMesh.position.set(0, -1.75, -0.08);
+      clawMesh.rotation.x = Math.PI;
+      ap.add(armMesh, clawMesh);
+      mGroup.add(ap);
+      return ap;
+    };
+    const mLeftArm = buildMonsterArm(-1);
+    const mRightArm = buildMonsterArm(1);
+
+    const mAuraGeo = new THREE.TorusGeometry(2.55, 0.11, 8, 32);
+    mAuraGeo.rotateX(Math.PI / 2);
+    const mAuraRing = new THREE.Mesh(mAuraGeo, mAuraMat);
+    mAuraRing.position.set(0, 0.08, 0);
+
+    mGroup.add(mTorso, mChestPlate, mCoreMesh, mHeadPivot, mAuraRing);
+    this.worldGroup.add(mGroup);
+
+    this.planetMonster = {
+      group: mGroup,
+      leftArm: mLeftArm,
+      rightArm: mRightArm,
+      head: mHeadPivot,
+      coreMesh: mCoreMesh,
+      coreMat: mCoreMat,
+      auraRing: mAuraRing,
+      auraMat: mAuraMat,
+      active: false,
+      hp: 8400,
+      maxHp: 8400,
+      x: 0,
+      y: 0,
+      z: 0,
+      floorY: 0,
+      attackCooldown: 1.5,
+      knockedOut: false,
+      knockTimer: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      key: null,
+      defeated: false,
+    };
+
     this.disposables.push(
       torsoGeo,
       stripeGeo,
@@ -386,6 +537,21 @@ export class RpgCombatSystem {
       bossTrimMat,
       passengerCoatMat,
       roadsideCoatMat,
+      mArmorMat,
+      mPlateMat,
+      mCoreMat,
+      mEyeMat,
+      mAuraMat,
+      mTorsoGeo,
+      mChestPlateGeo,
+      mCoreGeo,
+      mLegGeo,
+      mHeadGeo,
+      mHornGeo,
+      mEyeGeo,
+      mArmGeo,
+      mClawGeo,
+      mAuraGeo,
     );
 
     // 2b. Pooled Ground Loot Pouches (16 slots: white common, blue epic, larger glowing purple legendary/unique)
@@ -535,6 +701,10 @@ export class RpgCombatSystem {
     this.disposables.push(boltGeo, this.playerBoltMat, this.enemyBoltMat);
   }
 
+  public setWeaponHolstered(holstered: boolean): void {
+    this.weaponHolstered = holstered;
+  }
+
   public getBlasterMuzzleWorldPos(out: THREE.Vector3): boolean {
     if (!this.heldWeaponGroup.visible || !this.blasterRig.visible) return false;
     this.heldWeaponGroup.updateMatrixWorld(true);
@@ -573,7 +743,13 @@ export class RpgCombatSystem {
       p.coins = coins;
       p.life = 90;
 
-      if (rarity === 'legendary') {
+      if (rarity === 'mythic') {
+        p.sackMat.color.set('#f97316');
+        p.sackMat.emissive.set('#fb923c');
+        p.sackMat.emissiveIntensity = 1.85;
+        p.glowMat.color.set('#fde047');
+        p.group.scale.setScalar(1.7);
+      } else if (rarity === 'legendary') {
         p.sackMat.color.set('#a855f7');
         p.sackMat.emissive.set('#c084fc');
         p.sackMat.emissiveIntensity = item?.isUnique ? 1.4 : 0.95;
@@ -677,13 +853,13 @@ export class RpgCombatSystem {
     b.active = true;
     b.knockedOut = false;
     b.knockTimer = 0;
-    b.hp = 190;
-    b.maxHp = 190;
+    b.hp = 5200;
+    b.maxHp = 5200;
     b.x = x;
     b.floorY = 0;
     b.y = 0;
     b.z = z;
-    b.attackCooldown = 1.4;
+    b.attackCooldown = 1.3;
     b.group.visible = true;
     b.group.position.set(x, 0, z);
     b.group.rotation.set(0, 0, 0);
@@ -698,6 +874,57 @@ export class RpgCombatSystem {
 
   public isBountyBossAlive(): boolean {
     return this.bountyBoss.active && !this.bountyBoss.knockedOut;
+  }
+
+  public getBountyBossHp(): { hp: number; maxHp: number } {
+    return {
+      hp: Math.max(0, Math.round(this.bountyBoss.hp)),
+      maxHp: this.bountyBoss.maxHp,
+    };
+  }
+
+  public ensurePlanetMonsterAt(key: string, x: number, z: number): void {
+    if (this.planetMonster.defeated && this.planetMonster.key === key) return;
+    if (this.planetMonster.key === key && this.planetMonster.active) return;
+    const m = this.planetMonster;
+    m.key = key;
+    m.defeated = false;
+    m.active = true;
+    m.knockedOut = false;
+    m.knockTimer = 0;
+    m.maxHp = 8400;
+    m.hp = 8400;
+    m.x = x;
+    m.floorY = 0;
+    m.y = 0;
+    m.z = z;
+    m.attackCooldown = 1.5;
+    m.group.visible = true;
+    m.group.position.set(x, 0, z);
+    m.group.rotation.set(0, 0, 0);
+  }
+
+  public clearPlanetMonster(): void {
+    this.planetMonster.key = null;
+    this.planetMonster.defeated = false;
+    this.planetMonster.active = false;
+    this.planetMonster.group.visible = false;
+  }
+
+  public isPlanetMonsterAlive(): boolean {
+    return this.planetMonster.active && !this.planetMonster.knockedOut;
+  }
+
+  public getPlanetMonsterHp(): { hp: number; maxHp: number } {
+    return {
+      hp: Math.max(0, Math.round(this.planetMonster.hp)),
+      maxHp: this.planetMonster.maxHp,
+    };
+  }
+
+  public getPlanetMonsterPos(): { x: number; z: number } | null {
+    if (!this.isPlanetMonsterAlive()) return null;
+    return { x: this.planetMonster.x, z: this.planetMonster.z };
   }
 
   public setSaberBeacon(active: boolean, x = 0, z = 0, colorHex = '#a855f7'): void {
@@ -838,18 +1065,27 @@ export class RpgCombatSystem {
   public getNearestHostileThreat(
     x: number,
     z: number,
-  ): { kind: 'gopnik' | 'police' | 'boss'; x: number; z: number; dist: number } | null {
-    let best: { kind: 'gopnik' | 'police' | 'boss'; x: number; z: number; dist: number } | null = null;
+  ): { kind: 'gopnik' | 'police' | 'boss' | 'monster'; x: number; z: number; dist: number } | null {
+    let best: { kind: 'gopnik' | 'police' | 'boss' | 'monster'; x: number; z: number; dist: number } | null = null;
+    let bestDist = Infinity;
     const check = (a: HumanNpcActor, kind: 'gopnik' | 'police' | 'boss') => {
       if (!a.active || a.knockedOut) return;
       const d = Math.hypot(a.x - x, a.z - z);
-      if (d < 28 && (!best || d < best.dist)) {
+      if (d < 28 && d < bestDist) {
+        bestDist = d;
         best = { kind, x: a.x, z: a.z, dist: d };
       }
     };
     for (const g of this.gopniks) check(g, 'gopnik');
     for (const o of this.policeOfficers) check(o, 'police');
     check(this.bountyBoss, 'boss');
+    if (this.planetMonster.active && !this.planetMonster.knockedOut) {
+      const dm = Math.hypot(this.planetMonster.x - x, this.planetMonster.z - z);
+      if (dm < 36 && dm < bestDist) {
+        bestDist = dm;
+        best = { kind: 'monster', x: this.planetMonster.x, z: this.planetMonster.z, dist: dm };
+      }
+    }
     return best;
   }
 
@@ -886,6 +1122,26 @@ export class RpgCombatSystem {
       if (tryHit(o, 'police')) return true;
     }
     if (tryHit(this.bountyBoss, 'boss')) return true;
+
+    const m = this.planetMonster;
+    if (m.active && !m.knockedOut) {
+      const dx = m.x - x;
+      const dz = m.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d <= Math.max(radius, 2.85)) {
+        m.hp -= damage;
+        if (m.hp <= 0) {
+          m.knockedOut = true;
+          m.knockTimer = 1.6;
+          m.vx = (dx / Math.max(0.4, d)) * 4.2;
+          m.vy = 5.4;
+          m.vz = (dz / Math.max(0.4, d)) * 4.2;
+          m.defeated = true;
+          callbacks.onEnemyDefeated('monster', m.x, m.floorY, m.z);
+        }
+        return true;
+      }
+    }
     return false;
   }
 
@@ -925,6 +1181,9 @@ export class RpgCombatSystem {
     if (this.policeWanted) {
       const alive = this.getPoliceAliveCount();
       return alive > 0 ? `Розыск полиции (${alive} патрульных)` : 'Погоня полиции';
+    }
+    if (this.isPlanetMonsterAlive()) {
+      return `Монстр планеты (${Math.max(1, Math.round(this.planetMonster.hp))} HP)`;
     }
     if (this.isBountyBossAlive()) {
       return `Босс-цель (${Math.max(1, Math.round(this.bountyBoss.hp))} HP)`;
@@ -1038,6 +1297,27 @@ export class RpgCombatSystem {
     hitActorList(this.policeOfficers, 'police');
     hitActorList([this.bountyBoss], 'boss');
 
+    const m = this.planetMonster;
+    if (m.active && !m.knockedOut) {
+      const dxM = m.x - originX;
+      const dzM = m.z - originZ;
+      const fwdM = dxM * dirX + dzM * dirZ;
+      const sideM = Math.abs(dxM * -dirZ + dzM * dirX);
+      if (fwdM >= -0.6 && fwdM <= range + 2.0 && sideM <= coneWidth + 1.65) {
+        m.hp -= damage;
+        hitEnemy = true;
+        if (m.hp <= 0) {
+          m.knockedOut = true;
+          m.knockTimer = 1.6;
+          m.vx = dirX * 4.4;
+          m.vy = 5.4;
+          m.vz = dirZ * 4.4;
+          m.defeated = true;
+          callbacks.onEnemyDefeated('monster', m.x, m.floorY, m.z);
+        }
+      }
+    }
+
     return { hitEnemy, hitPolice, hitRally };
   }
 
@@ -1064,10 +1344,16 @@ export class RpgCombatSystem {
     armorPct: number,
     walkObstacles: BuildingFootprint[],
     callbacks: CombatCallbacks,
+    lootAutoCollect?: LootAutoCollectSettings,
   ): void {
     const onSurface = !insideInterior && !inSpaceView;
     this.worldGroup.visible = onSurface;
-    this.heldWeaponGroup.visible = isWalking && !insideInterior && !inSpaceView && this.activeWeaponKind !== 'fists';
+    this.heldWeaponGroup.visible =
+      isWalking &&
+      !insideInterior &&
+      !inSpaceView &&
+      !this.weaponHolstered &&
+      this.activeWeaponKind !== 'fists';
 
     if (this.heldWeaponGroup.visible) {
       if (this.attackSwingTimer > 0) {
@@ -1087,7 +1373,7 @@ export class RpgCombatSystem {
 
     if (!onSurface) return;
 
-    // 0. Ground Loot Pouches (bob, magnet & auto-collect)
+    // 0. Ground Loot Pouches (bob, magnet & auto-collect respecting quality filters)
     for (let i = 0; i < this.lootPouches.length; i++) {
       const p = this.lootPouches[i];
       if (!p.active) continue;
@@ -1099,7 +1385,8 @@ export class RpgCombatSystem {
         continue;
       }
 
-      if (isWalking && Math.abs(playerY - p.floorY) < 3.5) {
+      const canAutoCollect = !p.item || !lootAutoCollect || lootAutoCollect[p.item.rarity];
+      if (canAutoCollect && isWalking && Math.abs(playerY - p.floorY) < 3.5) {
         const dx = playerX - p.x;
         const dz = playerZ - p.z;
         const dist = Math.hypot(dx, dz);
@@ -1200,7 +1487,7 @@ export class RpgCombatSystem {
       g.group.position.set(g.x, g.floorY, g.z);
     }
 
-    // 2. Rally Protesters animation + «Свободу Навальному!» shouts
+    // 2. Rally Protesters animation + upright placards ABOVE head
     let activeRallyNear = 0;
     for (let i = 0; i < this.rallyCrowd.length; i++) {
       const r = this.rallyCrowd[i];
@@ -1208,8 +1495,11 @@ export class RpgCombatSystem {
       if (updateKnocked(r)) continue;
       activeRallyNear++;
       const wave = Math.sin(elapsed * 5.2 + r.phase);
-      r.rightArm.rotation.x = -2.2 + wave * 0.32;
-      r.leftArm.rotation.x = -0.5 + wave * 0.25;
+      r.rightArm.rotation.x = 2.32 + wave * 0.28;
+      if (r.signPivot) {
+        r.signPivot.rotation.x = -r.rightArm.rotation.x;
+      }
+      r.leftArm.rotation.x = 0.65 + wave * 0.22;
       r.group.position.set(r.x, Math.abs(wave) * 0.08, r.z);
     }
     if (activeRallyNear > 0 && this.rallySpawnedCenter) {
@@ -1247,13 +1537,13 @@ export class RpgCombatSystem {
           }
           b.attackCooldown -= delta;
           if (b.attackCooldown <= 0) {
-            b.attackCooldown = 1.75;
+            b.attackCooldown = 1.45;
             b.rightArm.rotation.x = -1.45;
             if (dist < 2.6) {
-              const reduced = Math.max(4, Math.round(11 * (1 - armorPct / 100)));
+              const reduced = Math.max(5, Math.round(15 * (1 - armorPct / 100)));
               callbacks.onPlayerDamaged(reduced, 'Босс');
             } else {
-              this.fireBolt(false, b.x, 1.5, b.z, dx / dist, 0, dz / dist, 25, 9);
+              this.fireBolt(false, b.x, 1.5, b.z, dx / dist, 0, dz / dist, 27, 12);
             }
           } else {
             b.rightArm.rotation.x = THREE.MathUtils.damp(b.rightArm.rotation.x, -0.45, 5, delta);
@@ -1265,6 +1555,63 @@ export class RpgCombatSystem {
         }
         b.group.position.set(b.x, 0, b.z);
         this.bossRingMesh.rotation.z = elapsed * 2.2;
+      }
+    }
+
+    // 2c. Giant Planet Monster Boss AI
+    if (this.planetMonster.active) {
+      const m = this.planetMonster;
+      if (m.knockedOut) {
+        m.knockTimer -= delta;
+        m.x += m.vx * delta;
+        m.z += m.vz * delta;
+        m.vy -= 18 * delta;
+        m.y = Math.max(m.floorY, m.y + m.vy * delta);
+        m.group.position.set(m.x, m.y, m.z);
+        m.group.rotation.x += delta * 4.5;
+        if (m.knockTimer <= 0) {
+          m.active = false;
+          m.group.visible = false;
+        }
+      } else {
+        const dx = playerX - m.x;
+        const dz = playerZ - m.z;
+        const dist = Math.hypot(dx, dz);
+        m.group.rotation.y = Math.atan2(-dx, -dz);
+        m.coreMesh.scale.setScalar(1 + Math.sin(elapsed * 6.5) * 0.14);
+        m.auraRing.rotation.z = -elapsed * 1.9;
+        m.head.rotation.y = Math.sin(elapsed * 1.7) * 0.18;
+
+        if (isWalking && dist < 56) {
+          if (dist > 3.6) {
+            const spd = 2.65;
+            m.x += (dx / dist) * spd * delta;
+            m.z += (dz / dist) * spd * delta;
+            const swing = Math.sin(elapsed * 4.6) * 0.48;
+            m.leftArm.rotation.x = swing;
+            m.rightArm.rotation.x = -swing;
+          } else {
+            m.leftArm.rotation.x = THREE.MathUtils.damp(m.leftArm.rotation.x, 0.4, 5, delta);
+          }
+
+          m.attackCooldown -= delta;
+          if (m.attackCooldown <= 0) {
+            m.attackCooldown = 1.65;
+            m.rightArm.rotation.x = 1.65;
+            if (dist < 4.1) {
+              const reduced = Math.max(6, Math.round(18 * (1 - armorPct / 100)));
+              callbacks.onPlayerDamaged(reduced, 'Монстр планеты');
+            } else {
+              this.fireBolt(false, m.x, 2.4, m.z, dx / dist, -0.04, dz / dist, 26, 14);
+            }
+          } else {
+            m.rightArm.rotation.x = THREE.MathUtils.damp(m.rightArm.rotation.x, 0.3, 5, delta);
+          }
+        } else {
+          m.leftArm.rotation.x = Math.sin(elapsed * 2.1) * 0.14;
+          m.rightArm.rotation.x = -Math.sin(elapsed * 2.1) * 0.14;
+        }
+        m.group.position.set(m.x, m.floorY, m.z);
       }
     }
 
@@ -1399,6 +1746,27 @@ export class RpgCombatSystem {
         if (!consumed) checkBoltHit(this.rallyCrowd, 'rally');
         if (!consumed) checkBoltHit(this.policeOfficers, 'police');
         if (!consumed) checkBoltHit([this.bountyBoss], 'boss');
+        if (!consumed && this.planetMonster.active && !this.planetMonster.knockedOut) {
+          const m = this.planetMonster;
+          if (
+            Math.hypot(m.x - b.x, m.z - b.z) < 2.25 &&
+            b.y >= m.floorY &&
+            b.y <= m.floorY + 4.8
+          ) {
+            m.hp -= b.damage;
+            consumed = true;
+            if (m.hp <= 0) {
+              const dLen = Math.max(0.1, Math.hypot(b.vx, b.vz));
+              m.knockedOut = true;
+              m.knockTimer = 1.6;
+              m.vx = (b.vx / dLen) * 4.2;
+              m.vy = 5.4;
+              m.vz = (b.vz / dLen) * 4.2;
+              m.defeated = true;
+              callbacks.onEnemyDefeated('monster', m.x, m.floorY, m.z);
+            }
+          }
+        }
 
         if (consumed) {
           b.active = false;

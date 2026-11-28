@@ -2,6 +2,7 @@ import type {
   AudioSettings,
   CabinThemeId,
   CompanionLocation,
+  GameplaySettings,
   PlanetId,
   QuestKind,
   RpgEquipMap,
@@ -18,6 +19,17 @@ import type {
 const SAVE_STORAGE_KEY = 'coruscant_horizon_save_v1';
 const AUDIO_STORAGE_KEY = 'coruscant_horizon_audio_v1';
 const GRAPHICS_QUALITY_KEY = 'coruscant_horizon_gfx_v1';
+const GAMEPLAY_SETTINGS_KEY = 'coruscant_horizon_gameplay_v1';
+
+export const DEFAULT_GAMEPLAY_SETTINGS: GameplaySettings = {
+  bossSpawnIntervalMin: 5,
+  lootAutoCollect: {
+    common: true,
+    epic: true,
+    legendary: true,
+    mythic: true,
+  },
+};
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   muted: false,
@@ -59,9 +71,12 @@ export interface QuestSaveItem {
 
 export interface RpgSaveData {
   hp: number;
-  inventory: RpgItem[];
+  inventory?: RpgItem[];
+  playerInventory?: RpgItem[];
+  companionInventory?: RpgItem[];
   playerEquipped: RpgEquipMap;
   companionEquipped: RpgEquipMap;
+  weaponHolstered?: boolean;
 }
 
 export interface GameSaveData {
@@ -219,6 +234,53 @@ export function writeGraphicsQuality(quality: number): void {
     if (typeof window === 'undefined' || !window.localStorage) return;
     const clamped = Math.max(0, Math.min(1, quality));
     window.localStorage.setItem(GRAPHICS_QUALITY_KEY, clamped.toFixed(2));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function readGameplaySettings(): GameplaySettings {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return {
+        bossSpawnIntervalMin: DEFAULT_GAMEPLAY_SETTINGS.bossSpawnIntervalMin,
+        lootAutoCollect: { ...DEFAULT_GAMEPLAY_SETTINGS.lootAutoCollect },
+      };
+    }
+    const raw = window.localStorage.getItem(GAMEPLAY_SETTINGS_KEY);
+    if (!raw) {
+      return {
+        bossSpawnIntervalMin: DEFAULT_GAMEPLAY_SETTINGS.bossSpawnIntervalMin,
+        lootAutoCollect: { ...DEFAULT_GAMEPLAY_SETTINGS.lootAutoCollect },
+      };
+    }
+    const p = JSON.parse(raw) as Partial<GameplaySettings>;
+    const rawMin = typeof p.bossSpawnIntervalMin === 'number' && Number.isFinite(p.bossSpawnIntervalMin)
+      ? Math.round(p.bossSpawnIntervalMin)
+      : DEFAULT_GAMEPLAY_SETTINGS.bossSpawnIntervalMin;
+    const bossSpawnIntervalMin = Math.max(5, Math.min(60, rawMin));
+    const lc = (p.lootAutoCollect ?? {}) as Partial<GameplaySettings['lootAutoCollect']>;
+    return {
+      bossSpawnIntervalMin,
+      lootAutoCollect: {
+        common: lc.common !== undefined ? Boolean(lc.common) : true,
+        epic: lc.epic !== undefined ? Boolean(lc.epic) : true,
+        legendary: lc.legendary !== undefined ? Boolean(lc.legendary) : true,
+        mythic: lc.mythic !== undefined ? Boolean(lc.mythic) : true,
+      },
+    };
+  } catch {
+    return {
+      bossSpawnIntervalMin: DEFAULT_GAMEPLAY_SETTINGS.bossSpawnIntervalMin,
+      lootAutoCollect: { ...DEFAULT_GAMEPLAY_SETTINGS.lootAutoCollect },
+    };
+  }
+}
+
+export function writeGameplaySettings(settings: GameplaySettings): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(GAMEPLAY_SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // Ignore storage errors
   }

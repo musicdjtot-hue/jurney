@@ -20,9 +20,11 @@ import {
   formatSaveTimeLabel,
   readAudioSettings,
   readGameSave,
+  readGameplaySettings,
   readGraphicsQuality,
   writeAudioSettings,
   writeGameSave,
+  writeGameplaySettings,
   writeGraphicsQuality,
   type GameSaveData,
 } from './saveSystem';
@@ -30,11 +32,15 @@ import { SkyAtmosphere } from './sky';
 import { CoruscantWorld, getChunkRoadArms, type RooftopClubInfo } from './world';
 import { RpgCombatSystem } from './rpgCombat';
 import {
+  canEquipOnTarget,
   computeRpgStats,
+  createMythicOrangeLoot,
   createRpgItemFromTemplate,
   createStarterRpgData,
   createUniqueBossLoot,
   getLightsaberForPlanet,
+  inferOwnerTarget,
+  isSharedWearable,
   rollLootDrop,
 } from './rpgCatalog';
 import type {
@@ -42,9 +48,11 @@ import type {
   CabinThemeId,
   CompanionLocation,
   ControlInputs,
+  GameplaySettings,
   InteriorMode,
   InteriorPose,
   LandingSite,
+  LootAutoCollectSettings,
   PassengerQuestState,
   PlanetId,
   PlanetMarker,
@@ -126,9 +134,14 @@ export class CoruscantEngine {
   private quests = new QuestManager();
   private rpgCombat: RpgCombatSystem;
   private rpgHp = 100;
-  private rpgInventory = createStarterRpgData().inventory;
+  private playerInventory: RpgItem[] = createStarterRpgData().playerInventory;
+  private companionInventory: RpgItem[] = createStarterRpgData().companionInventory;
   private playerEquipped = createStarterRpgData().playerEquipped;
   private companionEquipped = createStarterRpgData().companionEquipped;
+  private weaponHolstered = false;
+  private gameplaySettings: GameplaySettings = readGameplaySettings();
+  private planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
+  private planetMonsterCoord: { planetId: PlanetId; key: string; x: number; z: number } | null = null;
   private walkStreakSec = 0;
   private gopnikCooldown = 35;
   private healCooldown = 0;
@@ -510,41 +523,128 @@ export class CoruscantEngine {
   private syncRpgAppearance(): void {
     const stats = computeRpgStats(this.playerEquipped, this.companionEquipped);
     this.rpgCombat.syncPlayerWeapon(stats.weaponKind, stats.weaponColor);
+    this.rpgCombat.setWeaponHolstered(this.weaponHolstered);
     this.walkerCompanion.applyRpgOutfit(
       this.companionEquipped.torso?.colorHex ?? '#ebe4d7',
       this.companionEquipped.torso?.accentHex ?? '#d7cebe',
       this.companionEquipped.legs?.colorHex ?? '#1e293b',
       this.companionEquipped.head?.colorHex ?? '#334155',
+      this.companionEquipped,
     );
     this.cockpit.applyCompanionOutfit(
       this.companionEquipped.torso?.colorHex ?? '#ebe4d7',
       this.companionEquipped.torso?.accentHex ?? '#d7cebe',
       this.companionEquipped.legs?.colorHex ?? '#1e293b',
       this.companionEquipped.head?.colorHex ?? '#334155',
+      this.companionEquipped,
     );
   }
 
+  public toggleWeaponHolstered(): void {
+    this.weaponHolstered = !this.weaponHolstered;
+    this.rpgCombat.setWeaponHolstered(this.weaponHolstered);
+    this.audio.playDoorLatch(!this.weaponHolstered);
+    this.quests.showToast(
+      this.weaponHolstered ? 'Оружие убрано · Режим свободных рук' : 'Активное оружие в руках',
+      2.2,
+    );
+  }
+
+  private addLootItemToBag(item: RpgItem): RpgOwnerTarget {
+    if (item.slot === 'earrings' || item.weaponKind === 'lightsaber') {
+      this.companionInventory.push(item);
+      return 'companion';
+    }
+    if (item.weaponKind === 'blaster') {
+      this.playerInventory.push(item);
+      return 'player';
+    }
+    if (isSharedWearable(item)) {
+      const preferCompanion =
+        this.companionInventory.length < this.playerInventory.length ||
+        (this.companionInventory.length === this.playerInventory.length &&
+          inferOwnerTarget(item) === 'companion');
+      if (preferCompanion) {
+        this.companionInventory.push(item);
+        return 'companion';
+      }
+      this.playerInventory.push(item);
+      return 'player';
+    }
+    const target = inferOwnerTarget(item);
+    if (target === 'companion') {
+      this.companionInventory.push(item);
+    } else {
+      this.playerInventory.push(item);
+    }
+    return target;
+  }
+
+  public updateGameplaySettings(
+    partial: Partial<GameplaySettings> & { lootAutoCollect?: Partial<LootAutoCollectSettings> },
+  ): void {
+    const nextMin =
+      typeof partial.bossSpawnIntervalMin === 'number' && Number.isFinite(partial.bossSpawnIntervalMin)
+        ? Math.max(5, Math.min(60, Math.round(partial.bossSpawnIntervalMin)))
+        : this.gameplaySettings.bossSpawnIntervalMin;
+    this.gameplaySettings = {
+      bossSpawnIntervalMin: nextMin,
+      lootAutoCollect: {
+        ...this.gameplaySettings.lootAutoCollect,
+        ...(partial.lootAutoCollect ?? {}),
+      },
+    };
+    writeGameplaySettings(this.gameplaySettings);
+    this.planetMonsterCooldown = Math.min(this.planetMonsterCooldown, nextMin * 60);
+  }
+
   private handleEnemyDefeated = (
-    kind: 'gopnik' | 'rally' | 'police' | 'boss',
+    kind: 'gopnik' | 'rally' | 'police' | 'boss' | 'monster',
     x: number,
     y: number,
     z: number,
   ): void => {
     const coinGain =
-      kind === 'boss'
-        ? Math.round(90 + Math.random() * 50)
-        : kind === 'police'
-          ? Math.round(30 + Math.random() * 15)
-          : kind === 'gopnik'
-            ? Math.round(15 + Math.random() * 12)
-            : 10;
-    const dropped = kind === 'boss' ? createUniqueBossLoot() : rollLootDrop(kind);
+      kind === 'monster'
+        ? 260
+        : kind === 'boss'
+          ? Math.round(90 + Math.random() * 50)
+          : kind === 'police'
+            ? Math.round(30 + Math.random() * 15)
+            : kind === 'gopnik'
+              ? Math.round(15 + Math.random() * 12)
+              : 10;
+    const dropped =
+      kind === 'monster'
+        ? createMythicOrangeLoot()
+        : kind === 'boss'
+          ? (Math.random() < 0.65 ? createMythicOrangeLoot() : createUniqueBossLoot())
+          : rollLootDrop(kind);
     this.rpgCombat.spawnLootPouch(x, z, dropped, coinGain, y);
-    this.audio.playLootDrop(kind === 'boss' || dropped?.rarity === 'legendary' || dropped?.rarity === 'epic');
+    this.audio.playLootDrop(
+      kind === 'monster' ||
+        kind === 'boss' ||
+        dropped?.rarity === 'mythic' ||
+        dropped?.rarity === 'legendary' ||
+        dropped?.rarity === 'epic',
+    );
 
-    if (kind === 'boss') {
+    if (kind === 'monster') {
+      this.quests.onPlanetMonsterDefeated();
+      this.planetMonsterCoord = null;
+      this.planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
+      this.quests.showToast(
+        'Гигантский монстр повержен! На земле редкий оранжевый лут с эффектами!',
+        4.6,
+      );
+    } else if (kind === 'boss') {
       this.quests.onBountyBossDefeated();
-      this.quests.showToast('Босс повержен! На земле светится уникальный фиолетовый мешочек!', 4.0);
+      this.quests.showToast(
+        dropped?.rarity === 'mythic'
+          ? 'Босс повержен! На земле редкий оранжевый мешочек с эффектами!'
+          : 'Босс повержен! На земле светится уникальный фиолетовый мешочек!',
+        4.0,
+      );
     } else {
       this.quests.showToast('Враг повержен · На земле выпал мешочек с лутом и монетами', 2.8);
     }
@@ -575,9 +675,12 @@ export class CoruscantEngine {
       return;
     }
     const stats = computeRpgStats(this.playerEquipped, this.companionEquipped);
-    if (stats.weaponKind === 'lightsaber') {
-      this.audio.playSaberSwing(stats.weaponColor === '#a855f7');
-    } else if (stats.weaponKind === 'blaster') {
+    const activeWeaponKind = this.weaponHolstered ? 'fists' : stats.weaponKind;
+    const activeAttackDmg = this.weaponHolstered ? 12 : stats.attackDmg;
+
+    if (activeWeaponKind === 'lightsaber') {
+      this.audio.playSaberSwing(stats.weaponColor === '#a855f7' || stats.weaponColor === '#f97316');
+    } else if (activeWeaponKind === 'blaster') {
       this.audio.playBlasterShot();
     } else {
       this.audio.playPunchHit();
@@ -594,7 +697,7 @@ export class CoruscantEngine {
     let dirZ = _camForward.z;
     let exactOrigin = false;
 
-    if (stats.weaponKind === 'blaster') {
+    if (activeWeaponKind === 'blaster') {
       _aimTarget.copy(_camPos).addScaledVector(_camForward, 44);
       if (this.rpgCombat.getBlasterMuzzleWorldPos(_muzzlePos)) {
         originX = _muzzlePos.x;
@@ -620,8 +723,8 @@ export class CoruscantEngine {
       dirX,
       dirY,
       dirZ,
-      stats.attackDmg,
-      stats.weaponKind,
+      activeAttackDmg,
+      activeWeaponKind,
       {
         onPlayerDamaged: (_rawDmg: number, _attackerLabel: string) => {},
         onEnemyDefeated: this.handleEnemyDefeated,
@@ -632,7 +735,7 @@ export class CoruscantEngine {
       exactOrigin,
     );
 
-    if (atkRes.hitEnemy && stats.weaponKind !== 'blaster') {
+    if (atkRes.hitEnemy && activeWeaponKind !== 'blaster') {
       this.audio.playPunchHit();
     }
 
@@ -645,7 +748,7 @@ export class CoruscantEngine {
         this.physics.walkerPos.z,
         pedDirX,
         pedDirZ,
-        stats.weaponKind === 'blaster' ? 26 : 3.8,
+        activeWeaponKind === 'blaster' ? 26 : 3.8,
         1.85,
       );
       if (hitRes.count > 0) {
@@ -665,18 +768,61 @@ export class CoruscantEngine {
   }
 
   public equipRpgItem(uid: string, target: RpgOwnerTarget): void {
-    const idx = this.rpgInventory.findIndex((i) => i.uid === uid);
+    const preferredBag = target === 'player' ? this.playerInventory : this.companionInventory;
+    const secondaryBag = target === 'player' ? this.companionInventory : this.playerInventory;
+    let sourceBag = preferredBag;
+    let idx = sourceBag.findIndex((i) => i.uid === uid);
+    if (idx < 0) {
+      sourceBag = secondaryBag;
+      idx = sourceBag.findIndex((i) => i.uid === uid);
+    }
     if (idx < 0) return;
-    const item = this.rpgInventory[idx];
+
+    const item = sourceBag[idx];
+    if (!canEquipOnTarget(item, target)) {
+      this.quests.showToast(
+        target === 'player'
+          ? 'Серьги и световые мечи может надевать только спутница'
+          : 'Бластеры может использовать только игрок',
+        2.8,
+      );
+      return;
+    }
+
     const targetEquipped = target === 'player' ? this.playerEquipped : this.companionEquipped;
     const prev = targetEquipped[item.slot];
     targetEquipped[item.slot] = item;
-    this.rpgInventory.splice(idx, 1);
+    sourceBag.splice(idx, 1);
     if (prev) {
-      this.rpgInventory.push(prev);
+      preferredBag.push(prev);
+    }
+    if (target === 'player' && item.slot === 'weapon' && this.weaponHolstered) {
+      this.weaponHolstered = false;
     }
     this.syncRpgAppearance();
-    this.quests.showToast(`Экипировано: ${item.name} (${target === 'player' ? 'Игрок' : 'Спутница'})`, 2.6);
+    this.quests.showToast(
+      `Экипировано: ${item.name} (${target === 'player' ? 'Игрок' : 'Спутница'})`,
+      2.6,
+    );
+    this.saveGame(false);
+  }
+
+  public transferRpgItem(uid: string, toTarget: RpgOwnerTarget): void {
+    const fromBag = toTarget === 'companion' ? this.playerInventory : this.companionInventory;
+    const toBag = toTarget === 'companion' ? this.companionInventory : this.playerInventory;
+    const idx = fromBag.findIndex((i) => i.uid === uid);
+    if (idx < 0) return;
+    const item = fromBag[idx];
+    if (!isSharedWearable(item) && !canEquipOnTarget(item, toTarget)) {
+      this.quests.showToast('Эту вещь нельзя передать другому владельцу', 2.4);
+      return;
+    }
+    fromBag.splice(idx, 1);
+    toBag.push(item);
+    this.quests.showToast(
+      `Передано (${toTarget === 'companion' ? 'Спутнице' : 'Игроку'}): ${item.name}`,
+      2.4,
+    );
     this.saveGame(false);
   }
 
@@ -685,18 +831,30 @@ export class CoruscantEngine {
     const item = targetEquipped[slot];
     if (!item) return;
     targetEquipped[slot] = null;
-    this.rpgInventory.push(item);
+    if (target === 'companion') {
+      this.companionInventory.push(item);
+    } else {
+      this.playerInventory.push(item);
+    }
     this.syncRpgAppearance();
     this.quests.showToast(`Снято: ${item.name}`, 2.2);
     this.saveGame(false);
   }
 
   public deleteRpgItem(uid: string): void {
-    const idx = this.rpgInventory.findIndex((i) => i.uid === uid);
-    if (idx < 0) return;
-    const removed = this.rpgInventory.splice(idx, 1)[0];
-    this.quests.showToast(`Удалено: ${removed.name}`, 2.0);
-    this.saveGame(false);
+    let idx = this.playerInventory.findIndex((i) => i.uid === uid);
+    if (idx >= 0) {
+      const removed = this.playerInventory.splice(idx, 1)[0];
+      this.quests.showToast(`Удалено: ${removed.name}`, 2.0);
+      this.saveGame(false);
+      return;
+    }
+    idx = this.companionInventory.findIndex((i) => i.uid === uid);
+    if (idx >= 0) {
+      const removed = this.companionInventory.splice(idx, 1)[0];
+      this.quests.showToast(`Удалено: ${removed.name}`, 2.0);
+      this.saveGame(false);
+    }
   }
 
   public startQuestAutopilot(questId?: string): void {
@@ -1311,9 +1469,11 @@ export class CoruscantEngine {
       companionLocation: this.companionLocation,
       rpgState: {
         hp: this.rpgHp,
-        inventory: this.rpgInventory,
+        playerInventory: this.playerInventory,
+        companionInventory: this.companionInventory,
         playerEquipped: this.playerEquipped,
         companionEquipped: this.companionEquipped,
+        weaponHolstered: this.weaponHolstered,
       },
     };
     const ok = writeGameSave(data);
@@ -1352,11 +1512,16 @@ export class CoruscantEngine {
     this.quests = new QuestManager();
     const defRpg = createStarterRpgData();
     this.rpgHp = defRpg.hp;
-    this.rpgInventory = [...defRpg.inventory];
+    this.playerInventory = [...defRpg.playerInventory];
+    this.companionInventory = [...defRpg.companionInventory];
     this.playerEquipped = { ...defRpg.playerEquipped };
     this.companionEquipped = { ...defRpg.companionEquipped };
+    this.weaponHolstered = false;
+    this.planetMonsterCoord = null;
+    this.planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
     this.syncRpgAppearance();
     this.rpgCombat.clearAllEncounters(true);
+    this.rpgCombat.clearPlanetMonster();
     this.policeDispatchTimer = 0;
     this.policeCooldown = 0;
     this.companionAttackCooldown = 0;
@@ -1477,17 +1642,56 @@ export class CoruscantEngine {
     this.activeSeason = save.activeSeason ?? 'summer';
     this.quests.importSaveState(save);
     this.physics.applySaveState(save);
+    this.rpgCombat.clearPlanetMonster();
+    this.planetMonsterCoord = null;
+    this.planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
     const initRpg = createStarterRpgData();
-    const rpgData = save.rpgState ?? {
-      hp: 100,
-      inventory: initRpg.inventory,
-      playerEquipped: initRpg.playerEquipped,
-      companionEquipped: initRpg.companionEquipped,
-    };
-    this.rpgHp = rpgData.hp;
-    this.rpgInventory = [...rpgData.inventory];
-    this.playerEquipped = { ...rpgData.playerEquipped };
-    this.companionEquipped = { ...rpgData.companionEquipped };
+    const rpgData = save.rpgState;
+    if (rpgData) {
+      this.rpgHp = rpgData.hp ?? initRpg.hp;
+      if (rpgData.playerInventory || rpgData.companionInventory) {
+        this.playerInventory = [...(rpgData.playerInventory ?? initRpg.playerInventory)];
+        this.companionInventory = [...(rpgData.companionInventory ?? initRpg.companionInventory)];
+      } else if (rpgData.inventory) {
+        this.playerInventory = [];
+        this.companionInventory = [];
+        for (const it of rpgData.inventory) {
+          this.addLootItemToBag(it);
+        }
+      } else {
+        this.playerInventory = [...initRpg.playerInventory];
+        this.companionInventory = [...initRpg.companionInventory];
+      }
+      this.playerEquipped = {
+        ...rpgData.playerEquipped,
+        earrings: rpgData.playerEquipped?.earrings ?? null,
+      };
+      this.companionEquipped = {
+        ...rpgData.companionEquipped,
+        earrings: rpgData.companionEquipped?.earrings ?? null,
+      };
+      // Migrate legacy equipped role-locked gear to proper bags
+      if (this.playerEquipped.weapon && !canEquipOnTarget(this.playerEquipped.weapon, 'player')) {
+        this.companionInventory.push(this.playerEquipped.weapon);
+        this.playerEquipped.weapon = null;
+      }
+      if (this.playerEquipped.earrings) {
+        this.companionInventory.push(this.playerEquipped.earrings);
+        this.playerEquipped.earrings = null;
+      }
+      if (this.companionEquipped.weapon && !canEquipOnTarget(this.companionEquipped.weapon, 'companion')) {
+        this.playerInventory.push(this.companionEquipped.weapon);
+        this.companionEquipped.weapon = null;
+      }
+      this.weaponHolstered = Boolean(rpgData.weaponHolstered);
+    } else {
+      this.rpgHp = initRpg.hp;
+      this.playerInventory = [...initRpg.playerInventory];
+      this.companionInventory = [...initRpg.companionInventory];
+      this.playerEquipped = { ...initRpg.playerEquipped };
+      this.companionEquipped = { ...initRpg.companionEquipped };
+      this.weaponHolstered = false;
+    }
     this.syncRpgAppearance();
     this.cockpit.setVehicleModel('coupe');
     this.prevFlightState = this.physics.flightState;
@@ -1827,6 +2031,52 @@ export class CoruscantEngine {
     this.interior.setSerbosCoffeeServed(true);
     this.serbosDialogLine = this.quests.drinkCoffeeWithSerbos();
     this.serbosDialogTimer = 7.0;
+  }
+
+  public startCafeSideQuest(): void {
+    const basePos = this.interiorMode !== 'none' || this.physics.isWalking
+      ? this.savedOutdoorWalkPos
+      : this.physics.position;
+    this.quests.startCafeSpecialQuest(this.physics.activePlanetId, basePos);
+    this.saveGame(false);
+  }
+
+  public startSerbosMission(): void {
+    const basePos = this.interiorMode !== 'none' || this.physics.isWalking
+      ? this.savedOutdoorWalkPos
+      : this.physics.position;
+    this.quests.startSerbosMission(this.physics.activePlanetId, basePos);
+    this.serbosDialogLine =
+      'Сербос: «Доставьте это ядро на маяк — от нас с Адамчиком ИИ ждёт редкая оранжевая награда!»';
+    this.serbosDialogTimer = 7.0;
+    this.saveGame(false);
+  }
+
+  public startMonsterHuntAutopilot(): void {
+    if (this.interiorMode !== 'none') {
+      this.exitInterior();
+    }
+    if (this.physics.isWalking) {
+      this.enterVehicle();
+    }
+    if (this.physics.isWalking) {
+      this.quests.showToast('Сядьте в автодом для автопилота к монстру', 2.8);
+      return;
+    }
+    const pId = this.physics.activePlanetId;
+    if (!this.planetMonsterCoord || this.planetMonsterCoord.planetId !== pId) {
+      const mx = Math.round(this.physics.position.x / 320) * 320 + 225;
+      const mz = Math.round(this.physics.position.z / 320) * 320 - 215;
+      const key = `monster_${pId}_${Date.now()}`;
+      this.planetMonsterCoord = { planetId: pId, key, x: mx, z: mz };
+      this.rpgCombat.ensurePlanetMonsterAt(key, mx, mz);
+    }
+    this.quests.activateMonsterHuntQuest(
+      pId,
+      this.planetMonsterCoord.x,
+      this.planetMonsterCoord.z,
+    );
+    this.startQuestAutopilot();
   }
 
   private enterInterior(mode: 'cafe' | 'hotel' | 'observatory' | 'serbos', label: string): void {
@@ -2518,6 +2768,55 @@ export class CoruscantEngine {
       this.rpgCombat.setSaberBeacon(false);
     }
 
+    // Giant Planet Monster periodic alert & quest tracking
+    if (
+      inSpaceView ||
+      (this.planetMonsterCoord && this.planetMonsterCoord.planetId !== this.physics.activePlanetId)
+    ) {
+      this.rpgCombat.clearPlanetMonster();
+      this.planetMonsterCoord = null;
+    } else if (!insideInterior && !inSpaceView) {
+      if (
+        activeQKind === 'monster_hunt' &&
+        guidanceForTick &&
+        guidanceForTick.targetPlanet === this.physics.activePlanetId
+      ) {
+        if (!this.planetMonsterCoord) {
+          const mx = guidanceForTick.targetX ?? Math.round(activePos.x / 320) * 320 + 225;
+          const mz = guidanceForTick.targetZ ?? Math.round(activePos.z / 320) * 320 - 215;
+          this.planetMonsterCoord = {
+            planetId: this.physics.activePlanetId,
+            key: guidanceForTick.questId,
+            x: mx,
+            z: mz,
+          };
+          this.rpgCombat.ensurePlanetMonsterAt(guidanceForTick.questId, mx, mz);
+        }
+      } else if (!this.planetMonsterCoord) {
+        this.planetMonsterCooldown -= delta;
+        if (this.planetMonsterCooldown <= 0) {
+          this.planetMonsterCooldown = this.gameplaySettings.bossSpawnIntervalMin * 60;
+          const mx = Math.round(activePos.x / 320) * 320 + 225;
+          const mz = Math.round(activePos.z / 320) * 320 - 215;
+          const key = `monster_${this.physics.activePlanetId}_${Math.round(elapsed)}`;
+          this.planetMonsterCoord = {
+            planetId: this.physics.activePlanetId,
+            key,
+            x: mx,
+            z: mz,
+          };
+          this.rpgCombat.ensurePlanetMonsterAt(key, mx, mz);
+          this.quests.activateMonsterHuntQuest(this.physics.activePlanetId, mx, mz);
+          this.audio.playPoliceBeep();
+          this.quests.showToast('⚠️ ТРЕВОГА НА ПЛАНЕТЕ: Появился гигантский монстр!', 5.0);
+        }
+      }
+      if (this.planetMonsterCoord && this.rpgCombat.isPlanetMonsterAlive()) {
+        const mHp = this.rpgCombat.getPlanetMonsterHp();
+        this.quests.updateMonsterProgress(mHp.hp, mHp.maxHp);
+      }
+    }
+
     // Passenger NPC visual marker at pickup or farewell walk after dropoff
     const pQuest = this.quests.getPassengerQuestState();
     if (this.passengerFarewellTimer > 0) {
@@ -2628,14 +2927,17 @@ export class CoruscantEngine {
         },
         onSaberPickupClaimed: () => {
           const saberItem = createRpgItemFromTemplate(getLightsaberForPlanet(this.physics.activePlanetId).templateId);
-          this.rpgInventory.push(saberItem);
+          const bagOwner = this.addLootItemToBag(saberItem);
           this.audio.playLootDrop(true);
           this.quests.onLightsaberClaimed(this.physics.activePlanetId);
           this.quests.setCompanionNote(
             `«Световой меч (${saberItem.name}) у нас! Настоящая легенда!»`,
             5.2,
           );
-          this.quests.showToast(`Найден легендарный световой меч: ${saberItem.name}!`, 4.2);
+          this.quests.showToast(
+            `Найден легендарный меч: ${saberItem.name} (${bagOwner === 'companion' ? 'Спутнице' : 'Игроку'})!`,
+            4.2,
+          );
           this.saveGame(false);
         },
         onGopnikTaunt: (line: string) => {
@@ -2646,19 +2948,29 @@ export class CoruscantEngine {
         },
         onLootCollected: (item: RpgItem | null, coins: number) => {
           this.quests.credits += coins;
+          let bagLabel = '';
           if (item) {
-            this.rpgInventory.push(item);
+            const bagOwner = this.addLootItemToBag(item);
+            bagLabel = bagOwner === 'companion' ? ' · В сумку спутницы' : ' · В ваш инвентарь';
           }
-          this.audio.playLootDrop(Boolean(item && (item.rarity === 'legendary' || item.rarity === 'epic')));
+          this.audio.playLootDrop(
+            Boolean(
+              item &&
+                (item.rarity === 'mythic' ||
+                  item.rarity === 'legendary' ||
+                  item.rarity === 'epic'),
+            ),
+          );
           this.quests.showToast(
             item
-              ? `Подобрано: ${item.name}${item.isUnique ? ' [Уникальный]' : ''} · +${coins} ✦`
+              ? `Подобрано: ${item.name}${item.isUnique ? ' [Уникальный]' : ''}${bagLabel} · +${coins} ✦`
               : `Подобран мешочек: +${coins} ✦`,
-            3.0,
+            3.2,
           );
           this.saveGame(false);
         },
       },
+      this.gameplaySettings.lootAutoCollect,
     );
 
     // Cancel autopilot ONLY on manual driver controls, walking outside, or entering interior
@@ -3234,6 +3546,30 @@ export class CoruscantEngine {
       this.timeOfDay,
     );
 
+    if (!insideInterior && !inSpaceView && isWalking && this.physics.activeFloorY > 5) {
+      const clubNow = this.world.getRooftopClubUnder(
+        this.physics.walkerPos.x,
+        this.physics.walkerPos.z,
+        this.physics.walkerPos.y,
+        6,
+      );
+      if (clubNow) {
+        this.quests.onRooftopClubVisited(clubNow.name);
+      }
+    }
+
+    const completedSpecial = this.quests.consumeLastCompletedSpecialQuest();
+    if (completedSpecial) {
+      const rewardItem = createMythicOrangeLoot();
+      const dest = this.addLootItemToBag(rewardItem);
+      this.audio.playLootDrop(true);
+      this.quests.showToast(
+        `Особая награда (${dest === 'companion' ? 'спутнице' : 'вам'}): ${rewardItem.name} [Редкий оранжевый]!`,
+        4.6,
+      );
+      this.saveGame(false);
+    }
+
     const driverLookingAtCompanion = !isWalking && !this.isInRvCabin && this.lookYaw < -0.36;
 
     // Companion inside RV mini-home autonomy
@@ -3644,6 +3980,7 @@ export class CoruscantEngine {
         engineRunning: this.engineRunning,
         audioSettings: this.audioSettings,
         graphicsQuality: this.graphicsQuality,
+        gameplaySettings: this.gameplaySettings,
         lookingAtDoorSide,
         leftWindowOpen: this.leftWindowOpen,
         rightWindowOpen: this.rightWindowOpen,
@@ -3656,11 +3993,13 @@ export class CoruscantEngine {
           hp: Math.round(this.rpgHp),
           maxHp: playerStats.maxHp,
           walkStreakSec: Math.round(this.walkStreakSec),
-          inventory: this.rpgInventory,
+          playerInventory: this.playerInventory,
+          companionInventory: this.companionInventory,
           playerEquipped: this.playerEquipped,
           companionEquipped: this.companionEquipped,
           playerStats,
           companionStats: computeRpgStats(this.companionEquipped),
+          weaponHolstered: this.weaponHolstered,
           gopniksActive: this.rpgCombat.getGopniksActiveCount(),
           rallyActiveCount: this.rpgCombat.getRallyActiveCount(),
           rallyTotalCount: this.rpgCombat.rallyTotalCount,
@@ -3669,6 +4008,14 @@ export class CoruscantEngine {
           policeEscapeProgress: this.rpgCombat.getPoliceEscapeProgress(),
           policeDispatchSec: Math.ceil(this.policeDispatchTimer),
           bountyBossActive: this.rpgCombat.isBountyBossAlive(),
+          bountyBossHp: this.rpgCombat.getBountyBossHp().hp,
+          bountyBossMaxHp: this.rpgCombat.getBountyBossHp().maxHp,
+          planetMonsterActive: this.rpgCombat.isPlanetMonsterAlive(),
+          planetMonsterHp: this.rpgCombat.getPlanetMonsterHp().hp,
+          planetMonsterMaxHp: this.rpgCombat.getPlanetMonsterHp().maxHp,
+          planetMonsterAlert: this.rpgCombat.isPlanetMonsterAlive()
+            ? '⚠️ На планете замечен гигантский монстр!'
+            : null,
           activeThreatLabel: this.rpgCombat.getActiveThreatLabel(),
           nearbySaberName: this.rpgCombat.getNearbySaberName(),
         },

@@ -105,15 +105,23 @@ export type QuestKind =
   | 'rally_dispersal'
   | 'lightsaber_hunt'
   | 'bounty_hunt'
+  | 'monster_hunt'
+  | 'cafe_special'
+  | 'serbos_mission'
+  | 'rooftop_club'
   | 'passenger_transport';
 
-export type RpgRarity = 'common' | 'epic' | 'legendary';
+export type RpgRarity = 'common' | 'epic' | 'legendary' | 'mythic';
 
-export type RpgSlot = 'head' | 'torso' | 'legs' | 'weapon' | 'gadget';
+export type RpgSlot = 'head' | 'torso' | 'legs' | 'earrings' | 'weapon' | 'gadget';
 
 export type RpgWeaponKind = 'fists' | 'blaster' | 'lightsaber';
 
 export type RpgOwnerTarget = 'player' | 'companion';
+
+export type RpgItemTarget = 'player' | 'companion' | 'both';
+
+export type RpgEffectStyle = 'ember' | 'solar' | 'nova';
 
 export interface RpgItem {
   uid: string;
@@ -121,6 +129,8 @@ export interface RpgItem {
   name: string;
   slot: RpgSlot;
   rarity: RpgRarity;
+  ownerTarget?: RpgItemTarget;
+  effectStyle?: RpgEffectStyle;
   weaponKind?: RpgWeaponKind;
   colorHex: string;
   accentHex: string;
@@ -147,11 +157,13 @@ export interface RpgStateSnapshot {
   hp: number;
   maxHp: number;
   walkStreakSec: number;
-  inventory: RpgItem[];
+  playerInventory: RpgItem[];
+  companionInventory: RpgItem[];
   playerEquipped: RpgEquipMap;
   companionEquipped: RpgEquipMap;
   playerStats: RpgStatsSummary;
   companionStats: RpgStatsSummary;
+  weaponHolstered: boolean;
   gopniksActive: number;
   rallyActiveCount: number;
   rallyTotalCount: number;
@@ -160,8 +172,26 @@ export interface RpgStateSnapshot {
   policeEscapeProgress: number;
   policeDispatchSec: number;
   bountyBossActive: boolean;
+  bountyBossHp: number;
+  bountyBossMaxHp: number;
+  planetMonsterActive: boolean;
+  planetMonsterHp: number;
+  planetMonsterMaxHp: number;
+  planetMonsterAlert: string | null;
   activeThreatLabel: string | null;
   nearbySaberName: string | null;
+}
+
+export interface LootAutoCollectSettings {
+  common: boolean;
+  epic: boolean;
+  legendary: boolean;
+  mythic: boolean;
+}
+
+export interface GameplaySettings {
+  bossSpawnIntervalMin: number;
+  lootAutoCollect: LootAutoCollectSettings;
 }
 
 export interface RoadsideChatOption {
@@ -328,6 +358,7 @@ export interface SimulationSnapshot {
   companionRvActivity: string | null;
   pedestriansHitCount: number;
   graphicsQuality: number;
+  gameplaySettings: GameplaySettings;
   roadsideChat: RoadsideChatState | null;
   passengerQuest: PassengerQuestState | null;
   nearbyRooftopClubName: string | null;

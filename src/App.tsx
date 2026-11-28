@@ -3,10 +3,12 @@ import { TouchControls } from './components/TouchControls';
 import { RpgInventoryModal } from './components/RpgInventoryModal';
 import { CoruscantEngine } from './engine/CoruscantEngine';
 import { createDefaultRpgState } from './engine/rpgCatalog';
-import { DEFAULT_AUDIO_SETTINGS } from './engine/saveSystem';
+import { DEFAULT_AUDIO_SETTINGS, DEFAULT_GAMEPLAY_SETTINGS } from './engine/saveSystem';
 import type {
   AudioSettings,
   CabinThemeId,
+  GameplaySettings,
+  LootAutoCollectSettings,
   RpgOwnerTarget,
   RpgSlot,
   SeasonSetting,
@@ -101,6 +103,7 @@ const INITIAL_SNAPSHOT: SimulationSnapshot = {
   engineRunning: true,
   audioSettings: DEFAULT_AUDIO_SETTINGS,
   graphicsQuality: 0.5,
+  gameplaySettings: DEFAULT_GAMEPLAY_SETTINGS,
   lookingAtDoorSide: null,
   leftWindowOpen: false,
   rightWindowOpen: false,
@@ -676,6 +679,13 @@ export default function App() {
     engineRef.current?.setGraphicsQuality(quality);
   }, []);
 
+  const handleUpdateGameplaySettings = useCallback(
+    (partial: Partial<GameplaySettings> & { lootAutoCollect?: Partial<LootAutoCollectSettings> }) => {
+      engineRef.current?.updateGameplaySettings(partial);
+    },
+    [],
+  );
+
   const handleToggleHoldHands = useCallback(() => {
     hapticTap(12);
     engineRef.current?.toggleHoldHands();
@@ -711,9 +721,37 @@ export default function App() {
     engineRef.current?.deleteRpgItem(uid);
   }, []);
 
+  const handleTransferRpgItem = useCallback((uid: string, toTarget: RpgOwnerTarget) => {
+    hapticTap(10);
+    engineRef.current?.transferRpgItem(uid, toTarget);
+  }, []);
+
   const handlePerformPlayerAttack = useCallback(() => {
     hapticTap(12);
     engineRef.current?.performPlayerAttack();
+  }, []);
+
+  const handleToggleWeaponHolstered = useCallback(() => {
+    hapticTap(10);
+    engineRef.current?.toggleWeaponHolstered();
+  }, []);
+
+  const handleStartCafeQuest = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.startCafeSideQuest();
+  }, []);
+
+  const handleStartSerbosMission = useCallback(() => {
+    hapticTap(12);
+    engineRef.current?.startSerbosMission();
+  }, []);
+
+  const handleStartMonsterAutopilot = useCallback(() => {
+    hapticTap(14);
+    setSettingsOpen(false);
+    setJournalOpen(false);
+    setCafeOpen(false);
+    engineRef.current?.startMonsterHuntAutopilot();
   }, []);
 
   const handleReplyRoadsideChat = useCallback((optionId: string) => {
@@ -931,6 +969,7 @@ export default function App() {
         onCuddleCompanion={handleCuddleCompanion}
         onScanObservatory={handleScanObservatory}
         onSetGraphicsQuality={handleSetGraphicsQuality}
+        onUpdateGameplaySettings={handleUpdateGameplaySettings}
         onToggleHoldHands={handleToggleHoldHands}
         onSelectQuest={handleSelectQuest}
         onSkipQuest={handleSkipQuest}
@@ -980,6 +1019,10 @@ export default function App() {
         onUnequipSlot={handleUnequipRpgSlot}
         onDeleteItem={handleDeleteRpgItem}
         onPerformAttack={handlePerformPlayerAttack}
+        onToggleWeaponHolstered={handleToggleWeaponHolstered}
+        onStartCafeQuest={handleStartCafeQuest}
+        onStartSerbosMission={handleStartSerbosMission}
+        onStartMonsterAutopilot={handleStartMonsterAutopilot}
         onReplyRoadsideChat={handleReplyRoadsideChat}
         onDismissRoadsideChat={handleDismissRoadsideChat}
         onInteractPassenger={handleInteractPassenger}
@@ -1009,6 +1052,7 @@ export default function App() {
           onEquipItem={handleEquipRpgItem}
           onUnequipSlot={handleUnequipRpgSlot}
           onDeleteItem={handleDeleteRpgItem}
+          onTransferItem={handleTransferRpgItem}
         />
       )}
     </div>
